@@ -66,8 +66,8 @@ impl<L: ChatProvider + Send + Sync> TokenTrackingChatProvider<L> {
         }
     }
 
-    /// kremory-inherent model accessor (Option-1, 2026-06-23). Returns the model
-    /// string captured at construction. Replaces the former
+    /// kremory-inherent model accessor. Returns the model string captured at
+    /// construction. Replaces the former
     /// `ChatProvider::model()` trait override (removed so kremory compiles
     /// against published `autoagents-llm` 0.3.7, which has no `model()`).
     pub fn model_id(&self) -> &str {

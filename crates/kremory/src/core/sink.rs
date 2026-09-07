@@ -1,6 +1,5 @@
 //! `IngestEventSink` — Phase 2 per-episode event sink trait for kremory::core.
 //!
-//! Per ADR D.6.5 + ADR rqlm-async-event-handle-api-design-2026-05-19 §4.8:
 //! rqlc owns this trait because rqlc owns the Phase 2 work. rqlc consumers
 //! who skip rqlm can subscribe to ingest events directly.
 //!
@@ -43,7 +42,7 @@ use crate::core::error::{ContradictionResolution, IngestStatus, IngestionErrorKi
 /// inside `run_verify_stage`). `IngestStatus::Complete` fires later, after
 /// `ingest_deferred` completes fact extraction — there is no second SQL write at
 /// that point. `EntitiesReady` is the moment `wait_for_processing` resolves;
-/// `Complete` fires later with no SQL equivalent. (ADR-052 Gap 5 Decision D5.)
+/// `Complete` fires later with no SQL equivalent.
 ///
 /// ### Why unknown values fall back to `Failed` (not `unreachable!()`)
 ///
@@ -53,17 +52,17 @@ use crate::core::error::{ContradictionResolution, IngestStatus, IngestionErrorKi
 /// enforces the 4-value set, so an unknown SQL value is treated as a best-effort
 /// failure sentinel rather than an unrecoverable panic.
 ///
-/// Placement: `crates/kremory/src/core/sink.rs` (MED-03 — sibling to
+/// Placement: `crates/kremory/src/core/sink.rs` (sibling to
 /// `IngestStatus` import and the event-sink trait definitions).
 ///
-/// ## Visibility — Phase 1 impl-time deviation from arch spec §4.2
+/// ## Visibility
 ///
-/// `pub` (not `pub(crate)` as arch spec §4.2 drafted). Reasoning:
+/// `pub` (not `pub(crate)`). Reasoning:
 ///
-/// 1. **Phase 6 integration test access** — impl spec §9.2 schedules
-///    `sink_ingest_status_from_sql_status` in `tests/sink_wiring.rs`, an
+/// 1. **Integration test access** — `sink_ingest_status_from_sql_status` is
+///    exercised from `tests/sink_wiring.rs`, an
 ///    integration test crate. Integration tests cannot reach `pub(crate)`
-///    items. `pub` is required to keep the planned test placement coherent.
+///    items. `pub` is required to keep the test placement coherent.
 ///
 /// 2. **Consumer intent** — the function is a bridge for any caller that
 ///    polls the `episode_processing_status` SQL column (a schema-level
@@ -75,8 +74,7 @@ use crate::core::error::{ContradictionResolution, IngestStatus, IngestionErrorKi
 ///    dependencies, and is fully documented. The semver cost of `pub` is
 ///    minimal.
 ///
-/// Placement (MED-03) is preserved. Visibility raised. Documented in the
-/// Phase 1 commit message.
+/// Placement is preserved; visibility raised from `pub(crate)` to `pub`.
 pub fn from_sql_status(s: &str) -> IngestStatus {
     match s {
         "Pending" => IngestStatus::Pending,
@@ -85,7 +83,7 @@ pub fn from_sql_status(s: &str) -> IngestStatus {
         "Failed" => IngestStatus::Failed(
             "from_sql_status: SQL-level failure; reason not captured".to_string(),
         ),
-        // DUR-3 (V1-CANONICAL §4.2): terminal state for a `skip_extraction`
+        // Terminal state for a `skip_extraction`
         // ingest. This arm is load-bearing, not cosmetic — without it 'Skipped'
         // falls to the catch-all below and a SUCCESSFUL ingest is reported to
         // every sink consumer as `Failed("unknown_sql_status:Skipped")`.
@@ -155,8 +153,8 @@ pub struct IngestionError {
     pub is_retryable: bool,
 }
 
-/// Bundled parameters for [`IngestEventSink::on_edge_added`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`IngestEventSink::on_edge_added`] — args-as-object
+/// to keep the function under clippy's `too_many_arguments` threshold.
 #[derive(Debug, Clone, Copy)]
 pub struct OnEdgeAddedParams<'a> {
     /// Source entity of the new edge.
@@ -175,7 +173,7 @@ pub struct OnEdgeAddedParams<'a> {
 /// All methods have no-op defaults so implementors only override what they
 /// care about. `Send + Sync` because sinks are shared across tokio tasks.
 ///
-/// TD-133 D3: the "no-op defaults" claim above was previously a doc-lie — every
+/// The "no-op defaults" claim above was previously a doc-lie — every
 /// method was declared without a body (`;`), so all 10 implementors were forced
 /// to implement all 6 (the object_store-wrapper brittleness pattern). The
 /// `{}` default bodies below make the doc true AND remove the brittleness: a new
@@ -202,7 +200,7 @@ pub trait IngestEventSink: Send + Sync {
 mod tests {
     use super::*;
 
-    /// TD-133 D3: a sink that overrides ONLY `on_entity_extracted`. The fact
+    /// A sink that overrides ONLY `on_entity_extracted`. The fact
     /// that this `impl` compiles at all is the proof that the other five
     /// methods have no-op defaults — before the fix all six were required and
     /// this would fail to compile. Calling an un-overridden `&str`-only method

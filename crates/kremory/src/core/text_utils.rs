@@ -8,14 +8,14 @@ use unicode_segmentation::UnicodeSegmentation;
 use crate::core::intelligence::ExtractedEntity;
 use crate::core::resolver::normalize_name;
 
-// ─── Tier-1 deterministic OnceLock caches (Story #148) ───────────────────────
+// ─── Tier-1 deterministic OnceLock caches ────────────────────────────────────
 //
 // These are computed once from compile-time data and never invalidated.
 // No mutation path exists — the values are structurally identical across
 // every process lifetime. OnceLock ensures the allocation happens exactly
 // once per process even under concurrent access.
 //
-// Tier definitions (three-cache separation, Story #149):
+// Tier definitions (three-cache separation):
 //   Tier-1: OnceLock<T> — deterministic, never invalidated (this section)
 //   Tier-2: RwLock<HashMap> — mutable-data-derived, invalidated on DIRTY
 //   Tier-3: HashSet/Vec scoped to a single function call, not stored in self
@@ -32,8 +32,8 @@ static SENTENCE_TERMINATORS: OnceLock<HashSet<char>> = OnceLock::new();
 /// Filters single-char and two-char noise. Tier-1 cache: constant value,
 /// computed once.
 ///
-/// Not used in production code after FU.5 reverted the silent `effective_min`
-/// clamp in `is_oov_candidate`. Retained for the OnceLock invariant test.
+/// Not used in production code — a prior silent `effective_min`
+/// clamp in `is_oov_candidate` was reverted. Retained for the OnceLock invariant test.
 #[cfg(test)]
 static MIN_ENTITY_TOKEN_LEN: OnceLock<usize> = OnceLock::new();
 
@@ -49,8 +49,8 @@ fn sentence_terminators() -> &'static HashSet<char> {
 
 /// Return the minimum entity token length constant (Tier-1 cache).
 ///
-/// Not used in production code after FU.5 reverted the silent `effective_min`
-/// clamp in `is_oov_candidate`. Retained for the OnceLock invariant test.
+/// Not used in production code — a prior silent `effective_min`
+/// clamp in `is_oov_candidate` was reverted. Retained for the OnceLock invariant test.
 #[cfg(test)]
 fn min_entity_token_len() -> usize {
     *MIN_ENTITY_TOKEN_LEN.get_or_init(|| 4)
@@ -78,7 +78,7 @@ const STOP_WORDS: &[&str] = &[
 
 /// Returns true if the word is in the stop-word list (exact match — stop words are
 /// stored with their natural Title-Case so comparison is direct).
-/// Uses the Tier-1 OnceLock cache (Story #148) for O(1) membership test.
+/// Uses the Tier-1 OnceLock cache for O(1) membership test.
 fn is_stop_word(word: &str) -> bool {
     stop_words_set().contains(word)
 }
@@ -145,7 +145,7 @@ pub fn scan_proper_nouns(text: &str, existing: &[ExtractedEntity]) -> Vec<Extrac
         tokens.push((stripped, next_is_sentence_initial));
 
         // Determine if *this* token ends a sentence.
-        // Uses Tier-1 OnceLock sentence_terminators() cache (Story #148).
+        // Uses Tier-1 OnceLock sentence_terminators() cache.
         let ends_sentence = raw
             .chars()
             .last()
@@ -274,10 +274,10 @@ impl OovAuditor {
     ///
     /// `min_len` is honoured directly — callers are responsible for choosing
     /// the appropriate floor. The global `min_entity_token_len()` constant
-    /// (Tier-1 OnceLock, Story #148) is available for callers that want it,
+    /// (Tier-1 OnceLock) is available for callers that want it,
     /// but `is_oov_candidate` does NOT silently clamp to it. Silently overriding
-    /// the caller's `min_len` with `max(min_len, 4)` was a scope-creep regression
-    /// introduced in #148 — reverted by FU.5.
+    /// the caller's `min_len` with `max(min_len, 4)` was a scope-creep regression,
+    /// since reverted.
     fn is_oov_candidate(&self, word: &str, min_len: usize) -> bool {
         if word.len() < min_len {
             return false;
@@ -313,7 +313,7 @@ impl OovAuditor {
     ///
     /// Returns raw candidate strings (not typed — LLM handles typing).
     ///
-    /// Design rationale (from spike findings 2026-04-08):
+    /// Design rationale (from spike findings):
     /// - Scanner omitted: English-only (Title Case heuristic), not language-agnostic
     /// - PMI omitted: falsified at single-document scale (needs 100k+ tokens)
     /// - OOV + two-call LLM = 83% recall, best language-agnostic path
@@ -479,7 +479,7 @@ impl OovAuditor {
 /// Threshold 2.0 validated in spike: high recall as multi-word boundary detector.
 /// NPMI is broken on short documents (needs 100k+ tokens) — use raw PMI only.
 ///
-/// TD-043: no production caller (only the `#[cfg(test)]` tests below) — gated to
+/// No production caller (only the `#[cfg(test)]` tests below) — gated to
 /// test builds instead of carrying `#[allow(dead_code)]`. Re-promote to a real
 /// `pub(crate)` if/when the OOV-PMI entity scorer (parking-lot) wires it.
 #[cfg(test)]
@@ -547,7 +547,7 @@ mod tests {
         entities.iter().map(|e| e.name.as_str()).collect()
     }
 
-    /// Story #148: Tier-1 OnceLock caches return the same pointer on two calls
+    /// Tier-1 OnceLock caches return the same pointer on two calls
     /// (pointer equality proves single allocation, not a copy on each access).
     #[test]
     fn oncelock_tier1_caches_same_pointer_on_repeated_calls() {
@@ -805,8 +805,8 @@ mod tests {
 // arbitrary UTF-8.
 //
 // This is a RECURRING defect class in this crate, not a one-off:
-//   * `core/extraction_window.rs` crashed kremory-http mid-run on 2026-07-28
-//     against LongMemEval — `byte index 6809 is not a char boundary; it is
+//   * `core/extraction_window.rs` crashed kremory-http mid-run against
+//     LongMemEval — `byte index 6809 is not a char boundary; it is
 //     inside 'è'` (Catalan), and again on an emoji. It took the whole server
 //     down because the panic unwinds a tokio worker.
 //   * `core/ingest/helpers.rs` had ALREADY solved it with its own private
@@ -818,10 +818,9 @@ mod tests {
 // Four private copies of the same idea is how that drift happened, so this is
 // the ONE implementation. Import it; do not re-roll it locally.
 //
-// Refs: `.ai-docs/research/v0.1.5-test-pyramid-audit/property-fuzz-api-gaps-2026-05-28.md`
-// ranked "LLM output is untrusted UTF-8 … a panic here crashes every
-// remember() call with no recovery path" as the #1 fuzz target — filed
-// 2026-05-28, unactioned until the crash forced it.
+// LLM output is untrusted UTF-8 — a panic here crashes every `remember()`
+// call with no recovery path, which makes this the top fuzz-testing priority
+// for this crate.
 
 /// Round `i` DOWN to the nearest UTF-8 character boundary in `s`.
 ///

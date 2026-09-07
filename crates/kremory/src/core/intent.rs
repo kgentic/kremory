@@ -1,28 +1,26 @@
-//! Query-intent classification for recall scoring (TD-066 #77, recall-v2 spec
-//! `Decision 1`). A zero-LLM regex/keyword heuristic that labels a recall query
-//! as [`Intent::Factual`], [`Intent::Relational`], or [`Intent::Broad`] so the
-//! recall scoring pipeline can pick per-intent default weights for its post-RRF
-//! boost axes (graph-degree / temporal / truth-boost / axis-C proximity).
+//! Query-intent classification for recall scoring. A zero-LLM regex/keyword
+//! heuristic that labels a recall query as [`Intent::Factual`],
+//! [`Intent::Relational`], or [`Intent::Broad`] so the recall scoring
+//! pipeline can pick per-intent default weights for its post-RRF boost axes
+//! (graph-degree / temporal / truth-boost / axis-C proximity).
 //!
-//! # HALF-FEATURE (2026-07-20) — classified + observed, not yet scored
+//! # Half-feature — classified + observed, not yet scored
 //! [`classify_intent`] IS wired into `core::context::Engine::contextualize`
-//! (runs before FTS/vector search per spec `Decision 1`), but PHASE 1 only
-//! CLASSIFIES + EMITS OBSERVABILITY (`kremory.recall.intent_total` counter +
-//! trace) — it does **not yet alter scoring**. TD-066 phase 2 consumes
-//! [`Intent`] to select per-axis boost-weight defaults. The unit tests below
-//! pin the classification behaviour so phase-2 wiring inherits a known-correct
-//! signal rather than a silently-drifting one (per
-//! `feedback_half_implemented_optimizations_ship_dormant`). Emitting intent now
-//! also feeds the pattern-tuning the spec (`Decision 5`) defers to build-time
-//! eval feedback. Reversibility (spec `Decision 1`): delete the call site and
-//! every consumer falls back to [`Intent::Broad`] — no schema/data coupling.
+//! (runs before FTS/vector search), but currently only CLASSIFIES + EMITS
+//! OBSERVABILITY (`kremory.recall.intent_total` counter + trace) — it does
+//! **not yet alter scoring**. A later phase will consume [`Intent`] to select
+//! per-axis boost-weight defaults. The unit tests below pin the
+//! classification behaviour so that later wiring inherits a known-correct
+//! signal rather than a silently-drifting one. Emitting intent now also
+//! feeds the pattern-tuning that build-time eval feedback will later drive.
+//! Reversibility: delete the call site and every consumer falls back to
+//! [`Intent::Broad`] — no schema/data coupling.
 //!
 //! # Patterns are v1 defaults, not structural
-//! Per `per-cell-policy-is-product-ux-space` + spec `Decision 5`: the EXACT
-//! keyword patterns are product-UX-tunable v1 defaults — only the MECHANISM
-//! (the [`Intent`] enum + downstream weight-override lookup) is structural. A
-//! misclassification only shifts default weights within recall; it never gates
-//! correctness (all axes still run for every intent).
+//! The EXACT keyword patterns are product-UX-tunable v1 defaults — only the
+//! MECHANISM (the [`Intent`] enum + downstream weight-override lookup) is
+//! structural. A misclassification only shifts default weights within
+//! recall; it never gates correctness (all axes still run for every intent).
 
 /// The recall query's intent, used downstream to select per-axis boost-weight
 /// defaults in the recall scoring pipeline.
@@ -192,8 +190,7 @@ mod tests {
         assert_eq!(classify_intent("what do we know about X"), Intent::Broad);
     }
 
-    /// MEASUREMENT (2026-07-27, `.ai-docs/research/intent-classifier-routing-
-    /// viability-2026-07-27.md`): does `classify_intent`'s Factual/Relational/
+    /// Measurement: does `classify_intent`'s Factual/Relational/
     /// Broad taxonomy correspond to LoCoMo's category taxonomy well enough to
     /// gate a retrieval arm on it? Reads the real dataset, calls the REAL
     /// `classify_intent` (not a reimplementation), cross-tabs category ×

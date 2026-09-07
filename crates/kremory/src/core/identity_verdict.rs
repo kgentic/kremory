@@ -1,64 +1,63 @@
-//! Shared identity-verdict schema + deterministic write-gate (ADR-063 spec §2).
+//! Shared identity-verdict schema + deterministic write-gate.
 //!
-//! Three ADR-063 sites — Site #5 (instance acronym/nickname recall), Site #3
+//! Three sites — Site #5 (instance acronym/nickname recall), Site #3
 //! (type-registry post-hoc collapse), and Site #2 (type-novelty description-gate
 //! LLM-verify band) — all share one shape: an LLM proposes a structured verdict on
 //! a candidate identity pair, and a DETERMINISTIC function decides what to write.
 //! Building this once (vs three times) keeps the parse-loudly discipline, the
 //! observability surface, and the write-gate invariant in a single place.
 //!
-//! ## The load-bearing invariant (ADR-057 generalized)
+//! ## The load-bearing invariant
 //!
 //! **The LLM verdict NEVER authorizes a destructive write alone.** It is one input
 //! among cosine + a deterministic signal (lexical / structural pre-filter) +
 //! (optionally) a confidence floor. [`write_gate`] is a pure, deterministic,
 //! I/O-free, counter-free function — unit-testable exhaustively, independent of any
-//! LLM call. Per [[load-bearing-invariants-at-emit-not-prompt]] this is enforced
+//! LLM call. This is enforced
 //! STRUCTURALLY in the decision table (rows 4/6 below), NOT via a prompt instruction
 //! telling the model "only say yes if you're sure".
 //!
-//! ## Location (spec §2.4, supersedes the handoff-plan path)
+//! ## Location
 //!
 //! Lives at `core/identity_verdict.rs` (sibling of `disambiguation/` and
 //! `canonicalization.rs`, NOT nested in `core/dream/`) because it is consumed by
 //! both dream passes (Site #5, Site #3) AND composes with Site #6, which lives in
 //! `disambiguation`/`canonicalization` (`core/`, not `core/dream/`). Neither dream
-//! nor disambiguation is a natural parent. (The handoff plan's
-//! `core/dream/identity_verdict.rs` path is superseded by this spec §2.4 reasoning.)
+//! nor disambiguation is a natural parent.
 //!
 //! ## Two spec ambiguities resolved at implementation time (documented, not silent)
 //!
-//! 1. **Row-1 merge threshold** — spec §2.2 row 1 references a bare `MERGE_THRESHOLD`
+//! 1. **Row-1 merge threshold** — the row-1 rule references a bare `MERGE_THRESHOLD`
 //!    constant, but the clear-merge cosine threshold differs per site (Site #3 desc
 //!    auto-merge 0.85; Site #5 has no meaningful cosine). A single shared constant
 //!    cannot serve both. Resolution: [`WriteGateInputs::merge_threshold`] threads the
 //!    caller's site-specific clear-merge threshold, keeping `write_gate` site-agnostic.
 //!    Site #5 always passes `cosine = 0.0`, so row 1 can never fire there regardless
-//!    of the threshold (matches spec §3.3: "row 1 can never fire for Site #5").
-//! 2. **Site-#6 confidence floor** — spec §2.2 row 5's `min_confidence_floor` clause
-//!    is spike-gated (S4) and Site #6 is not yet built. `min_confidence_floor` is
+//!    of the threshold ("row 1 can never fire for Site #5").
+//! 2. **Site-#6 confidence floor** — row 5's `min_confidence_floor` clause
+//!    is spike-gated and Site #6 is not yet built. `min_confidence_floor` is
 //!    `None` until Site #6 ships, and the clause is then vacuously satisfied
-//!    (§2.2.1 graceful degradation). Until S4 calibrates a Site-#6-specific
-//!    `CONFIDENCE_REJECT_FLOOR`, the provisional floor reuses
-//!    [`LLM_VERIFY_CONFIDENCE_FLOOR`] (spec §8: reuse `MIN_VERIFY_CONFIDENCE` as the
+//!    (graceful degradation). Until Site #6 is calibrated,
+//!    the provisional floor reuses
+//!    [`LLM_VERIFY_CONFIDENCE_FLOOR`] (reuse `MIN_VERIFY_CONFIDENCE` as the
 //!    starting candidate).
 
 use serde::Deserialize;
 
 /// Confidence floor below which an `is_same_entity: true` verdict downgrades to
-/// `PotentialAlias` instead of `Merge` (spec §2.2 row 4).
+/// `PotentialAlias` instead of `Merge` (row 4).
 ///
-/// Starting candidate = `consistency_check::MIN_VERIFY_CONFIDENCE` (0.7), per spec
-/// §8: reuse the already-shipped, ADR-047-calibrated value rather than inventing a
-/// seventh spike. S2's fixture run should report precision/recall AT this threshold
+/// Starting candidate = `consistency_check::MIN_VERIFY_CONFIDENCE` (0.7) —
+/// reuse the already-shipped, calibrated value rather than inventing a
+/// seventh spike. The fixture run should report precision/recall AT this threshold
 /// before any different number is locked; a deviation becomes a documented one-line
 /// justification, not a fresh unbounded threshold search.
 pub(crate) const LLM_VERIFY_CONFIDENCE_FLOOR: f32 = 0.7;
 
 /// Per-pair identity verdict — the semantic payload the LLM returns for ONE
-/// candidate pair (one element of a batch response, spec §2.1).
+/// candidate pair (one element of a batch response).
 ///
-/// Per [[llm-output-parse-loudly]]: none of the four fields carries
+/// None of the four fields carries
 /// `#[serde(default)]` — a truncated or malformed per-item response fails THIS
 /// item's parse loudly (the caller routes that one `pair_id` to the safe
 /// `Reject`/`None` default and increments `verdict_parse_fail_total{site}`), never
@@ -68,7 +67,7 @@ pub(crate) const LLM_VERIFY_CONFIDENCE_FLOOR: f32 = 0.7;
 /// `Deserialize` below) — a value carrying JSON-fragment tells (`{`, `}`, `\`, or
 /// the literal `"is_same_entity"`) is evidence the structured response was spliced
 /// into free text and is rejected wholesale.
-/// `pub` + `#[doc(hidden)]` (MNT-002 pattern, mirrors the Site #3/#5 test-utils
+/// `pub` + `#[doc(hidden)]` (mirrors the Site #3/#5 test-utils
 /// re-exports in `dream/mod.rs`) — promoted from `pub(crate)` so the Site #2
 /// metrics harness (`tests/dream_metrics_harness_site2.rs`, an external
 /// integration-test binary) can construct/inspect verdicts directly. Not part
@@ -118,7 +117,7 @@ impl<'de> Deserialize<'de> for IdentityVerdictItem {
     }
 }
 
-/// Shape-validator for the `reasoning` free-text field (spec §2.1). A value
+/// Shape-validator for the `reasoning` free-text field. A value
 /// carrying JSON-syntax tells is a fragment of the structured response spliced into
 /// the text field — reject it. Applied at the parser boundary, not after persistence.
 pub(crate) fn reasoning_looks_like_json_fragment(reasoning: &str) -> bool {
@@ -136,8 +135,8 @@ pub(crate) fn reasoning_looks_like_json_fragment(reasoning: &str) -> bool {
 /// independently deserialized into [`IdentityVerdictItem`] downstream (or fails
 /// loudly per-element).
 ///
-/// `#[serde(default)]` on the `Vec` wrapper is the ONE legitimate default per
-/// [[llm-output-parse-loudly]]'s container exemption: an empty array degrades to
+/// `#[serde(default)]` on the `Vec` wrapper is the ONE legitimate default:
+/// this is the container exemption — an empty array degrades to
 /// "every nominated pair in this call falls back to the safe default", which is
 /// itself loud (each `pair_id` fails to find a matching verdict and is logged).
 #[derive(Debug, Deserialize)]
@@ -146,13 +145,13 @@ pub(crate) struct IdentityVerdictBatch {
     pub(crate) verdicts: Vec<serde_json::Value>,
 }
 
-/// A deterministic, identity-adjacent signal that fired for a candidate pair
-/// (spec §2.2.2, RISK-001 hardening). Newtype wrapper over `bool` constructible
+/// A deterministic, identity-adjacent signal that fired for a candidate pair.
+/// Newtype wrapper over `bool` constructible
 /// ONLY via the two sanctioned constructors, so a future call site cannot quietly
 /// pass an ad-hoc `cosine >= 0.6` boolean into the write-gate (which would
 /// reintroduce "cosine alone can approve a destructive write" — the exact failure
-/// class ADR-057 exists to prevent) — the type itself refuses to compile that.
-/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` for
+/// class this type exists to prevent) — the type itself refuses to compile that.
+/// `pub` + `#[doc(hidden)]` — promoted from `pub(crate)` for
 /// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[doc(hidden)]
@@ -169,7 +168,7 @@ impl DeterministicSignal {
     /// nomination result (`initialism_candidate OR cooccurs_in_graph`). TRUE means a
     /// deterministic, embedder-independent signal justified escalating to the LLM —
     /// the analogue of token-Jaccard for the zero-lexical-overlap acronym/nickname
-    /// surface (spec §2.2.2).
+    /// surface.
     pub fn from_structural_prefilter(nominated: bool) -> Self {
         Self(nominated)
     }
@@ -183,19 +182,19 @@ impl DeterministicSignal {
 /// Inputs to [`write_gate`] — one resolved candidate pair (batch-splitting happens
 /// in the caller, BEFORE `write_gate` is invoked per pair).
 ///
-/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` for
+/// `pub` + `#[doc(hidden)]` — promoted from `pub(crate)` for
 /// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`).
 #[doc(hidden)]
 pub struct WriteGateInputs<'a> {
     /// Pre-computed similarity. `0.0` when N/A (Site #5 acronym pairs, where cosine
-    /// was never an identity signal per ADR-063).
+    /// was never an identity signal).
     pub cosine: f32,
-    /// The caller's site-specific clear-merge cosine threshold (resolves spec §2.2's
+    /// The caller's site-specific clear-merge cosine threshold (resolves the
     /// shared-`MERGE_THRESHOLD` ambiguity — see module docs). Site #5 passes any
     /// value because its `cosine` is always `0.0`.
     pub merge_threshold: f32,
-    /// The deterministic identity-adjacent signal (spec §2.2's `lexically_compatible`
-    /// parameter, wrapped in the RISK-001 newtype). Site #3: lexical match; Site #5:
+    /// The deterministic identity-adjacent signal (the `lexically_compatible`
+    /// parameter, wrapped in this newtype). Site #3: lexical match; Site #5:
     /// structural-pre-filter nomination.
     pub deterministic_signal: DeterministicSignal,
     /// The single-pair verdict, already split out of its batch response by `pair_id`.
@@ -204,14 +203,14 @@ pub struct WriteGateInputs<'a> {
     pub llm_verdict: Option<IdentityVerdictItem>,
     /// Site #6's observed minimum entity extraction-confidence, when available.
     /// `None` until Site #6 ships → the row-5 floor clause is vacuously satisfied
-    /// (spec §2.2.1 graceful degradation). Compared against
-    /// [`LLM_VERIFY_CONFIDENCE_FLOOR`] provisionally until S4 calibrates a
+    /// (graceful degradation). Compared against
+    /// [`LLM_VERIFY_CONFIDENCE_FLOOR`] provisionally until Site #6 calibrates a
     /// Site-#6-specific floor.
     pub min_confidence_floor: Option<f32>,
     /// The two candidate names, for the temporal-conflict veto (row 0). `None`
     /// composes as a no-op, exactly like [`Self::min_confidence_floor`] above.
     ///
-    /// **TD-212/TD-213.** A destructive merge must never collapse two different
+    /// A destructive merge must never collapse two different
     /// points in time. Measured on `graph_mutation_log`: `site5_acronym_nickname`
     /// merged `1037 am on 27 june 2023` into `1037 am` in **10 of 21** merges —
     /// irreversible data loss, since the bare time cannot be recovered.
@@ -227,7 +226,7 @@ pub struct WriteGateInputs<'a> {
 
 /// The write-gate's decision for one candidate pair.
 ///
-/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` for
+/// `pub` + `#[doc(hidden)]` — promoted from `pub(crate)` for
 /// the Site #2 metrics harness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[doc(hidden)]
@@ -240,32 +239,33 @@ pub enum WriteDecision {
     Reject,
 }
 
-/// Deterministic write-gate (spec §2.2). Pure: no I/O, no metrics (site callers emit
+/// Deterministic write-gate. Pure: no I/O, no metrics (site callers emit
 /// their own site-labeled counters around the call). Decision table evaluated
 /// top-to-bottom, first match wins.
 ///
 /// | # | Condition | Decision |
 /// |---|---|---|
 /// | 1 | no LLM verdict AND `cosine ≥ merge_threshold` AND deterministic signal fired | `Merge` (clear case — LLM never invoked) |
-/// | 2 | no LLM verdict AND not row 1 | `Reject` (safe default — a nominated pair whose LLM call failed/timed out must NOT merge, spec §2.3) |
+/// | 2 | no LLM verdict AND not row 1 | `Reject` (safe default — a nominated pair whose LLM call failed/timed out must NOT merge) |
 /// | 3 | LLM says `is_same_entity == false` | `Reject` (a `false` verdict can never become `Merge`) |
 /// | 4 | LLM `true` but `confidence < LLM_VERIFY_CONFIDENCE_FLOOR` | `PotentialAlias` (low-confidence agreement is not enough for a destructive write) |
 /// | 6 | LLM `true`, confident, BUT no deterministic signal fired | `PotentialAlias`, never `Merge` (**the load-bearing generalization: the LLM never authorizes a destructive write alone**) |
 /// | 5b | LLM `true`, confident, deterministic signal fired, BUT Site-#6 floor set and observed conf below it | `PotentialAlias` (Site #6 downgrade) |
 /// | 5 | LLM `true`, confident, deterministic signal fired, floor cleared (or absent) | `Merge` (the ONLY row where an LLM verdict authorizes `Merge` — and never alone) |
 ///
-/// **ADR-065 carve-out (Site #2):** the dream-phase type-novelty gate
+/// **Carve-out (Site #2):** the dream-phase type-novelty gate
 /// (`dream::discover_types::type_novelty_is_redundant`) intentionally does NOT
 /// call this function. Schema-level TYPE matching trusts the LLM as terminal
 /// arbiter, because Row 6's deterministic-corroboration requirement — an
-/// ADR-057 ENTITY-homonymy guard (same name, *different* referent) — over-
+/// ENTITY-homonymy guard (same name, *different* referent) — over-
 /// generalizes to type synonyms ("Firm"/"Company"), which are lexically
 /// dissimilar by nature and so structurally fail the lexical signal even when a
 /// correct, confident `true` verdict is returned. Do NOT re-unify the two rules
-/// without reading ADR-065 (the residual-risk analysis is there). Entity /
-/// instance identity (Sites #3 / #5 / #6) still uses this gate UNCHANGED.
+/// without first reviewing the residual-risk analysis for this carve-out.
+/// Entity / instance identity (Sites #3 / #5 / #6) still uses this gate
+/// UNCHANGED.
 ///
-/// `pub` + `#[doc(hidden)]` (MNT-002 pattern) — promoted from `pub(crate)` so
+/// `pub` + `#[doc(hidden)]` — promoted from `pub(crate)` so
 /// the Site #2 metrics harness (`tests/dream_metrics_harness_site2.rs`) can
 /// replicate the discover_types Site #2 decision flow exactly.
 #[doc(hidden)]
@@ -280,14 +280,14 @@ pub fn write_gate(inputs: WriteGateInputs<'_>) -> WriteDecision {
     } = inputs;
     let deterministic = deterministic_signal.fired();
 
-    // Row 0 (TD-212/TD-213): a destructive merge may never collapse two different
+    // Row 0: a destructive merge may never collapse two different
     // points in time. Checked FIRST so it also vetoes row 1, the no-LLM clear-merge
     // path — `1037 am on 27 june 2023` into `1037 am` is irreversible data loss,
-    // and no amount of cosine or LLM agreement makes it not so. Reuses ADR-057's
-    // deterministic rule; `None` composes as a no-op.
+    // and no amount of cosine or LLM agreement makes it not so. Reuses the
+    // ENTITY-homonymy guard's deterministic rule; `None` composes as a no-op.
     //
-    // ⚠️ DELIBERATE, and it is a wider effect than "block a Merge" (Quinn MED-1 on
-    // `8b9cf855` — it was undocumented and untested until now). Being FIRST, this
+    // ⚠️ DELIBERATE, and it is a wider effect than "block a Merge" — it was
+    // undocumented and untested until now. Being FIRST, this
     // also converts what would have been a NON-destructive `PotentialAlias` into a
     // hard `Reject`, reachable at two live paths: Site #5's low-confidence verdict
     // (row 4) and Site #3's no-deterministic-corroboration case (row 6).
@@ -329,7 +329,7 @@ pub fn write_gate(inputs: WriteGateInputs<'_>) -> WriteDecision {
     if !deterministic {
         return WriteDecision::PotentialAlias;
     }
-    // Row 5b: Site #6 confidence floor (composes as a no-op when None, spec §2.2.1).
+    // Row 5b: Site #6 confidence floor (composes as a no-op when None).
     if let Some(observed_min_conf) = min_confidence_floor {
         if observed_min_conf < LLM_VERIFY_CONFIDENCE_FLOOR {
             return WriteDecision::PotentialAlias;
@@ -371,10 +371,10 @@ pub(crate) fn identity_verdict_batch_schema(_batch_len: usize) -> serde_json::Va
 }
 
 /// Maximum nominated pairs adjudicated in ONE `IdentityVerdictBatch` LLM call
-/// (spec §2.1/§3.2/§4.4 batch shape — batching itself is unchanged; this bounds
+/// (batching itself is unchanged; this bounds
 /// how many pairs share a single call).
 ///
-/// Root cause (S3 spike, `type_registry_collapse_s3_spike.rs`): a realistic
+/// Root cause (see `type_registry_collapse_s3_spike.rs`): a realistic
 /// 25-pair batch against a live local model (gemma4:e4b) exceeds
 /// `StructuredCallBuilder`'s per-arm wall-clock budget on all 4 fallback arms —
 /// the call simply takes longer than the model needs to reason over 25 pairs at
@@ -382,18 +382,18 @@ pub(crate) fn identity_verdict_batch_schema(_batch_len: usize) -> serde_json::Va
 /// verdict -> Reject") means this was SAFE (zero false merges) but INERT (every
 /// nominated pair silently defaults to no-verdict at realistic registry sizes).
 ///
-/// Fix is two-part per Quinn's spike review: (1) this chunk size caps each call's
+/// Fix is two-part: (1) this chunk size caps each call's
 /// pair count so per-call latency stays inside budget — 10 is the size
 /// `smoke_one_human_individual_pair_s3`-style single/near-single-pair calls have
 /// empirically proven fast; (2) callers additionally raise
 /// `StructuredCallBuilder::ttft_budget_ms` for these dream-phase adjudication call
-/// sites specifically (dream is latency-tolerant by design, ADR-063 spec) rather
+/// sites specifically (dream is latency-tolerant by design) rather
 /// than changing the shared global default other non-dream call sites depend on.
 pub(crate) const ADJUDICATION_CHUNK_SIZE: usize = 10;
 
 /// Raised per-arm wall-clock budget (ms) for dream-phase `IdentityVerdictBatch`
 /// adjudication calls specifically. Dream runs are background/latency-tolerant
-/// (ADR-063 spec) — this is set on the `StructuredCallBuilder` for THESE call
+/// — this is set on the `StructuredCallBuilder` for THESE call
 /// sites only via `.ttft_budget_ms()`, never by changing
 /// `StructuredCallBuilder::new`'s shared 30s default (`structured.rs`), which
 /// other, latency-sensitive call sites depend on.
@@ -440,7 +440,7 @@ mod tests {
         }
     }
 
-    // ── write_gate decision table — one test per row (spec §2.2) ────────────────
+    // ── write_gate decision table — one test per row ─────────────────────────────
 
     #[test]
     fn row1_no_llm_clear_merge() {
@@ -486,7 +486,7 @@ mod tests {
 
     #[test]
     fn site5_cosine_zero_never_merges_without_llm() {
-        // Site #5 always passes cosine = 0.0, so row 1 can never fire (spec §3.3).
+        // Site #5 always passes cosine = 0.0, so row 1 can never fire.
         let d = write_gate(WriteGateInputs {
             cosine: 0.0,
             merge_threshold: 0.0, // even a zero threshold: 0.0 >= 0.0 would be true...
@@ -608,7 +608,7 @@ mod tests {
         assert_eq!(d, WriteDecision::Merge);
     }
 
-    // ── schema parsing — loud parse discipline (spec §2.1) ──────────────────────
+    // ── schema parsing — loud parse discipline ───────────────────────────────────
 
     #[test]
     fn batch_envelope_tolerates_empty_and_missing_verdicts() {
@@ -847,7 +847,7 @@ mod tests {
     }
 
     /// The 10 REAL timestamp-collapsing merges from `site5_acronym_nickname`,
-    /// extracted from `graph_mutation_log` on `.context/full-corpus.db`. TD-212.
+    /// extracted from `graph_mutation_log` on `.context/full-corpus.db`.
     ///
     /// Every one is irreversible data loss: the loser is strictly more specific
     /// than the keeper, and `1037 am` cannot be recovered to `1037 am on 27 june
@@ -858,7 +858,7 @@ mod tests {
         ("318 pm on 4 may 2023", "318 pm"),
         ("519 pm on 5 august 2023", "519 pm"),
         ("1058 am on 9 october 2022", "1058 am"),
-        // The OTHER 7 blocked rows (Quinn MED-2): a session LABEL resolving onto a
+        // The OTHER 7 blocked rows: a session LABEL resolving onto a
         // date or a time. I originally measured only the 10 above and called these a
         // separate "nonsense class" without analysing whether blocking them is right.
         // It is: a session label is not a date, so every one of these was ALSO a
@@ -927,7 +927,7 @@ mod tests {
         assert_eq!(site5_merge_authorizing(None), WriteDecision::Merge);
     }
 
-    /// Pins the wider-than-stated effect of putting the veto at row 0 (Quinn MED-1):
+    /// Pins the wider-than-stated effect of putting the veto at row 0:
     /// a temporally-conflicting pair that would otherwise reach `PotentialAlias`
     /// (here via row 4, confidence below the floor) is REJECTED outright.
     ///

@@ -23,8 +23,8 @@ pub(crate) fn filter_new_entities(
         .collect()
 }
 
-/// Bundled parameters for [`merge_entities_with_grounding`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`merge_entities_with_grounding`] — args-as-object
+/// to keep the function under clippy's `too_many_arguments` threshold.
 pub(crate) struct MergeEntitiesWithGroundingParams<'a> {
     /// The base entity set; mutated and returned.
     pub base: Vec<ExtractedEntity>,

@@ -203,8 +203,8 @@ pub(crate) struct CascadeResolver<L: ChatProvider> {
     llm: Arc<L>,
     minhash_config: MinHashConfig,
     entropy_config: EntropyConfig,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Set by the
-    /// Engine via [`with_model`](Self::with_model) at construction — NOT read off
+    /// Consumer-supplied model identifier. Set by the Engine via
+    /// [`with_model`](Self::with_model) at construction — NOT read off
     /// `llm.model()`. Drives capability detection + metric labels for the
     /// resolution-verdict call. `None`/empty → `PromptOnly`.
     model: Option<String>,
@@ -224,7 +224,7 @@ impl<L: ChatProvider> CascadeResolver<L> {
         }
     }
 
-    /// Set the consumer-supplied model identifier (Option-1). Chainable; the
+    /// Set the consumer-supplied model identifier. Chainable; the
     /// Engine calls this with `self.model.clone()` at construction.
     pub(crate) fn with_model(mut self, model: Option<String>) -> Self {
         self.model = model;
@@ -242,8 +242,8 @@ pub(crate) fn entity_name(entity: &Entity) -> &str {
 }
 
 impl<L: ChatProvider> CascadeResolver<L> {
-    /// ADR-076 (TD-127) Pass 1: the cheap deterministic tiers (Tier 1 exact-
-    /// normalize + Tier 2 MinHash/LSH) factored out of `resolve()` so the
+    /// The cheap deterministic tiers (Tier 1 exact-normalize + Tier 2
+    /// MinHash/LSH), factored out of `resolve()` so the
     /// batched resolver can run them synchronously, no-LLM, over an entity's
     /// candidate block BEFORE deciding whether the entity is ambiguous enough
     /// to need the LLM tier at all.
@@ -289,7 +289,7 @@ impl<L: ChatProvider> EntityResolver for CascadeResolver<L> {
         candidate: &'a ExtractedEntity,
         existing: &'a Entity,
     ) -> Result<ResolutionResult> {
-        // Pass 1 (ADR-076): cheap deterministic tiers (Tier 1 + Tier 2).
+        // Pass 1: cheap deterministic tiers (Tier 1 + Tier 2).
         if let Some(result) = self.resolve_deterministic(candidate, existing) {
             return Ok(result);
         }

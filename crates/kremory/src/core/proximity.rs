@@ -1,15 +1,10 @@
-//! Graph-proximity boost axis — ADR-062 (axis C), build-entry spec
-//! `axis-c-read-time-relevance-spec-2026-07-01.md`, ADR-082 Phase 3.
+//! Graph-proximity boost axis (axis C).
 //!
 //! **Additive + bounded `[0, weight]`, matching [`crate::core::search::
 //! graph_degree_bonus`] and [`crate::core::scoring::temporal::temporal_boost`]**
 //! so a single `.min(1.0)` clamp covers all three axes at the insertion point
-//! — no second normalization pass. ADR-082 **Amendment 1** (2026-07-20)
-//! supersedes ADR-062's literal "post-RRF multiplicative boost" text: this
-//! axis's own landing is the amendment's named migration trigger, and the
-//! amendment already resolved that trigger to "stay additive" (score 132/135,
-//! confidence HIGH) rather than migrate the whole chain to a normalized
-//! multiplicative shape.
+//! — no second normalization pass. This axis stays additive rather than
+//! migrating the whole boost chain to a normalized multiplicative shape.
 //!
 //! Signal: the count of entities reachable from a seed within
 //! `proximity_hop_bound` hops (`SearchConfig::proximity_hop_bound`, default
@@ -17,30 +12,29 @@
 //! [`crate::core::search::graph_degree_bonus`]'s own 1-hop degree signal
 //! (`expansion_hop_bound`, default 1). Distinct information: degree asks "how
 //! many direct facts does this seed have"; proximity asks "is this seed near
-//! a dense cluster it isn't directly part of" (ADR-062's own motivating
-//! example: "a query 2 hops from a highly-connected entity gets no proximity
-//! credit" under lexical-only ranking).
+//! a dense cluster it isn't directly part of" (motivating example: "a query
+//! 2 hops from a highly-connected entity gets no proximity credit" under
+//! lexical-only ranking).
 //!
-//! **Read-side-pure (ADR-062 §7 RISK-003, spec NFR):** this module issues
+//! **Read-side-pure:** this module issues
 //! **zero graph queries** — it is pure `usize -> f32` boost math over a count
 //! the caller already fetched via a second, independently-bounded
 //! `TemporalGraph::get_neighbours_at` call in
 //! [`crate::core::context::Engine::contextualize`]'s per-seed loop (mirroring
 //! how `graph_degree_bonus`/`temporal_boost` consume data the SAME loop's
 //! primary `get_neighbours_at` call already fetched). The precise, mechanical
-//! read-purity heuristic (ADR-062 §7, corrected in Cycle-1 review RISK-003):
-//! grep this file for `execute(` (write) — a read-pure module must show zero
-//! occurrences; a `use`-statement audit alone is insufficient because
-//! `TemporalGraph` (the type the real graph-walk call lives on, in
-//! `core/graph/queries.rs`) has its own inherent write methods
+//! read-purity check: grep this file for `execute(` (write) — a read-pure
+//! module must show zero occurrences; a `use`-statement audit alone is
+//! insufficient because `TemporalGraph` (the type the real graph-walk call
+//! lives on, in `core/graph/queries.rs`) has its own inherent write methods
 //! (`forget_entity`, `batch_forget`) reachable on the same `self`.
 //!
-//! **Fan-out cap (ADR-062 §8/ASMP-001, spike criterion 2a):** the caller
+//! **Fan-out cap:** the caller
 //! passes `max_visited: Some(SearchConfig::proximity_fan_out_cap)` to the
-//! SAME `get_neighbours_at`, reusing ADR-082 Amendment 2's in-BFS visited cap
-//! (originally built for TD-056's multi-hop expansion) rather than adding a
-//! new capped traversal primitive — a high-degree hub seed's worst-case cost
-//! is bounded by construction, not merely spike-measured.
+//! SAME `get_neighbours_at`, reusing the in-BFS visited cap built for
+//! multi-hop expansion rather than adding a new capped traversal primitive —
+//! a high-degree hub seed's worst-case cost is bounded by construction, not
+//! merely spike-measured.
 
 /// Count value at which [`proximity_bonus`] saturates. Wider than
 /// [`crate::core::search::GRAPH_DEGREE_SATURATION`] (10) because a
@@ -123,13 +117,13 @@ mod tests {
         assert!(proximity_bonus(15, W) > proximity_bonus(5, W));
     }
 
-    /// ADR-062 §7 RISK-003 (corrected read-purity heuristic): this module
-    /// must contain zero `execute(` call sites. Grepping its own source
-    /// (rather than auditing `use` statements) is the precise, mechanical
-    /// check the arch-design review settled on — `TemporalGraph` hosts write
-    /// methods (`forget_entity`, `batch_forget`) on the SAME `self` as the
-    /// read-only `get_neighbours_at` this axis's caller uses, so a
-    /// `use`-statement check cannot distinguish read-pure from write-capable.
+    /// This module must contain zero `execute(` call sites. Grepping its own
+    /// source (rather than auditing `use` statements) is the precise,
+    /// mechanical check that reliably distinguishes read-pure from
+    /// write-capable — `TemporalGraph` hosts write methods (`forget_entity`,
+    /// `batch_forget`) on the SAME `self` as the read-only
+    /// `get_neighbours_at` this axis's caller uses, so a `use`-statement
+    /// check cannot tell the two apart.
     #[test]
     fn proximity_module_is_read_pure_zero_execute_calls() {
         // The needle is assembled at runtime and comment lines are stripped,
@@ -137,10 +131,11 @@ mod tests {
         // SELF-TRIPPING: every occurrence of the literal in this file was the
         // guard's OWN text (the module doc, this test's doc, and the assertion
         // message), so it could never pass regardless of the implementation.
-        // Verified 2026-07-27: the module is genuinely write-free — the guard's
-        // MECHANISM was broken, not the code under test. Guard kept (ADR-062 §7
-        // read-purity is load-bearing — a scoring axis that writes violates the
-        // ratified design) and its mechanism fixed, per treat-cause-not-symptom.
+        // Verified the module is genuinely write-free — the guard's
+        // MECHANISM was broken, not the code under test. Guard kept (read-purity
+        // is load-bearing — a scoring axis that writes would violate the
+        // design) and its mechanism fixed, rather than weakening or deleting
+        // the guard.
         let needle = concat!("execu", "te(");
         let offending: Vec<(usize, &str)> = include_str!("proximity.rs")
             .lines()
@@ -151,8 +146,8 @@ mod tests {
             .collect();
         assert!(
             offending.is_empty(),
-            "core/proximity.rs must contain zero write call sites (RISK-003 read-purity, \
-             ADR-062 §7) — this axis must never write. Offending: {offending:?}"
+            "core/proximity.rs must contain zero write call sites (read-purity) \
+             — this axis must never write. Offending: {offending:?}"
         );
     }
 }

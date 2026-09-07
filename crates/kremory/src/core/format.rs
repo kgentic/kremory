@@ -6,39 +6,38 @@
 //! should discard any cached derived data (community clusters, speculative cache)
 //! and rebuild from the source graph.
 //!
-//! Stories #151, #152, #164.
 
-/// 4-byte magic prefix for kremory binary snapshot files. Story #151.
+/// 4-byte magic prefix for kremory binary snapshot files.
 ///
 /// ASCII encoding of `"KMRY"`. Every kremory-produced binary blob begins with
 /// these 4 bytes; any blob that does NOT start with them is rejected before
 /// further parsing.
 ///
-/// Not yet wired to a caller — snapshot write path is Story #151. Surgical
+/// Not yet wired to a caller — snapshot write path is pending. Surgical
 /// exemption until that integration is complete.
-#[allow(dead_code)] // planned consumer: snapshot writer (Story #151)
+#[allow(dead_code)] // planned consumer: snapshot writer
 pub(crate) const KREMORY_MAGIC: [u8; 4] = *b"KMRY";
 
-/// Current binary format version byte. Story #152.
+/// Current binary format version byte.
 ///
 /// Increment when the binary layout changes in an incompatible way.
 /// Version 1 = initial kremory v0.1.0 layout.
 ///
-/// Not yet wired to a caller — snapshot write path is Story #152. Surgical
+/// Not yet wired to a caller — snapshot write path is pending. Surgical
 /// exemption until that integration is complete.
-#[allow(dead_code)] // planned consumer: snapshot writer (Story #152)
+#[allow(dead_code)] // planned consumer: snapshot writer
 pub(crate) const FORMAT_VERSION: u8 = 1;
 
-/// Rebuild-hint flag byte. Story #152.
+/// Rebuild-hint flag byte.
 ///
 /// When present at byte position 5 of a kremory snapshot (value `0x01`),
 /// instructs the consumer to invalidate and rebuild all derived data
 /// (speculative cache, community clusters) before using the snapshot.
 /// Value `0x00` = no rebuild required (incremental update).
 ///
-/// Not yet wired to a caller — snapshot write path is Story #152. Surgical
+/// Not yet wired to a caller — snapshot write path is pending. Surgical
 /// exemption until that integration is complete.
-#[allow(dead_code)] // planned consumer: snapshot writer (Story #152)
+#[allow(dead_code)] // planned consumer: snapshot writer
 pub(crate) const REBUILD_HINT: u8 = 0x01;
 
 /// Minimum valid snapshot header length: magic (4) + version (1) + hint (1).
@@ -46,11 +45,11 @@ pub(crate) const REBUILD_HINT: u8 = 0x01;
 #[allow(dead_code)] // used only inside validate_snapshot_header; kept as named constant for clarity
 const MIN_HEADER_LEN: usize = 6;
 
-/// Reason a binary blob was rejected by `validate_snapshot_header`. Story #164.
+/// Reason a binary blob was rejected by `validate_snapshot_header`.
 ///
-/// Not yet wired to a caller — validator is used by Story #164 snapshot-read
+/// Not yet wired to a caller — validator is used by the future snapshot-read
 /// path. Surgical exemption until that integration is complete.
-#[allow(dead_code)] // planned consumer: snapshot reader (Story #164)
+#[allow(dead_code)] // planned consumer: snapshot reader
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum CorruptReason {
     /// Blob is shorter than the minimum header size.
@@ -84,7 +83,7 @@ impl std::fmt::Display for CorruptReason {
     }
 }
 
-/// Validate the 6-byte header of a kremory snapshot blob. Story #164.
+/// Validate the 6-byte header of a kremory snapshot blob.
 ///
 /// Returns `Ok(rebuild_hint)` where `rebuild_hint` is `true` when byte 5
 /// equals `REBUILD_HINT`. Returns `Err(CorruptReason)` on any structural
@@ -93,9 +92,9 @@ impl std::fmt::Display for CorruptReason {
 /// This function is deliberately allocation-free (no `String`, no `Vec`)
 /// so it can run in hot paths (e.g. before seeking into a large file).
 ///
-/// Not yet wired to a caller — snapshot read path is Story #164. Surgical
+/// Not yet wired to a caller — snapshot read path is pending. Surgical
 /// exemption until that integration is complete.
-#[allow(dead_code)] // planned consumer: snapshot reader (Story #164)
+#[allow(dead_code)] // planned consumer: snapshot reader
 pub(crate) fn validate_snapshot_header(data: &[u8]) -> Result<bool, CorruptReason> {
     if data.len() < MIN_HEADER_LEN {
         return Err(CorruptReason::TooShort {

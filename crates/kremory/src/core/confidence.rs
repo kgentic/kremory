@@ -1,4 +1,4 @@
-//! Confidence-aware merge helpers (ADR-063 Site #6).
+//! Confidence-aware merge helpers (Site #6).
 //!
 //! When two entities merge (L5 canonicalization, or Site #5 acronym/nickname
 //! recall), the surviving keeper should COMBINE the two entities' extraction
@@ -8,7 +8,7 @@
 //! and models "at least one extraction was confident," which is the right semantic
 //! for "the same real-world entity was extracted twice."
 //!
-//! ## Spike S4 — findings (2026-07-02)
+//! ## Spike S4 — findings
 //!
 //! S4 (R4 open item #2) required two numbers before the `CONFIDENCE_REJECT_FLOOR`
 //! gate could be wired: the floor value, and the null-`ner_confidence` prevalence.
@@ -44,11 +44,11 @@
 //!    `write_gate`'s decision distribution, holding cosine/lexical fixed at their
 //!    corpus-observed values — this is the honest empirical surface available.
 //! 3. **Floor value**: reuses `identity_verdict::LLM_VERIFY_CONFIDENCE_FLOOR`
-//!    (`0.7`, itself `consistency_check::MIN_VERIFY_CONFIDENCE`) per spec §8's
+//!    (`0.7`, itself `consistency_check::MIN_VERIFY_CONFIDENCE`) per the
 //!    explicit recommendation ("reuse `MIN_VERIFY_CONFIDENCE` as the starting
 //!    candidate") — there is no measured kremory-specific reason to diverge from
-//!    it, and R4 §7's literature-only 0.5 starting point is explicitly superseded
-//!    by the spec's "reuse the already-shipped, ADR-047-calibrated value" guidance.
+//!    it, and a literature-only 0.5 starting point is explicitly superseded
+//!    by the spec's "reuse the already-shipped, calibrated value" guidance.
 //! 4. **Null policy: null BYPASSES the floor** (`CONFIDENCE_REJECT_FLOOR` gate is
 //!    vacuously satisfied when either input confidence is absent), not "null fails
 //!    the floor." With 100% null prevalence on the default build, a fail-on-null
@@ -77,10 +77,10 @@
 /// Confidence floor below which `min(conf_a, conf_b)` fails Site #6's third
 /// merge-gate (`write_gate` row 5b, `identity_verdict::WriteGateInputs.min_confidence_floor`).
 ///
-/// = `identity_verdict::LLM_VERIFY_CONFIDENCE_FLOOR` (0.7). S4 (module docs above)
-/// found no kremory-specific data supporting a different number — spec §8 directs
-/// reuse of the already-shipped, ADR-047-calibrated `MIN_VERIFY_CONFIDENCE` value
-/// rather than locking R4 §6.3's literature-only 0.5 starting point. A future spike
+/// = `identity_verdict::LLM_VERIFY_CONFIDENCE_FLOOR` (0.7). See the module docs above:
+/// found no kremory-specific data supporting a different number — directs
+/// reuse of the already-shipped, calibrated `MIN_VERIFY_CONFIDENCE` value
+/// rather than locking a literature-only 0.5 starting point. A future spike
 /// MAY revise this if real `ner_confidence` data (i.e. `ner`-feature deployments)
 /// accumulates and shows a different number is better calibrated for the identity
 /// question specifically (as opposed to the type-correctness question
@@ -96,7 +96,7 @@ pub(crate) const CONFIDENCE_REJECT_FLOOR: f32 =
 /// - `Some(min(a, b))` when BOTH confidences are present — the floor check then
 ///   compares this against [`CONFIDENCE_REJECT_FLOOR`] inside `write_gate`.
 /// - `None` when EITHER confidence is absent — `write_gate`'s row 5b already
-///   treats `None` as vacuously-satisfied (spec §2.2.1), so an absent signal
+///   treats `None` as vacuously-satisfied, so an absent signal
 ///   degrades to "confidence check not applicable, fall back to cosine+lexical
 ///   only" rather than failing the pair. On the default (no `ner` feature) build
 ///   this is `None` for effectively every pair (100% measured null prevalence),

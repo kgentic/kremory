@@ -13,8 +13,8 @@ use crate::core::schema::Fact;
 // Temporal Overlap
 // ---------------------------------------------------------------------------
 
-/// Bundled parameters for [`temporal_overlap`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`temporal_overlap`] — args-as-object to keep the
+/// function under clippy's `too_many_arguments` threshold.
 ///
 /// Both intervals are half-open: `[start, end)` where a `None` end = +infinity.
 #[derive(Debug, Clone, Copy)]
@@ -56,7 +56,7 @@ pub(crate) fn temporal_overlap(params: TemporalOverlapParams<'_>) -> bool {
 
 /// Outcome of resolving a contradiction under a known namespace policy.
 ///
-/// Returned by `resolve_contradiction` (ADR-029b Decision 2) to distinguish
+/// Returned by `resolve_contradiction` to distinguish
 /// Mutable-path mutation from AppendOnly-path insertion. Callers use this to
 /// audit which resolution strategy was applied.
 ///
@@ -173,7 +173,7 @@ pub(crate) fn build_dual_list_prompt(
         idx += 1;
     }
 
-    // TD-167. The previous instruction was:
+    // The previous instruction was:
     //
     //   "For each existing fact that the new fact CONTRADICTS ... return its index.
     //    If the new fact is an UPDATE (same relationship but newer value), return
@@ -182,7 +182,7 @@ pub(crate) fn build_dual_list_prompt(
     // That second sentence describes EVERY item in a list, so it instructed the
     // model to destroy set-valued facts: a festival's 2nd..6th performer each
     // superseded the previous. Measured on the production model
-    // (openai/gpt-oss-120b, temp 0, 2026-07-29): **7 of 8** genuinely set-valued
+    // (openai/gpt-oss-120b, temp 0): **7 of 8** genuinely set-valued
     // pairs were superseded. Note the direction — the WEAKER local model scored
     // 5/8. Capability made it WORSE, because the defect was in the INSTRUCTION,
     // not the judgement: a better model follows a wrong instruction more
@@ -205,8 +205,6 @@ pub(crate) fn build_dual_list_prompt(
     // Worked examples of BOTH outcomes are deliberate. Every competitor audited
     // (Graphiti, CORE, mem0's legacy path) shows the model only a
     // supersession example, which is exactly what biases it toward destruction.
-    //
-    // Refs: TD-167; .ai-docs/research/td-167-set-valued-fact-destruction-2026-07-29.md
     prompt.push_str(
         "\nDecide, for each existing fact above, whether the NEW fact REPLACES it.\n\
          \n\
@@ -251,7 +249,7 @@ pub(crate) fn build_dual_list_prompt(
 ///
 /// Requires the FULL wrapped shape `{"indices": [1, 3], "reason": "..."}` —
 /// deserialised directly as [`ContradictionVerdictWrapper`], whose `reason`
-/// field carries no `#[serde(default)]` (ADR-049 / `llm-output-parse-loudly`):
+/// field carries no `#[serde(default)]`:
 /// a verdict missing its audit-trail justification is a PARSE FAILURE, not a
 /// degraded-but-usable result, so the fallback ladder can retry rather than
 /// silently accepting an incomplete response. This deliberately does NOT
@@ -264,7 +262,7 @@ pub(crate) fn build_dual_list_prompt(
 /// a wrapped object that omits `reason`.
 ///
 /// Any parse failure (missing `reason`, bare array, wrong key, malformed
-/// JSON) is LOUD, never silent (Vera SCOPE-002): a bounded-cardinality
+/// JSON) is LOUD, never silent: a bounded-cardinality
 /// `reason` label distinguishes the failure shape, plus the same
 /// `rql.extraction.silent_drop_suspected` signal every other extraction
 /// parser emits on a suspected drop. The caller still receives an empty list
@@ -309,7 +307,7 @@ pub(crate) fn parse_index_list(json: &str) -> Vec<usize> {
 
 /// Classify why [`parse_index_list`] failed to deserialise `s` into the full
 /// [`ContradictionVerdictWrapper`], for a bounded-cardinality metric label
-/// (Rule 19 — never raw text in a label).
+/// (never raw text in a label).
 fn classify_index_list_parse_failure(s: &str) -> &'static str {
     match serde_json::from_str::<serde_json::Value>(s) {
         Ok(serde_json::Value::Array(_)) => "bare_array",
@@ -339,8 +337,8 @@ ws ::= [ \t\n]*"#;
 // TwoPoolDetector
 // ---------------------------------------------------------------------------
 
-/// Bundled parameters for [`TwoPoolDetector::detect`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`TwoPoolDetector::detect`] — args-as-object to
+/// keep the function under clippy's `too_many_arguments` threshold.
 pub struct DetectParams<'a> {
     /// The newly extracted fact to check.
     pub new_fact: &'a ExtractedFact,
@@ -355,7 +353,7 @@ pub struct DetectParams<'a> {
 /// Contradiction detector using two candidate pools and temporal overlap filtering.
 pub(crate) struct TwoPoolDetector<L: ChatProvider> {
     llm: Arc<L>,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Set by the
+    /// Consumer-supplied model identifier. Set by the
     /// Engine via [`with_model`](Self::with_model) at construction — NOT read off
     /// `llm.model()`. Drives capability detection + metric labels for the
     /// contradiction-verdict call. `None`/empty → `PromptOnly`.
@@ -367,7 +365,7 @@ impl<L: ChatProvider> TwoPoolDetector<L> {
         Self { llm, model: None }
     }
 
-    /// Set the consumer-supplied model identifier (Option-1). Chainable; the
+    /// Set the consumer-supplied model identifier. Chainable; the
     /// Engine calls this with `self.model.clone()` at construction.
     pub(crate) fn with_model(mut self, model: Option<String>) -> Self {
         self.model = model;
@@ -539,7 +537,7 @@ mod tests {
     /// Returns the example's text so the caller can assert on it. Deliberately
     /// matches the SHAPE (populated index list) rather than specific digits —
     /// see the caller for why. Char-boundary-safe: only ever slices at byte
-    /// offsets returned by `find`, which are always boundaries (TD-164).
+    /// offsets returned by `find`, which are always boundaries.
     fn regex_lite_find_populated_indices_example(prompt: &str) -> Option<&str> {
         let mut from = 0usize;
         while let Some(rel) = prompt[from..].find(r#"{"indices": ["#) {
@@ -717,9 +715,8 @@ mod tests {
     fn test_dual_list_prompt_requires_reason_in_output_instruction() {
         // Producer/consumer contract regression guard: `parse_index_list`
         // deserialises into `ContradictionVerdictWrapper` whose `reason`
-        // field carries NO `#[serde(default)]` (ADR-049 /
-        // `llm-output-parse-loudly`) — a verdict omitting `reason` is a
-        // parse FAILURE, not a degraded-but-accepted result. If the prompt
+        // field carries NO `#[serde(default)]` — a verdict omitting `reason`
+        // is a parse FAILURE, not a degraded-but-accepted result. If the prompt
         // ever again asks only for `{"indices": [...]}` without `reason`,
         // a compliant model will omit the field and the parser will reject
         // ~every verdict — exactly the drop measured on the live conv0 run
@@ -743,13 +740,12 @@ mod tests {
         // also demonstrate `reason` — a model that only sees `reason` in
         // one example may omit it in the other case.
         // Asserts the INVARIANT ("a populated-indices example carries reason"),
-        // not the literal `[1, 3]` the prompt happened to use in 2026-07.
-        // TD-167 reworded the prompt and its example became `[1]` — a single
-        // replacement, which is what that example now demonstrates. Pinning the
-        // exact digits made this test fail on a legitimate rewording while
-        // protecting nothing extra: the property TD-133 needs is that BOTH the
-        // populated and the empty case show `reason`, which is checked here at
-        // full strength.
+        // not the literal digits the prompt happens to use — a prior prompt
+        // rewording changed its example to `[1]`, a single replacement, which
+        // is what that example now demonstrates. Pinning the exact digits made
+        // this test fail on a legitimate rewording while protecting nothing
+        // extra: the property that matters is that BOTH the populated and the
+        // empty case show `reason`, which is checked here at full strength.
         let populated_example = regex_lite_find_populated_indices_example(&prompt);
         assert!(
             populated_example.is_some_and(|e| e.contains("\"reason\"")),
@@ -766,8 +762,8 @@ mod tests {
     #[test]
     fn test_parse_index_list_wrapped_valid() {
         // New contract: LLM must return wrapped form {"indices": [1, 3], "reason": "..."}.
-        // T1.7 (sprint plan v0-2-0-phase-b-prep): reason is REQUIRED (no serde-default)
-        // per `llm-output-parse-loudly`; missing reason = parse error = empty fallback.
+        // `reason` is REQUIRED (no serde-default); missing reason = parse
+        // error = empty fallback.
         assert_eq!(
             parse_index_list(r#"{"indices": [1, 3], "reason": "overlap on object"}"#),
             vec![1usize, 3]
@@ -786,14 +782,13 @@ mod tests {
 
     #[test]
     fn test_parse_index_list_bare_array_rejected_missing_reason() {
-        // 2026-07-20 parse-layer hardening regression fix (Vera SCOPE-002 /
-        // code-review F1): a bare `[1, 3]` array has NO `reason` field by
-        // construction, so it can never satisfy the `ContradictionVerdictWrapper`
-        // contract (ADR-049: `reason` is required, no `#[serde(default)]`).
-        // `parse_index_list` MUST reject it — same footing as any other
-        // reason-less verdict — rather than silently accepting it via a
-        // shape-tolerant fallback (that was the F1 regression: routing
-        // through the generic `parse_items` helper, which only checks
+        // Parse-layer hardening regression fix: a bare `[1, 3]` array has NO
+        // `reason` field by construction, so it can never satisfy the
+        // `ContradictionVerdictWrapper` contract (`reason` is required, no
+        // `#[serde(default)]`). `parse_index_list` MUST reject it — same
+        // footing as any other reason-less verdict — rather than silently
+        // accepting it via a shape-tolerant fallback (the original regression
+        // routed through the generic `parse_items` helper, which only checks
         // `indices` and ignores `reason` entirely).
         assert_eq!(parse_index_list("[1, 3]"), Vec::<usize>::new());
     }
@@ -801,8 +796,8 @@ mod tests {
     #[test]
     fn test_parse_index_list_wrapped_missing_reason_rejected() {
         // A wrapped object with `indices` but no `reason` must be rejected —
-        // ADR-049 / llm-output-parse-loudly: missing `reason` is a parse
-        // failure, not a silently-accepted degraded result.
+        // missing `reason` is a parse failure, not a silently-accepted
+        // degraded result.
         assert_eq!(
             parse_index_list(r#"{"indices": [1, 3]}"#),
             Vec::<usize>::new()
@@ -816,9 +811,9 @@ mod tests {
 
     #[test]
     fn parse_index_list_rejection_emits_loud_observability() {
-        // F1 fix must not silently drop a reason-less verdict — Vera
-        // SCOPE-002's original complaint. Verify BOTH the missing-reason and
-        // bare-array rejection paths increment the loud-failure counters
+        // This fix must not silently drop a reason-less verdict. Verify
+        // BOTH the missing-reason and bare-array rejection paths increment
+        // the loud-failure counters
         // (`json_parse_fail` + `silent_drop_suspected`), using a local
         // (non-global) `DebuggingRecorder` — same pattern as
         // `tests/b1_observability.rs`.
@@ -1000,7 +995,7 @@ mod tests {
     fn test_contradiction_via_mock_llm() {
         // Pool A has one fact that overlaps temporally and has a different object.
         // MockChatProvider returns the wrapped form {"indices":[1],"reason":"..."}
-        // for prompts containing "works_at" — `reason` is required (ADR-049); a
+        // for prompts containing "works_at" — `reason` is required; a
         // bare-array form "[1]" is REJECTED (no `reason` field possible) — see
         // `test_parse_index_list_bare_array_rejected_missing_reason`.
         let t_start = dt(-10);

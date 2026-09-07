@@ -19,14 +19,14 @@
 //!
 //! | Index | Lock | Location | Guards |
 //! |-------|------|----------|--------|
-//! | 1 | `write_lock: tokio::sync::Mutex<()>` | `TemporalGraph` (ADR-022) | Serialises concurrent write transactions (BEGIN IMMEDIATE). Acquired first — before any sub-lock — on every write path. |
+//! | 1 | `write_lock: tokio::sync::Mutex<()>` | `TemporalGraph` | Serialises concurrent write transactions (BEGIN IMMEDIATE). Acquired first — before any sub-lock — on every write path. |
 //! | 2 | `session: std::sync::Mutex<ort::Session>` | `OrtEmbeddingProvider`, `NerModel` | Guards the ORT inference session. Short critical section; never held across await points. |
 //! | 3 | `entries: std::sync::Mutex<HashMap>` | `SpeculativeCache` | Guards speculative-cache entries. Never held while acquiring index-2 locks. |
 //! | 4 | `error_rx: std::sync::Mutex<Receiver<IngestError>>` | `BackgroundIngestor` | Guards the ingest-error channel receiver. Never held while acquiring index-1, -2, or -3 locks. |
 //!
 //! ## Rules
 //!
-//! 1. The ADR-022 `write_lock` (index 1) is **always acquired first** on any
+//! 1. The `write_lock` (index 1) is **always acquired first** on any
 //!    write path through `TemporalGraph`. It is held for the duration of the
 //!    SQLite write transaction and released only after `COMMIT` or `ROLLBACK`.
 //! 2. ORT session locks (index 2) are held only during model inference, never
@@ -128,7 +128,7 @@ pub mod background;
 pub mod canonicalization;
 pub mod chat_tracking;
 pub mod chunking;
-/// Confidence-aware merge helpers — noisy-OR combination (ADR-063 Site #6, the
+/// Confidence-aware merge helpers — noisy-OR combination (Site #6, the
 /// deterministic half; the reject-floor gate is S4-blocked, see the module docs).
 pub(crate) mod confidence;
 pub mod config;
@@ -147,26 +147,26 @@ pub mod format;
 pub mod graph;
 pub mod grounding;
 pub mod hybrid_extractor;
-/// Shared identity-verdict schema + deterministic write-gate (ADR-063 spec §2).
+/// Shared identity-verdict schema + deterministic write-gate.
 /// Crate-internal — consumed by Site #5 (dream acronym/nickname recall), Site #3
 /// (type-registry collapse), and composes with Site #6; not napi-exposed.
 pub(crate) mod identity_verdict;
 pub mod ingest;
 pub mod intelligence;
-/// Query-intent classification for recall scoring (TD-066 phase 1, recall-v2
-/// spec Decision 1). Zero-LLM keyword heuristic; not yet wired into the live
-/// recall path (phase 2) — see module docs for the HALF-FEATURE note.
+/// Query-intent classification for recall scoring. Zero-LLM keyword
+/// heuristic; not yet wired into the live recall path — see module docs for
+/// the half-feature note.
 pub(crate) mod intent;
 pub mod migrations;
 #[cfg(feature = "ner")]
 pub mod ner;
 pub mod obs;
 pub mod provider;
-/// ADR-062 / ADR-082 Phase 3 — graph-proximity boost axis: pure
-/// `usize -> f32` bonus math, read-side-pure (no `execute(`).
+/// Graph-proximity boost axis: pure `usize -> f32` bonus math, read-side-pure
+/// (no `execute(`).
 pub(crate) mod proximity;
 pub mod rates;
-/// TD-062 cross-encoder reranker (spec §3 Increment 3 / §4). Crate-internal —
+/// Cross-encoder reranker. Crate-internal —
 /// the `Reranker` trait + `FastEmbedReranker` are consumed by the recall
 /// pipeline (`facade::recall`); consumers configure it via
 /// `SearchOpts.rerank_k`, not by naming the trait directly.
@@ -175,8 +175,8 @@ pub(crate) mod rerank;
 pub mod resolver;
 pub(crate) mod resolver_batched;
 pub mod schema;
-/// Post-RRF recall scoring axes (recall-v2 Phase 2b): ScoringWeights, per-intent
-/// weight lookup, temporal-recency boost, read-side-pure (no `execute(`).
+/// Post-RRF recall scoring axes: ScoringWeights, per-intent weight lookup,
+/// temporal-recency boost, read-side-pure (no `execute(`).
 pub(crate) mod scoring;
 pub mod search;
 pub mod sink;
@@ -193,10 +193,10 @@ pub use sink::{
 };
 
 // Test-utils re-export for the Site #2 metrics harness
-// (`tests/dream_metrics_harness_site2.rs`, ADR-063 spec §4.3 sibling / §2.2).
+// (`tests/dream_metrics_harness_site2.rs`).
 // `identity_verdict` (the module itself) is `pub(crate) mod identity_verdict;`
 // above — crate-internal, so even though its items are individually `pub` +
-// `#[doc(hidden)]` (MNT-002 pattern), the module path is unreachable from an
+// `#[doc(hidden)]`, the module path is unreachable from an
 // external integration-test binary without this re-export. Mirrors the
 // `dream/mod.rs` test-utils re-export blocks exactly (same E0365-adjacent
 // visibility requirement); not part of the stable public API contract.

@@ -1,4 +1,4 @@
-//! Process-global `TemporalGraph` singleton. Story #5.
+//! Process-global `TemporalGraph` singleton.
 //!
 //! `engine_init` initialises the singleton once; subsequent calls are no-ops
 //! when the same (or any) path is provided — the singleton is already
@@ -75,7 +75,7 @@ mod tests {
 
     use super::*;
 
-    /// Story #5: engine() before engine_init panics with the invariant message.
+    /// engine() before engine_init panics with the invariant message.
     #[test]
     fn engine_panics_before_init() {
         // Only meaningful when ENGINE is uninitialised. If another test in
@@ -102,7 +102,7 @@ mod tests {
         }
     }
 
-    /// Story #5: engine_init is idempotent — second call returns Ok(()) without
+    /// engine_init is idempotent — second call returns Ok(()) without
     /// opening a new connection. ptr_eq verifies it's the same Arc allocation.
     #[tokio::test]
     async fn engine_init_idempotent_and_ptr_eq() {
@@ -117,7 +117,7 @@ mod tests {
         );
     }
 
-    /// Story #5 FU.3 AC#3: concurrent engine_init lost-race path emits tracing::warn!
+    /// Concurrent engine_init lost-race path emits tracing::warn!
     ///
     /// Two tasks race through `engine_init`. The loser (whose `OnceLock::set` is
     /// rejected) must emit a `warn!` to `target = "kremory::engine"`. Because
@@ -158,7 +158,7 @@ mod tests {
         // contested, the post-condition is that every caller got Ok(()).
     }
 
-    /// Story #5: concurrent engine_init calls both return Ok(()) and exactly one
+    /// Concurrent engine_init calls both return Ok(()) and exactly one
     /// TemporalGraph::open actually executes.
     ///
     /// Uses a test-isolated `tokio::sync::OnceCell` (not the global ENGINE) so

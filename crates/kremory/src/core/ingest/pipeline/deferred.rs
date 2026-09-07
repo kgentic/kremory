@@ -24,22 +24,21 @@ use crate::core::sink::{ContradictionDetected, EntityId, IngestEventSink, SinkFa
 
 use crate::core::ingest::Engine;
 
-/// Bundled parameters for [`Engine::ingest_deferred`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`Engine::ingest_deferred`] — args-as-object to
+/// keep the function under clippy's too_many_arguments threshold.
 pub struct IngestDeferredParams<'a> {
     pub text: &'a str,
     pub reference_time: Option<DateTime<Utc>>,
-    /// TD-187: the caller-DECLARED document anchor (`SourceRef::published_at`)
+    /// The caller-DECLARED document anchor (`SourceRef::published_at`)
     /// ONLY — never `reference_time` / `occurred_at` / wall-clock. Forwarded
     /// into [`crate::core::intelligence::ExtractionContext::reference_time`]
-    /// below. Currently always `None` on this Phase-2 (background worker)
-    /// path: the `BackgroundIngestor` plumbing (`IngestRequest` /
-    /// `DeferredRequest`) does not carry a caller-declared publish time
-    /// distinct from `reference_time` today — that is a pre-existing gap in
-    /// the background-ingestor surface, out of scope for TD-187, which only
-    /// wires the inline `EngineGraphHandle::graph_ingest_episode` path
-    /// (`memory/engine_handle.rs`). See that field's doc comment for the
-    /// VCR-fingerprint hazard this separation exists to avoid.
+    /// below. Currently always `None` on this background-worker path: the
+    /// `BackgroundIngestor` plumbing (`IngestRequest` / `DeferredRequest`)
+    /// does not carry a caller-declared publish time distinct from
+    /// `reference_time` today — a pre-existing gap in the background-ingestor
+    /// surface; the inline `EngineGraphHandle::graph_ingest_episode` path
+    /// (`memory/engine_handle.rs`) wires it. See that field's doc comment for
+    /// the VCR-fingerprint hazard this separation exists to avoid.
     pub declared_reference_time: Option<DateTime<Utc>>,
     pub group_id: Option<&'a str>,
     pub content_type: Option<ContentType>,
@@ -66,8 +65,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// extracted), `on_stage_change(Invalidating)` once on first Superseded
     /// contradiction, `on_contradiction` per resolved contradiction,
     /// `on_edge_added` after each episodic edge insert (subject + object sites).
-    /// Per ADR-052 §3.1 rows 90–94 (Phase 3c fire-site catalogue).
-    // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
+    // Substrate primitive; the consumer-facing surface is the kremory::Memory facade.
     pub async fn ingest_deferred(
         &self,
         params: IngestDeferredParams<'_>,
@@ -82,7 +80,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             ner_entity_names,
             sink,
         } = params;
-        // TD-019 Gap 2: phase2_ms — deferred relationship extraction latency,
+        // phase2_ms — deferred relationship extraction latency,
         // distinct from phase1_ms (user-facing sync work).
         let phase2_start = Instant::now();
         let ref_time = reference_time.unwrap_or_else(Utc::now);
@@ -109,16 +107,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let deferred_registry =
             EntityTypeRegistry::load_for_group(&self.graph.conn, deferred_effective_gid).await?;
 
-        // TD-028 Phase B — B1 (deferred path): derive allowed_entity_types from the
-        // live deferred_registry, mirroring the primary ingest path derivation above.
-        // Spec: td-028-phase1-pull-shape-registry-read-micro-spec-2026-06-09.md §1.
+        // Deferred path: derive allowed_entity_types from the live
+        // deferred_registry, mirroring the primary ingest path derivation above.
         let deferred_allowed_entity_types_live: Vec<String> = deferred_registry
             .specs()
             .iter()
             .map(|s| s.name.clone())
             .collect();
 
-        // ADR-080 — prior-turn replay on the DEFERRED path. `IngestDeferredParams`
+        // Prior-turn replay on the DEFERRED path. `IngestDeferredParams`
         // does not carry the source id (same plumbing gap its
         // `declared_reference_time` doc records), so resolve it from the episode
         // row rather than letting background ingests silently skip replay —
@@ -194,7 +191,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         // Store facts (contradiction detection + insert), same logic as ingest_with.
         //
-        // TD-167: gated identically to `ingest_with`. This is the SECOND call
+        // Gated identically to `ingest_with`. This is the SECOND call
         // site — gating only the first would leave the deferred/background
         // ingest path still destroying set-valued facts, which is exactly the
         // fork-shaped bug this codebase keeps hitting. Facts are still stored;
@@ -218,7 +215,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         };
         let mut inserted_count: usize = 0;
 
-        // MED-01 fire-once flags (ADR-052 §3.1 normative):
+        // Fire-once flags:
         //   fired_deduplicating — on_stage_change(Deduplicating) fires ONCE per call,
         //     on entry to the contradiction-detection loop (when ≥1 fact extracted).
         //   fired_invalidating  — on_stage_change(Invalidating) fires ONCE per call,
@@ -278,10 +275,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 pool_b_hits.into_iter().map(|h| h.item).collect();
 
             // ── Fire-site 1: on_stage_change(Deduplicating) ──────────────────────
-            // MED-01 normative: fires ONCE per ingest_deferred call, on entry to the
+            // Fires ONCE per ingest_deferred call, on entry to the
             // contradiction-detection loop when ≥1 fact is extracted. Fires regardless
-            // of whether contradictions are actually found. (arch spec §3.1 row 90)
-            // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+            // of whether contradictions are actually found.
+            // callback_duration_ms wraps on_stage_change (slow-consumer detection).
             if !fired_deduplicating {
                 let cb_start = Instant::now();
                 if let Some(s) = sink {
@@ -303,7 +300,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 fired_deduplicating = true;
             }
 
-            // TD-167: skipped when disabled — no LLM call, no invalidation.
+            // Skipped when disabled — no LLM call, no invalidation.
             let contradiction_result = match &detector {
                 Some(d) => {
                     d.detect(DetectParams {
@@ -323,11 +320,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
             for fact_id in &contradiction_result.contradictions {
                 // ── Fire-site 3: on_stage_change(Invalidating) ───────────────────
-                // MED-01: fires ONCE per call on the FIRST Superseded contradiction.
+                // Fires ONCE per call on the FIRST Superseded contradiction.
                 // Resolution is always Superseded here — invalidate_fact_with_reason
                 // marks the prior fact invalid_at (bi-temporal supersession path).
-                // (arch spec §3.1 row 92)
-                // Phase 5: callback_duration_ms wraps on_stage_change (G7 slow-consumer detection).
+                // callback_duration_ms wraps on_stage_change (slow-consumer detection).
                 if !fired_invalidating {
                     let cb_start = Instant::now();
                     if let Some(s) = sink {
@@ -363,7 +359,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // ── Fire-site 4: on_contradiction ────────────────────────────────
                 // Per-contradiction basis (loop). Fires for each resolved contradiction
                 // regardless of resolution variant. Resolution = Superseded: the prior
-                // fact was marked invalid_at above. (arch spec §3.1 row 93)
+                // fact was marked invalid_at above.
                 let prior_sink_fact =
                     all_pool
                         .iter()
@@ -412,12 +408,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 );
             }
 
-            // F5 — within-episode DUPLICATE pre-check (deferred path).
+            // Within-episode DUPLICATE pre-check (deferred path).
             //
-            // DUR-2 second copy. V1-CANONICAL §4.1 cited only the inline path
-            // (`ingest_with.rs`); this identical object-agnostic check lives here too,
-            // and this is the path `Memory::remember()` actually drives (Path β — see
-            // V1-CANONICAL §6d), so this copy is the one most consumers hit.
+            // Second copy of the object-agnostic check: the inline path
+            // (`ingest_with.rs`) has an identical check; this copy lives here too,
+            // and this is the path `Memory::remember()` actually drives (Path β),
+            // so this copy is the one most consumers hit.
             //
             // Must match on the FULL TRIPLE: `pool_a` is object-agnostic, so comparing
             // subject+predicate alone dropped every value but the first for a
@@ -444,13 +440,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 continue;
             }
 
-            // ADR-045 §11's DETECTION intent, preserved additively — deferred path.
+            // DETECTION intent, preserved additively — deferred path.
             // Mirrors the inline path exactly (see `ingest_with.rs` for the full
             // reasoning): fires when ONE episode asserts multiple DISTINCT objects for
             // the same subject+predicate. The value is now STORED rather than dropped;
             // this counter is what makes the phenomenon measurable so contradiction
             // policy can later be designed against real counts. Parity matters here in
-            // particular because this is the path `Memory::remember()` drives (§6d).
+            // particular because this is the path `Memory::remember()` drives.
             let deferred_within_multivalue = pool_a
                 .iter()
                 .any(|f| f.source_episode_id == Some(episode_id));
@@ -470,14 +466,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 );
             }
 
-            // ADR-035 §5 Option A: caller-pin dedup parity with the inline path.
+            // Caller-pin dedup parity with the inline path.
             // MUST be `_with_group(.., Some(deferred_effective_gid))`: entities are
             // upserted into this namespace (entity_group_id: group_id below), and the
             // facts composite FK (subject_id, subject_group_id) → entities(id, group_id)
             // (schema.rs:1450) fails — silently dropping the fact — if the group columns
             // aren't stamped with the entities' namespace. This is the same fix as the
             // inline path (ingest_with.rs); the deferred/background path had the identical
-            // bug (Quinn REL-001, 2026-06-29).
+            // bug.
             match self
                 .graph
                 .try_insert_fact_with_group(
@@ -486,7 +482,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         predicate: &fact.predicate,
                         object_id: object_id.as_deref(),
                         object_value,
-                        // TD-187 round 2 — mirrors the inline path in `ingest_with.rs`.
+                        // Mirrors the inline path in `ingest_with.rs`.
                         // Both fact-insert sites MUST apply the same fallback; a divergence
                         // here would make a fact's world time depend on whether extraction
                         // ran inline or deferred, which the consumer cannot observe or control.
@@ -500,7 +496,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 .await
             {
                 Ok(Some(fact_id)) => {
-                    // TD-143: WRITE into `facts.embedding` — document-prefix it.
+                    // WRITE into `facts.embedding` — document-prefix it.
                     let fact_text = format!("{} {} {}", fact.subject, fact.predicate, fact.object);
                     let prefixed_fact_text = document_embed_text(
                         &fact_text,
@@ -517,11 +513,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // must reference the same namespace for the composite FK to resolve.
                     if name_to_id.contains_key(&normalize_name(&fact.subject)) {
                         // ── Fire-site 5a: on_edge_added (subject) ────────────────────
-                        // HIGH-01 fix: guard sink on is_ok() — mirrors verify_stage.rs stage3_write
+                        // Guard sink on is_ok() — mirrors verify_stage.rs stage3_write
                         // pattern. Sink MUST NOT fire for edges that were never written.
                         // predicate_kind = "fact" distinguishes from Phase 3a mention edges.
                         // D7: episode_id not used as label; carried in tracing field only.
-                        // (arch spec §3.1 row 94)
                         // Migration 006: thread `group_id` — deferred-phase entities were
                         // persisted under this namespace by Phase 1, so the episodic edge
                         // must reference the same namespace for the composite FK to resolve.
@@ -558,9 +553,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     if let Some(ref obj_id) = object_id {
                         if name_to_id.contains_key(&normalize_name(&fact.object)) {
                             // ── Fire-site 5b: on_edge_added (object) ─────────────────
-                            // HIGH-01 fix: guard sink on is_ok() — same pattern as subject site.
+                            // Guard sink on is_ok() — same pattern as subject site.
                             // predicate_kind = "fact" (same bounded label as subject site).
-                            // (arch spec §3.1 row 94)
                             // Migration 006: thread `group_id` for composite-FK parity.
                             if self
                                 .graph
@@ -604,12 +598,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     );
                 }
                 Err(e) => {
-                    // TD-080 P0 (Rule 19): label by namespace + reason so the silent
+                    // Label by namespace + reason so the silent
                     // composite-FK drop class is distinguishable from generic failures.
                     // `fk_mismatch` ⇒ the subject/object entity isn't resolvable in this
-                    // fact's namespace (the exact TD-080 #1 failure shape). Routed
-                    // through the shared `Error::fact_insert_failure_reason` (B2
-                    // observability hardening, 2026-07-21) so this taxonomy matches
+                    // fact's namespace. Routed through the shared
+                    // `Error::fact_insert_failure_reason` so this taxonomy matches
                     // the foreground ingest + graph-layer insert paths — this also
                     // upgrades this path to distinguish `unique_violation` /
                     // `db_error`, which the prior ad-hoc string match collapsed into
@@ -619,7 +612,6 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // (group_id) is consumer-supplied + unbounded — it stays in
                     // the warn log + KREMORY_DEBUG dump below, never a metric
                     // label (observability-first: no unbounded label cardinality).
-                    // TD-133 B3 follow-up.
                     metrics::counter!(
                         "kremory.ingest.deferred_phase2_fact_insert_failed_total",
                         "reason" => reason,
@@ -635,7 +627,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         "kremory.ingest.deferred_phase2_fact_insert_failed"
                     );
                     // KREMORY_DEBUG mismatch detector (matches parsers.rs convention):
-                    // surfaces the exact signal that would have squashed TD-080 in
+                    // surfaces the exact signal needed to diagnose a namespace mismatch in
                     // seconds — the fact's namespace vs its subject/object entity being
                     // absent there. Zero cost when the switch is off.
                     if reason == "fk_mismatch" && std::env::var("KREMORY_DEBUG").is_ok() {

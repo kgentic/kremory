@@ -1,4 +1,4 @@
-// ─── Phase A foundational types (C6 spec §5.5 GAP-001) ───────────────────────
+// ─── Foundational NER-candidate types ────────────────────────────────────────
 
 /// A NER candidate returned by Phase 1 (`ingest_phase1_ner`).
 ///
@@ -6,7 +6,7 @@
 /// feature is active, or empty Vec without it). Passed to Stage 2 verify and
 /// then to `write_verified_entities` after decisions are resolved.
 ///
-/// Per C6 spec §5.5 — callers MUST NOT write entity rows until after
+/// Callers MUST NOT write entity rows until after
 /// `write_verified_entities` is called with the resolved decisions.
 #[derive(Debug, Clone)]
 pub struct EntityCandidate {
@@ -26,7 +26,7 @@ pub struct EntityCandidate {
 /// Contains exactly one episode row (already written to the DB) and zero
 /// entity rows — entity writes are deferred to `write_verified_entities`.
 ///
-/// Per C6 spec §5.5: episode_id is the FK used by `write_verified_entities`
+/// `episode_id` is the FK used by `write_verified_entities`
 /// to link written entities back to their source episode.
 #[derive(Debug)]
 pub struct IngestPhase1Result {
@@ -40,7 +40,7 @@ pub struct IngestPhase1Result {
 /// A decision about a single `EntityCandidate` from the verify stage.
 ///
 /// Used by `write_verified_entities` to determine which entity_type_id to
-/// write for each candidate. Per C6 spec §5.4:
+/// write for each candidate:
 /// - `Confirm` — write with `candidate.entity_type_id_raw` (NER was correct)
 /// - `Correct` — write with `new_type_id` (verify corrected the NER type)
 /// - `Demote` — write with `entity_type_id = 0` (catch-all; NER was wrong,

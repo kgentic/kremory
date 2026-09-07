@@ -48,13 +48,13 @@ pub struct ExtractedFact {
     /// resolvable time. `None` is the majority case (61% on a 30-turn real-corpus
     /// sample) and means "the text gave no date" — NOT "no date exists".
     ///
-    /// TD-187 round 2. Before this field, every fact extracted from one episode
+    /// Before this field, every fact extracted from one episode
     /// was written with the SAME `valid_from` (the episode's `ref_time`), so
     /// per-fact temporal distinctions — "she left in June, joined in September" —
     /// were unrepresentable, and `RetrievedFact.valid_at`
     /// (`memory/types.rs`, documented "World clock: when the fact became true")
     /// could only ever return document granularity. `as_of()` filters on this
-    /// value (ADR-068), so it is load-bearing for the bi-temporal query surface.
+    /// value, so it is load-bearing for the bi-temporal query surface.
     ///
     /// `None` MUST fall back to the episode `ref_time` at the persist sites, so
     /// this is strictly additive: facts without a stated date behave exactly as
@@ -117,13 +117,13 @@ pub struct ExtractionContext<'a> {
     /// Override for slow local LLMs (qwen2.5:14b ~80-130s per call) by
     /// setting `PipelineConfig::extraction_arm_budget_ms` to 180_000-300_000.
     pub arm_budget_ms: u64,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Populated by
+    /// Consumer-supplied model identifier. Populated by
     /// the Engine from its `model` field (sourced from the builder, NOT from
     /// `llm.model()`). Drives capability detection in `extraction/structured.rs`
     /// (Ollama → `FormatSchema`, OpenAI/Anthropic GA → `NativeSchema`, else
     /// `PromptOnly`) + metric labels. `None`/empty → `PromptOnly`.
     pub model: Option<&'a str>,
-    /// TD-187 (temporal grounding): the caller-DECLARED document anchor —
+    /// Temporal grounding: the caller-DECLARED document anchor —
     /// `SourceRef::published_at` — and ONLY that. It is deliberately NOT
     /// `ref_time` / `occurred_at` / `Utc::now()`.
     ///
@@ -131,7 +131,7 @@ pub struct ExtractionContext<'a> {
     /// tell the LLM what date the source document was dated, so relative-time
     /// phrases in the text ("yesterday", "last week") resolve to an absolute
     /// date. `None` means: render NOTHING extra in the prompt — the prompt is
-    /// byte-identical to the pre-TD-187 prompt.
+    /// byte-identical to the previous prompt.
     ///
     /// # Why this must NEVER be wall-clock
     ///
@@ -142,14 +142,14 @@ pub struct ExtractionContext<'a> {
     /// wall-clock value ever reached the prompt, the fingerprint would change
     /// on every single test run and permanently break all 303 committed chat
     /// cassettes under `crates/kremory/tests/cassettes/` (this already
-    /// happened once via the contradiction prompt — see the TD-181 comment at
+    /// happened once via the contradiction prompt — see the comment at
     /// `memory/engine_handle.rs:190-210`). `published_at` is the one field
     /// that stays `None` unless a caller opts in via
     /// `RememberRequest::published_at()`, so it is safe: `None` in every
     /// existing cassette-backed test, `Some` only when a caller has
     /// deliberately dated the document.
     pub reference_time: Option<DateTime<Utc>>,
-    /// ADR-080 (prior-turn replay): the contents of the preceding episodes of
+    /// Prior-turn replay: the contents of the preceding episodes of
     /// the SAME conversation thread, oldest-first, so that references in `text`
     /// resolve. A bare `"I prefer that one"` has nothing to resolve against on
     /// its own; with the preceding turns in view the extractor can name what
@@ -158,8 +158,7 @@ pub struct ExtractionContext<'a> {
     /// Both live competitors do exactly this and converged on N=10 — mem0
     /// replays the last 10 rows of its `messages` table for the session
     /// (`mem0/memory/main.py:920`), Graphiti the last 10 episodes for the group
-    /// (`graphiti_core/graphiti.py:1086`). See
-    /// `.ai-docs/research/competitive-landscape/write-path-teardown-2026-09-06.md`.
+    /// (`graphiti_core/graphiti.py:1086`).
     ///
     /// Populated by `ingest_with` / the deferred path from
     /// `TemporalGraph::prior_episodes_for_source`, keyed on the episode's
@@ -200,7 +199,7 @@ impl<'a> Default for ExtractionContext<'a> {
 }
 
 impl<'a> ExtractionContext<'a> {
-    /// Model identifier for capability detection + metric labels (Option-1).
+    /// Model identifier for capability detection + metric labels.
     /// Returns `""` when unset, matching the prior `llm.model()` empty-string
     /// "no model configured" semantics consumed by `extraction/structured.rs`.
     pub fn model(&self) -> &str {
@@ -367,7 +366,7 @@ impl EntityExtractor for MockExtractor {
                             object,
                             is_entity_ref: *is_entity_ref,
                             confidence: 1.0,
-                            // TD-187 round 2: this is the zero-LLM pattern-matching
+                            // This is the zero-LLM pattern-matching
                             // extractor — it has no date understanding by construction.
                             // `None` ⇒ episode `ref_time` fallback, unchanged behaviour.
                             valid_at: None,
@@ -517,8 +516,8 @@ pub(crate) struct ProcessedIngestion {
 
 // ─── Orchestration Pipeline ───────────────────────────────────────────────────
 
-/// Bundled parameters for [`IntelligencePipeline::process`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`IntelligencePipeline::process`] — args-as-object
+/// to keep the function under clippy's `too_many_arguments` threshold.
 #[allow(dead_code)]
 pub(crate) struct ProcessParams<'a> {
     /// The text chunk to extract entities and facts from.
@@ -634,9 +633,9 @@ mod tests {
         }
     }
 
-    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
-    // production fns, not `#[cfg(test)]` builders.
+    // Test helper: test helpers may carry a documented `too_many_arguments`
+    // allow per clippy.toml; the args-as-object pattern used elsewhere in
+    // this file targets `src/` production fns, not `#[cfg(test)]` builders.
     #[allow(clippy::too_many_arguments)]
     fn make_fact(
         id: i64,
@@ -664,18 +663,18 @@ mod tests {
             memory_type: None,
             content_hash: None,
             access_count: 0,
-            // ADR-029b composite FK backfill: None on pre-migration synthetic
+            // Composite FK backfill: None on pre-migration synthetic
             // rows (matches `subject_group_id` / `object_group_id` docstring).
             subject_group_id: None,
             object_group_id: None,
         }
     }
 
-    /// TD-187: `reference_time` must default to `None` — `None` is what
+    /// `reference_time` must default to `None` — `None` is what
     /// `build_triplet_prompt` (extraction/graphiti.rs) treats as "render
     /// nothing extra", which keeps every caller that constructs
     /// `ExtractionContext::default()` (or `..Default::default()`)
-    /// byte-identical to the pre-TD-187 prompt.
+    /// byte-identical to the previous prompt.
     #[test]
     fn extraction_context_default_reference_time_is_none() {
         assert!(ExtractionContext::default().reference_time.is_none());

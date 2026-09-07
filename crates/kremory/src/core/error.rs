@@ -3,7 +3,7 @@ use thiserror::Error;
 
 /// Status of a Phase 2 (per-episode enrichment) run.
 ///
-/// Per ADR D.6.3 + ADR-052 D5 — canonical ingest status enum.
+/// Canonical ingest status enum.
 ///
 /// ## Phase 2 state sequence (successful episode)
 ///
@@ -37,8 +37,8 @@ pub enum IngestStatus {
     /// `Memory::wait_for_processing` resolves when this state is reached
     /// (SQL reaches `'Verified'`).
     ///
-    /// Added in v0.2.3 (ADR-052 D5 — Phase 2a/2b event granularity);
-    /// re-established by the ADR-052 Gap 1 sink-callsite cause-fix after the
+    /// Added in v0.2.3 (Phase 2a/2b event granularity);
+    /// re-established by a sink-callsite cause-fix after the
     /// fb85ba8 dual-path consolidation regressed it.
     EntitiesReady,
     Deduplicating,
@@ -50,7 +50,7 @@ pub enum IngestStatus {
     /// in this pass. Fires via `on_stage_change(SkippedIdempotent)` once per
     /// skipped entity (not once per episode).
     ///
-    /// Added in v0.2.4 (ADR-050 Phase 5 crash-safety + idempotency sink events).
+    /// Added in v0.2.4 (crash-safety + idempotency sink events).
     SkippedIdempotent,
     /// Phase 2 extraction was **never requested** — the caller chained
     /// [`RememberRequest::skip_extraction`](crate::facade::remember::RememberRequest::skip_extraction),
@@ -67,7 +67,7 @@ pub enum IngestStatus {
     /// duplicate content hash at Guard #1. This variant means extraction was
     /// never on the table.
     ///
-    /// # Why the vocabulary needed a new value (DUR-3, v1)
+    /// # Why the vocabulary needed a new value
     ///
     /// Before this, `skip_extraction` ingests stayed `'Pending'` forever, because
     /// writing `'Verified'` would have been semantically false — nothing was
@@ -160,7 +160,7 @@ pub enum Error {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
 
-    // ── Named struct variants (Story #155) ────────────────────────────────────
+    // ── Named struct variants ─────────────────────────────────────────────────
     /// SQLite INSERT succeeded but `SELECT last_insert_rowid()` returned no row.
     /// `operation` names the specific insert path (e.g. "insert_fact",
     /// "insert_episode_with_group") so callers can correlate with metrics.
@@ -175,7 +175,7 @@ pub enum Error {
 
     /// `TemporalGraph::open`/`open_with_dim` refused to operate because the
     /// caller-supplied `embedding_dim` disagrees with the embedding dimension
-    /// this store already contains data for (TD-117, Vera M2 review).
+    /// this store already contains data for.
     ///
     /// Two independent guards raise this variant (`migrate_024_verify_embedding_dim`,
     /// `core/migrations/defs_k.rs`): (1) the byte length of an existing stored
@@ -222,20 +222,20 @@ pub enum Error {
     #[error("max_words must be >= min_words ({min}), got {got}")]
     TokenWindowInvalid { got: usize, min: usize },
 
-    // ── Engine lifecycle (Story #5) ───────────────────────────────────────────
+    // ── Engine lifecycle ──────────────────────────────────────────────────────
     /// Reserved for external callers that need to signal engine-already-init.
     /// `engine_init` itself is idempotent (no-op on second call); this variant
     /// exists for callers that enforce single-init semantics at a higher layer.
     #[error("engine already initialised")]
     EngineAlreadyInitialised,
 
-    /// Reserved; `engine()` panics rather than returning this error (Story #5).
+    /// Reserved; `engine()` panics rather than returning this error.
     /// Kept in the enum for backward compatibility with any downstream code that
     /// matches on `Error::EngineNotInitialised`.
     #[error("engine not yet initialised — call engine_init before using the engine")]
     EngineNotInitialised,
 
-    // ── Content-hash dedup (Story #209) ──────────────────────────────────────
+    // ── Content-hash dedup ────────────────────────────────────────────────────
     /// An episode or fact with the same content hash already exists in the graph.
     ///
     /// `content_hash` is the SHA-256 hex digest of the deduplicated content so
@@ -243,7 +243,7 @@ pub enum Error {
     #[error("duplicate content detected: hash {content_hash} already present")]
     Duplicate { content_hash: String },
 
-    // ── Self-loop rejection (TD-080 #1, P3) ──────────────────────────────────
+    // ── Self-loop rejection ──────────────────────────────────
     /// A fact insert was rejected because `subject_id == object_id`, which would
     /// create a self-loop edge (entity points to itself). Self-loops are a formal
     /// graph invariant violation: they produce meaningless triples and confuse
@@ -262,14 +262,14 @@ pub enum Error {
         predicate: String,
     },
 
-    // ── Pre-mutation validation (Story #150) ──────────────────────────────────
+    // ── Pre-mutation validation ───────────────────────────────────────────────
     /// Two episodes within the same ingest batch share an ID, which would
     /// produce a primary-key conflict after the first INSERT. `id` is the
     /// duplicate episode identifier detected during the pre-mutation scan.
     #[error("intra-batch duplicate episode id '{id}'")]
     IntraBatchDuplicate { id: String },
 
-    // ── Namespace policy (ADR-029a, v0.1.4) ───────────────────────────────────
+    // ── Namespace policy (v0.1.4) ───────────────────────────────────
     /// A [`crate::memory::types::NamespacePolicy`] construction or validation
     /// failed. Triggered by
     /// [`crate::memory::types::NamespacePolicy::validate`],
@@ -280,7 +280,7 @@ pub enum Error {
 
     /// `register_namespace` attempted to overwrite an existing namespace's
     /// policy with a different value. Policies are immutable once stored.
-    /// Added v0.1.4 (ADR-029a Decision 7).
+    /// Added v0.1.4.
     #[error(
         "namespace policy is immutable once set: namespace '{namespace}' \
          has stored policy {stored:?}, attempted to re-register with {attempted:?}"
@@ -291,9 +291,9 @@ pub enum Error {
         attempted: crate::memory::types::NamespacePolicy,
     },
 
-    // ── ADR-029b AppendOnly enforcement (v0.1.5) ─────────────────────────────
+    // ── AppendOnly enforcement (v0.1.5) ─────────────────────────────
     /// A mutating operation (forget / dream / reassign) was attempted on a
-    /// namespace whose policy is `AppendOnly`. Added v0.1.5 (ADR-029b §3.1).
+    /// namespace whose policy is `AppendOnly`. Added v0.1.5.
     #[error(
         "namespace '{namespace}' is AppendOnly — operation '{operation}' is not permitted \
          (stored policy: {policy:?})"
@@ -304,14 +304,14 @@ pub enum Error {
         policy: crate::memory::types::NamespacePolicy,
     },
 
-    /// **RESERVED — not currently produced (ADR-029d).** Entity identity is
+    /// **RESERVED — not currently produced.** Entity identity is
     /// per-namespace-open by default: the same name in a different namespace is a
     /// legitimate independent row (emitted as a non-blocking signal, not an error).
     /// This variant is kept for the future opt-in strict-global-identity
-    /// `NamespacePolicy` (ADR-029d Decision 3, not yet built) — when a consumer
+    /// `NamespacePolicy` (not yet built) — when a consumer
     /// selects `EntityIdentityScope::StrictGlobal`, `insert_entity_with_group`
     /// will return this. The earlier doc-comment claiming an `AppendOnly` gate was
-    /// false (the guard never read policy — ADR-029d §2 P1/P2).
+    /// false (the guard never read policy).
     #[error(
         "cross-namespace collision: entity '{name}' exists in namespace '{existing_ns}' \
          but insert attempted in '{attempted_ns}'"
@@ -323,7 +323,7 @@ pub enum Error {
     },
 
     /// `as_of_all` returned more facts than the safety ceiling allows. Added
-    /// v0.1.5 (ADR-029b §4). `count` is the actual result count; `ceiling` is
+    /// v0.1.5. `count` is the actual result count; `ceiling` is
     /// the configured limit.
     #[error(
         "as_of_all result overflow: got {count} facts, ceiling is {ceiling}; \
@@ -341,17 +341,17 @@ pub enum Error {
     #[error("unsupported feature: {feature} is not yet implemented")]
     Unsupported { feature: &'static str },
 
-    // ── ADR-029c multi-namespace recall (v0.1.5) ─────────────────────────────
+    // ── Multi-namespace recall (v0.1.5) ─────────────────────────────
     /// Both `in_namespace` and `in_namespaces` were set on the same
     /// `RecallRequest`. These selectors are mutually exclusive — use one or
-    /// the other. Added v0.1.5 (ADR-029c Decision 6).
+    /// the other. Added v0.1.5.
     ///
     /// `request` uses `String` (not `&'static str`) so the error message can
     /// carry dynamic context and the variant remains `Send + Sync + 'static`.
     #[error("conflicting namespace selectors: {request}")]
     ConflictingNamespaceSelectors { request: String },
 
-    // ── StructuredCallBuilder (TD-012, Phase 4) ───────────────────────────────
+    // ── StructuredCallBuilder ───────────────────────────────
     /// A schema-constrained LLM call received syntactically valid JSON that
     /// failed schema validation. `schema_name` identifies which schema was
     /// violated; `detail` carries the field path / reason.
@@ -370,7 +370,7 @@ pub enum Error {
         raw_response: String,
     },
 
-    // ── ExtractorKind factory (ADR-039, v0.2.0) ──────────────────────────────
+    // ── ExtractorKind factory (v0.2.0) ──────────────────────────────
     /// Extractor construction failed (e.g. GLiNER weight download or
     /// ONNX session init). Only fires when `ExtractorKind::GlinerLlm` was
     /// wired via `.with_gliner()` builder knob and GLiNER failed to initialise.
@@ -392,7 +392,7 @@ pub enum Error {
     #[error("unknown extractor source requested: '{requested}'")]
     UnknownExtractor { requested: String },
 
-    // ── E-2 builder knobs (ADR-039, v0.2.0) ─────────────────────────────────
+    // ── Builder knobs (v0.2.0) ─────────────────────────────────
     /// Builder configuration conflict — two mutually exclusive knobs were set,
     /// or a required knob is missing.
     #[error("builder configuration conflict: {detail}")]
@@ -417,7 +417,7 @@ pub enum Error {
     #[error("store integrity check failed: {reason}")]
     CorruptStore { reason: String },
 
-    // ── ADR-051 async extraction wait API (v0.2.2, Phase 4) ─────────────────
+    // ── Async extraction wait API (v0.2.2) ─────────────────
     /// Background extraction pipeline transitioned the episode to `Failed`.
     ///
     /// `episode_id` is the SQLite rowid of the episode whose extraction failed.
@@ -444,7 +444,7 @@ pub enum Error {
         elapsed: std::time::Duration,
     },
 
-    // ── Reversible-graph-mutations LIFO guard (arch-spec §4.2, Quinn M1) ──────
+    // ── Reversible-graph-mutations LIFO guard ──────
     /// `unmerge` was called out of order on a CHAINED merge. A later, still-live
     /// `entity_merge` (`blocking_mutation_id`) re-used one of this mutation's
     /// endpoints (its keeper or loser), so it re-pointed facts/edges THROUGH the
@@ -474,12 +474,12 @@ pub enum Error {
     #[error("undo stale: mutation {mutation_id} cannot be reversed — {reason}")]
     UndoStale { mutation_id: i64, reason: String },
 
-    // ── Reversible-graph-mutations edit-entity cascade (arch-spec §4.3) ────────
+    // ── Reversible-graph-mutations edit-entity cascade ────────────────────────
     /// `edit_entity(...).rename(new_id)` targeted an id that ALREADY exists in the
     /// namespace. A rekey INTO an existing entity would silently FUSE two distinct
     /// entities (the loser's FKs would land on the existing keeper); the cascade
     /// refuses and returns this structured error so the consumer chooses to `merge`
-    /// explicitly instead (ADR-059 structured write-steering — never a silent
+    /// explicitly instead (structured write-steering — never a silent
     /// auto-merge). `from` is the source id, `existing` the occupied target id.
     #[error(
         "entity edit conflict: cannot rename '{from}' to '{existing}' — an entity \
@@ -513,7 +513,7 @@ pub enum Error {
     #[error("entity edit not found: {detail}")]
     EntityEditNotFound { detail: String },
 
-    // ── Reversible-graph-mutations delete cascade (arch-spec §4.4 / §4.5) ──────
+    // ── Reversible-graph-mutations delete cascade ─────────────────────────────
     /// `delete_entity(...)` / `undo_delete_entity(...)` targeted an entity or an
     /// `entity_delete` mutation-log row that does not exist. Deleting a
     /// non-existent entity (or reversing a delete that was never logged) is a
@@ -526,7 +526,7 @@ pub enum Error {
     #[error("fact delete not found: {detail}")]
     FactDeleteNotFound { detail: String },
 
-    // ── Reversible-graph-mutations unified undo dispatcher (ADR-073 DX R1/R2) ──
+    // ── Reversible-graph-mutations unified undo dispatcher ──
     /// `undo(mutation_id)` was called with an id that names no `graph_mutation_log`
     /// row. Reversing a mutation that was never logged is a caller bug, never a
     /// silent no-op (parse-loudly). `mutation_id` is the unknown id.
@@ -570,11 +570,10 @@ pub enum Error {
 
 impl Error {
     /// Classify a fact-insert failure into a bounded `reason` label for the
-    /// `*_fact_insert_failed_total` family of counters (B2 observability
-    /// hardening, 2026-07-21). Sub-classifies the coarse `Database` variant
-    /// by its underlying SQLite constraint text instead of collapsing every
-    /// DB failure into one bucket: `FOREIGN KEY` ⇒ `fk_mismatch` (the
-    /// composite-FK namespace-mismatch shape, see TD-080), `UNIQUE` ⇒
+    /// `*_fact_insert_failed_total` family of counters. Sub-classifies the
+    /// coarse `Database` variant by its underlying SQLite constraint text
+    /// instead of collapsing every DB failure into one bucket: `FOREIGN KEY`
+    /// ⇒ `fk_mismatch` (the composite-FK namespace-mismatch shape), `UNIQUE` ⇒
     /// `unique_violation`, anything else DB-shaped ⇒ `db_error`.
     ///
     /// Shared by the foreground path (`ingest/pipeline/ingest_with.rs`), the
@@ -601,15 +600,15 @@ impl Error {
 
     /// True when this is a SQLite UNIQUE-constraint violation.
     ///
-    /// TD-168. `insert_entity_with_group` issues a bare `INSERT INTO entities`
+    /// `insert_entity_with_group` issues a bare `INSERT INTO entities`
     /// and returns the libsql error UNMAPPED, so callers could not distinguish
     /// "this entity already exists" (benign — a real row IS present) from a
     /// genuine database failure. Two call sites then guessed OPPOSITELY:
     /// `ingest_with.rs:1114` (stub path) treats a duplicate as fine — its own
     /// comment says so — while the insert-new path did `break 'phases Err(e)`
     /// on ANY error and so killed the whole ingest on a benign duplicate.
-    /// Observed 2026-07-29: 1 of 8 LongMemEval sessions returned HTTP 500 with
-    /// `UNIQUE constraint failed: entities.id, entities.group_id`.
+    /// Observed in production: 1 of 8 LongMemEval sessions returned HTTP 500
+    /// with `UNIQUE constraint failed: entities.id, entities.group_id`.
     ///
     /// This makes the distinction EXPRESSIBLE rather than accidental. It
     /// deliberately does NOT swallow the error inside the insert: a caller that

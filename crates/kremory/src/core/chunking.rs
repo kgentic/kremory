@@ -1,4 +1,4 @@
-//! Caller-facing pre-chunking helper (TD-232 / TD-234).
+//! Caller-facing pre-chunking helper.
 //!
 //! **This exists on the caller's side of a locked architectural boundary, not
 //! inside it.** Kremory does NOT chunk content on the caller's behalf for
@@ -16,8 +16,8 @@
 //! [`crate::core::extraction_window::ExtractionWindowSplitter`] is
 //! `pub(crate)`, unreachable from outside the crate. A long document handed
 //! to `remember()` whole silently loses its dense/embedding search arm once
-//! it exceeds the embedder's own context window (TD-232) — the boundary was
-//! real, but undoored.
+//! it exceeds the embedder's own context window — the boundary was real,
+//! but undoored.
 //!
 //! Backed by the `text-splitter` crate (unicode-aware sentence/paragraph
 //! boundary detection) rather than a naive character slice, so a chunk

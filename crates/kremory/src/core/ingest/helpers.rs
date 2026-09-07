@@ -1,6 +1,6 @@
 //! Ingest helpers — context snippet extraction + SimpleGraph type alias.
 //!
-//! Split from `ingest.rs` as part of TD-001 (E0-C).
+//! Split from `ingest.rs`.
 
 // Items used only in #[cfg(test)] — suppress dead_code for non-test builds.
 #![allow(dead_code)]
@@ -96,7 +96,7 @@ impl SimpleGraph {
                 dim: config.embedding_dim.0,
             }),
             config,
-            // Null provider → no model (Option-1).
+            // Null provider → no model.
             model: None,
         }))
     }

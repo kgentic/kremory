@@ -27,16 +27,16 @@ use crate::core::search::{FtsSearchFactsParams, SearchFilters, VectorSearchEntit
 use crate::core::ingest::helpers::extract_context_snippet;
 use crate::core::ingest::{Engine, IngestionResult, SourceParams};
 
-// ─── ADR-052 Gap 1 sink fire-site metrics helper ────────────────────────────
+// ─── Sink fire-site metrics helper ──────────────────────────────────────────
 
 /// Triple-emit metrics companion for the per-entity / per-mention-edge sink
-/// fire-sites in `ingest_with` (ADR-052 Gap 1; canonical pattern from 737e152
+/// fire-sites in `ingest_with` (canonical pattern from 737e152
 /// verify_stage Fire-sites 2 + 3). Kept as a free fn so the three `mention`
 /// call sites (merged / L4-merge / new-entity) emit identical metric labels
 /// without copy-paste drift. The sink callback itself fires inline at each call
 /// site (it needs the per-site ids); only the label-stable counters live here.
 ///
-/// D7 cardinality: NO entity_id / episode_id labels — `predicate_kind` is a
+/// No entity_id / episode_id labels — `predicate_kind` is a
 /// bounded enum, `mention_persisted` a bool string.
 fn fire_entity_edge_metrics(mention_ok: bool) {
     metrics::counter!("kremory.sink.entity_extracted_total", "arm" => "inline").increment(1);
@@ -49,10 +49,10 @@ fn fire_entity_edge_metrics(mention_ok: bool) {
     }
 }
 
-// ─── DUR-7: emissions deferred until the outer transaction durably commits ───
+// ─── Emissions deferred until the outer transaction durably commits ────────
 
 /// One emission captured DURING `ingest_with`'s outer transaction and replayed only
-/// once that transaction has committed (V1-CANONICAL §4.2, DUR-7).
+/// once that transaction has committed.
 ///
 /// # Why this exists
 ///
@@ -64,7 +64,7 @@ fn fire_entity_edge_metrics(mention_ok: bool) {
 /// from the sink, that is a **correctness** defect, not a metrics-accuracy one.
 ///
 /// This is the same collect-during-txn / flush-post-commit shape already used by
-/// `forget.rs` (DUR-4) and `supersession::window_closeout`, and the placement rule is
+/// `forget.rs` and `supersession::window_closeout`, and the placement rule is
 /// the one stated on [`BeginGuard::opened`]: an emission summarising a durable write
 /// must fire only once that write is actually committed.
 ///
@@ -230,12 +230,12 @@ fn flush_deferred_emissions(
 }
 
 /// Bundled call-context parameters for [`Engine::ingest_with`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments). The generic `extractor: &E`
-/// stays a lead positional param (brief rule 4); these are the non-generic args.
+/// to keep the function under clippy's too_many_arguments threshold. The generic
+/// `extractor: &E` stays a lead positional param; these are the non-generic args.
 pub struct IngestWithParams<'a> {
     pub text: &'a str,
     pub reference_time: Option<DateTime<Utc>>,
-    /// TD-187: the caller-DECLARED document anchor (`SourceRef::published_at`)
+    /// The caller-DECLARED document anchor (`SourceRef::published_at`)
     /// ONLY — never `reference_time` / `occurred_at` / wall-clock. Forwarded
     /// unchanged into [`crate::core::intelligence::ExtractionContext::reference_time`]
     /// at every extraction call site below. See that field's doc comment for
@@ -246,8 +246,8 @@ pub struct IngestWithParams<'a> {
     pub source_params: SourceParams,
 }
 
-/// TD-113: args-as-object for [`Engine::make_pinned_entity_recallable`]
-/// (rust-conventions §too_many_arguments; clippy.toml threshold 3).
+/// Args-as-object for [`Engine::make_pinned_entity_recallable`] to keep the
+/// function under clippy's too_many_arguments threshold (clippy.toml threshold 3).
 struct PinnedEntityRecall<'a> {
     /// Entity id (== the literal pinned subject/object text).
     id: &'a str,
@@ -258,8 +258,8 @@ struct PinnedEntityRecall<'a> {
 }
 
 /// Bundled parameters for [`Engine::block_resolution_candidates`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments). All fields share the `'a`
-/// borrow of the pre-batch existing-entity slice so the returned candidate refs
+/// to keep the function under clippy's too_many_arguments threshold. All fields
+/// share the `'a` borrow of the pre-batch existing-entity slice so the returned candidate refs
 /// tie back to it.
 struct BlockCandidatesParams<'a> {
     extracted: &'a ExtractedEntity,
@@ -268,7 +268,7 @@ struct BlockCandidatesParams<'a> {
 }
 
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
-    /// ADR-075 (TD-124): select the bounded set of existing entities that a
+    /// Select the bounded set of existing entities that a
     /// newly-extracted entity should be resolved against, instead of comparing
     /// it to EVERY existing entity. Without this, each new entity fanned out to
     /// O(existing) LLM `ResolutionVerdict` calls (92% of ingest LLM calls on a
@@ -282,7 +282,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// exhaustive completeness backstop for any true match this misses.
     ///
     /// Back-compat guards (both return the full exhaustive list, i.e. the exact
-    /// pre-ADR-075 behaviour):
+    /// earlier behaviour):
     /// - the group has ≤`k` existing entities (blocking only pays off past `k`;
     ///   keeps the whole small-graph test suite behaviour-identical), or
     /// - no usable embedding is available (null/failing embedder, or the ANN
@@ -319,12 +319,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
 
         // Arm 2 — embedding-ANN top-k. Guard 2: null/failing embedder → full list.
-        // TD-143: this is a QUERY against the SAME `entities` vector index that
+        // This is a QUERY against the SAME `entities` vector index that
         // stores document-prefixed writes (see `set_entity_embedding` call sites
         // below) — must use `query_embed_text`, not the raw name, or a flipped
         // knob would compare an unprefixed probe against a document-prefixed
-        // corpus (the exact mixed-index footgun TD-143's correctness note warns
-        // against).
+        // corpus (the exact mixed-index footgun the embed-prefix correctness note
+        // warns against).
         let embedding = match self
             .embedder
             .embed(&query_embed_text(
@@ -338,10 +338,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         };
         let filters = SearchFilters {
             group_ids: group_id.map(|g| vec![g.to_string()]).unwrap_or_default(),
-            // TD-234: this `false` currently has no effect — entity search never
+            // This `false` currently has no effect — entity search never
             // reads `exclude_expired`. Kept (not deleted) as the documented
             // expression of real intent (include expired-entity merge
-            // candidates during resolution) for whoever fixes TD-234 to honour.
+            // candidates during resolution) for whoever wires this up to honour.
             exclude_expired: false,
         };
         // `_no_count` variant: avoid the access_count bump the public search applies.
@@ -356,7 +356,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .await
         {
             Ok(hits) => {
-                // ADR-075 P1: auto-different cosine floor. `vector_search` returns
+                // Auto-different cosine floor. `vector_search` returns
                 // score = -cosine_distance = cosine_sim - 1, so cosine_sim = score + 1.
                 // Drop candidates below the floor WITHOUT an LLM verdict (the model
                 // would say "different" for embedding-far pairs anyway). min_cosine=0.0
@@ -388,8 +388,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Full pipeline with a caller-supplied extractor.
     /// Any type implementing `EntityExtractor` can be used (a built-in extractor
     /// or a custom BYOE impl).
-    // Substrate primitive; consumer-facing surface is kremory::Memory facade per ADR-027.
-    // Generic `extractor: &E` stays a lead positional param (TD-042 brief rule 4);
+    // Substrate primitive; the consumer-facing surface is the kremory::Memory facade.
+    // Generic `extractor: &E` stays a lead positional param;
     // the remaining call-context args are bundled into `IngestWithParams`.
     #[tracing::instrument(
         name = "kremory.ingest",
@@ -434,7 +434,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .insert_episode_with_group(episode, group_id)
             .await?;
 
-        // ADR-080 — prior-turn replay. Fetch the preceding turns of THIS
+        // Prior-turn replay. Fetch the preceding turns of THIS
         // conversation so the extractor can resolve references in `text`.
         //
         // Ordering matters and is not incidental: the episode row was inserted
@@ -468,15 +468,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             );
         }
 
-        // TD-136: dense episode arm — embed + store the episode's embedding when
+        // Dense episode arm — embed + store the episode's embedding when
         // the dense arm is enabled (no-op / byte-identical when off).
-        // TD-232: capture the outcome — see `IngestionResult::dense_embedded`.
+        // Capture the outcome — see `IngestionResult::dense_embedded`.
         #[cfg(feature = "content-search")]
         let dense_embedded = self.maybe_embed_episode(episode_id, text).await;
         #[cfg(not(feature = "content-search"))]
         let dense_embedded = true;
 
-        // 1b. ADR-035 §5 Option A — Pin caller-pre-extracted facts BEFORE Phase 2 LLM.
+        // 1b. Pin caller-pre-extracted facts BEFORE Phase 2 LLM.
         //
         // Caller-supplied triples enter the graph first; the LLM Phase 2 extraction
         // path uses `try_insert_fact` which silently swallows the resulting
@@ -492,7 +492,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // fact insert FK constraint resolves. Mirrors how Phase 2 LLM
                 // extraction auto-creates UNKNOWN entities for forward references.
                 // Duplicate-entity is the expected case (entity already exists);
-                // explicit swallow. Per [[treat-cause-not-symptom]] + Quinn M-02,
+                // explicit swallow. Treat the cause, not the symptom:
                 // NON-Duplicate errors (connection failure, schema gap, etc) are
                 // surfaced via tracing::warn — masking them silently would hide
                 // real production failures.
@@ -501,7 +501,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // entities(id, group_id) (schema.rs:1450). A namespace-less `insert_entity`
                 // puts the stub in "default" while the pinned fact below stamps
                 // `subject_group_id = group_id`, so the FK fails and the fact is dropped.
-                // TD-113: stamp the entity's literal name into `properties` so
+                // Stamp the entity's literal name into `properties` so
                 // the FTS seed arm (`entities_fts.properties`) can find a
                 // caller-pinned entity WITHOUT a second LLM. Mode-(a) LLM
                 // extraction is recall-findable precisely because its
@@ -528,14 +528,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         );
                     }
                 }
-                // TD-113: stamp the vector channel too — embed the literal
+                // Stamp the vector channel too — embed the literal
                 // subject text into `entities.embedding` so the vector seed arm
                 // finds the pin under a real embedder. Best-effort + always-run
                 // (not gated on `skip_extraction`): Phase 2 is not guaranteed to
                 // re-cover a pinned subject that never appears in the episode
                 // text, so pins must be findable independent of enrichment. The
-                // embedder is NOT the chat LLM — "no second LLM" (spec §3 F1)
-                // still holds. Also links the entity to its episode (attribution
+                // embedder is NOT the chat LLM — "no second LLM" still holds.
+                // Also links the entity to its episode (attribution
                 // channel) so it renders under the default TemporalFacts template.
                 self.make_pinned_entity_recallable(PinnedEntityRecall {
                     id: &pf.subject,
@@ -570,7 +570,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     .await;
                 }
 
-                // MED-1 time-inversion guard — mirror `facade/supersede.rs`'s
+                // Time-inversion guard — mirror `facade/supersede.rs`'s
                 // `if valid_to < fact.valid_from` reject (§3b step 3). A
                 // caller-asserted `valid_to` predating the fact's own resolved
                 // `valid_from` is a nonsensical `[valid_from, valid_to)` window
@@ -623,20 +623,20 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(Some(fact_id)) => {
                         pinned_count = pinned_count.saturating_add(1);
                         pinned_fact_ids.push(fact_id);
-                        // ADR-068 boy-scout: bind the caller-asserted bounded
+                        // Bind the caller-asserted bounded
                         // window (StructuredFact.valid_to, "None = open-ended")
                         // if given — this used to be silently dropped
                         // (`PrePinnedFact` carried `valid_from` only). Mirrors
-                        // `SupersedeRequest`'s own `bound_valid_to` call
-                        // (ADR-083 Amendment C) — NOT `invalidate_fact`/
+                        // `SupersedeRequest`'s own `bound_valid_to` call — NOT
+                        // `invalidate_fact`/
                         // `invalidate_fact_with_reason`, which write
                         // `expired_at`/`invalid_at` (a separate, later,
                         // system-time retirement act).
                         if let Some(valid_to) = pf.valid_to {
                             if let Err(e) = self.graph.bound_valid_to(fact_id, valid_to).await {
-                                // MED-2 (Rule 19): a dropped caller-asserted
+                                // A dropped caller-asserted
                                 // `valid_to` (DB-level bind failure — distinct
-                                // from the MED-1 time-inversion reject above)
+                                // from the time-inversion reject above)
                                 // must be observable, not just warn-logged. The
                                 // success path already has
                                 // `valid_to_bound_total`; pair it with a failure
@@ -654,7 +654,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                                     .increment(1);
                             }
                         }
-                        // ADR-045 §3 / spec §1.2: stamp ConsumerPinned on the subject entity
+                        // Stamp ConsumerPinned on the subject entity
                         // so the dream reclassify pass skips it. Best-effort — a warn on
                         // failure is sufficient; the fact is already pinned.
                         if let Err(e) = self
@@ -677,8 +677,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             )
                             .increment(1);
                         }
-                        // Q-04 (Option A — symmetric protection per ADR-045 §3 amendment 2026-06-09):
-                        // When a pinned fact references an object entity (object_id = Some), stamp it
+                        // Symmetric protection: when a pinned fact references an object
+                        // entity (object_id = Some), stamp it
                         // ConsumerPinned too — the consumer asserted a typed relationship, so dream
                         // re-typing of either endpoint silently invalidates their assertion. When
                         // object is a literal (object_id = None), no object entity exists to stamp —
@@ -752,7 +752,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     "kremory.with_facts.pinned"
                 );
             } else {
-                // Per Quinn L-01: avoid INFO-level noise for all-dedup caller sets;
+                // Avoid INFO-level noise for all-dedup caller sets;
                 // bulk-import workloads can hit this thousands of times per batch.
                 tracing::debug!(
                     pinned = 0_u64,
@@ -763,7 +763,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             }
         }
 
-        // 1c. ADR-035 §2/§6 — `skip_extraction` early return.
+        // 1c. `skip_extraction` early return.
         //
         // When the caller has set `RememberRequest::skip_extraction()` (or the
         // legacy `SubmitOpts.enrich_per_episode = false` once the engine_handle
@@ -792,15 +792,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             });
         }
 
-        // ── ADR-052 Gap 1 fire-site: on_stage_change(Extracting) ────────────────
+        // ── Fire-site: on_stage_change(Extracting) ──────────────────────────────
         // Re-establishes the 737e152 verify_stage Fire-site 1 on the UNIFIED
         // inline/background extraction routine (`ingest_with`) that the public
         // `Memory::remember(...).with_event_sink(...)` consumer journey actually
         // drives (engine_handle::graph_ingest_episode → engine.ingest →
         // ingest_with). The sink is carried on `source_params.sink` as the
         // core-layer `IngestEventSink` (see SourceParams::sink doc-comment) and
-        // is fired synchronously per the §4.8 sync-inline contract. Triple-emit:
-        // sink + counter + tracing (ADR-2026-05-20 D1). D7: episode_id is a
+        // is fired synchronously per the sync-inline contract. Triple-emit:
+        // sink + counter + tracing. episode_id is a
         // tracing field only, NEVER a metric label.
         let sink = source_params.sink.as_deref();
         if let Some(s) = sink {
@@ -814,10 +814,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         .increment(1);
         tracing::info!(episode_id, "kremory.sink.stage_change.extracting");
 
-        // ── ADR-051 §4 state-machine invariant: Extracting → Failed on ANY error ──
+        // ── State-machine invariant: Extracting → Failed on ANY error ───────────
         // Canonical pattern: `core/background/verify_stage.rs` fires `Failed`
         // synchronously BEFORE every `Err` propagates (the function's own
-        // doc-comment invariant). Quinn MED-01: the previous terminal `match
+        // doc-comment invariant). The previous terminal `match
         // phase_result` only fired `Failed` for errors that broke the inner
         // `'phases` block. Every fallible `?`-step AFTER the `Extracting` fire but
         // OUTSIDE `'phases` — registry load/seed, `ExtractionWindowSplitter` work,
@@ -826,7 +826,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // returned early WITHOUT firing `Failed`; the consumer saw `Extracting`
         // then silence.
         //
-        // Cause-fix per Rule 8 (treat-cause): capture the WHOLE post-`Extracting`
+        // Cause-fix: capture the WHOLE post-`Extracting`
         // body in one `async` block that returns `Result<IngestionResult>` (every
         // `?` inside resolves to the block's `Err`, not a function return), then
         // fire `Failed` exactly once at the single exit before re-propagating. No
@@ -861,13 +861,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         //     duplicate the work at step 4 — step 4 re-uses the same `registry`
         //     binding for L3 validation.
         //
-        //     TD-013 §1 hybrid: if caller supplied a per-call override, use it.
+        //     Hybrid registry: if caller supplied a per-call override, use it.
         //     - First-call persistence: if DB is empty for this group_id, persist
         //       the override so subsequent calls without override see the vocabulary.
         //     - Ephemeral: if DB already has rows, use override for this call only.
         let effective_gid = group_id.unwrap_or("default");
 
-        // 2a. TD-013 Migration 010 lazy-seed: ensure the default vocabulary is
+        // 2a. Migration 010 lazy-seed: ensure the default vocabulary is
         //     present for `effective_gid` before any registry-dependent work
         //     (L2 prompt, L3 validation). Idempotent: no-ops once seeded.
         //     This catches namespaces created AFTER Migration 010 ran at boot.
@@ -893,12 +893,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             } else {
                 // Additive merge: persist any override types missing from DB.
                 //
-                // Was previously "ephemeral, do not touch DB" (TD-013) but that
+                // Was previously "ephemeral, do not touch DB" but that
                 // created an entity-type/JOIN hole: an entity row stored with
                 // entity_type_id = override-only id had no entity_types row →
                 // SQL COALESCE(et.name, 'Entity') resolved label='Entity' at
-                // read time regardless of the stored integer id. Per
-                // [[audit-what-guards-mask-before-deleting]] the right fix is
+                // read time regardless of the stored integer id. The right fix is
                 // additive merge — INSERT OR IGNORE each missing override
                 // spec, preserving previously-stored rows.
                 let mut newly_persisted: usize = 0;
@@ -939,24 +938,24 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         } else {
             let db_registry =
                 EntityTypeRegistry::load_for_group(&self.graph.conn, effective_gid).await?;
-            // TD-028 Phase B — builder-seed: if the builder set `allowed_entity_types`,
+            // Builder-seed: if the builder set `allowed_entity_types`,
             // any type not already in the registry for this group_id is registered
             // additively via `label_to_id_or_register`. This runs AFTER
             // `ensure_default_types_seeded` so the registry is never empty here;
             // the merge is additive-only (INSERT OR IGNORE via the same race-safe
             // MAX(id)+1 path that Pass 0 uses). No caller-specified id → SQLite
             // assigns the next free id, avoiding position-based collisions with
-            // future Pass 0 writes (GAP-006 fix).
+            // future Pass 0 writes.
             if !self.config.allowed_entity_types.is_empty() {
                 let mut new_types_seeded: usize = 0;
                 for name in &self.config.allowed_entity_types {
-                    // QB-01: use case-insensitive match here so we don't fire the
+                    // Use case-insensitive match here so we don't fire the
                     // seed branch when the DB already has the canonical form under a
                     // different case (e.g. builder has "court", DB has "Court").
                     // `label_to_id_or_register` does a case-insensitive DB lookup
                     // (COLLATE NOCASE path), so a case-sensitive `name_to_id` guard
-                    // would count a "skip that never inserts" as a seed — Rule 19
-                    // cardinal failure mode #9 (lying counter).
+                    // would count a "skip that never inserts" as a seed — a
+                    // lying-counter failure mode.
                     let already_registered = db_registry
                         .specs()
                         .iter()
@@ -980,8 +979,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         "namespace" => effective_gid.to_string(),
                     )
                     .increment(1);
-                    // QB-03: histogram gains namespace label matching the paired counter
-                    // so operators can disaggregate by namespace (Rule 19 observability).
+                    // Histogram gains namespace label matching the paired counter
+                    // so operators can disaggregate by namespace.
                     metrics::histogram!(
                         "rql.ingest.registry_builder_seed_count",
                         "namespace" => effective_gid.to_string(),
@@ -1037,11 +1036,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // known_entities grows with each iteration so subsequent chunks receive
         // the entities already found in earlier chunks as context.
         //
-        // TD-028 Phase B — B1: derive allowed_entity_types from the live registry
+        // Derive allowed_entity_types from the live registry
         // (loaded above) rather than the config snapshot taken at engine construction.
         // This closes the self-learning loop: Pass 0 writes new types to the registry;
         // the next ingest sees them immediately without an engine rebuild.
-        // Spec: td-028-phase1-pull-shape-registry-read-micro-spec-2026-06-09.md §1.
         let allowed_entity_types_live: Vec<String> =
             registry.specs().iter().map(|s| s.name.clone()).collect();
 
@@ -1132,8 +1130,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             }
         }
 
-        // TD-013 Phase 8 v3 (2026-06-04): scan_proper_nouns DISABLED pending
-        // task #15 — scanner hardcodes label="Entity" instead of routing
+        // scan_proper_nouns DISABLED pending
+        // scanner rework — scanner hardcodes label="Entity" instead of routing
         // candidates through LLM classification (the original two-call design
         // per spike_phase3_scanner_vs_pipeline.rs, never finished). Disabling
         // gives us pure-LLM extraction matching Graphiti/Cognee/LightRAG.
@@ -1142,7 +1140,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // let proper_noun_candidates = text_utils::scan_proper_nouns(text, &all_entities);
         // all_entities.extend(proper_noun_candidates);
 
-        // 3b. Pre-mutation intra-batch duplicate scan (Story #150 history).
+        // 3b. Pre-mutation intra-batch duplicate scan.
         //
         // Original behaviour: FATAL `Err(IntraBatchDuplicate)` on duplicate names.
         // The intent was to surface malformed batches submitted by human callers
@@ -1150,7 +1148,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         //
         // Why we softened it in v0.1.4: kremory's pipeline ingests LLM-extracted
         // entities, and noisy extractors (smaller local models — llama3.2:3b,
-        // gemma4-e2b — observed 2026-05-28 emitting `'car'` / `'VerbatimString'`
+        // gemma4-e2b — observed emitting `'car'` / `'VerbatimString'`
         // multiple times in a single batch) cannot be expected to dedupe their
         // own output. Treating that as fatal forced operators to pick a
         // hardened-extractor model (qwen2.5:14b+) rather than letting the
@@ -1210,15 +1208,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         )
         .with_model(self.model.clone());
 
-        // ── ADR-076 (TD-127) Pass 1 + Pass 2: batched entity resolution ────────
-        // Runs BEFORE the write transaction (ADR-076 SCOPE-001) — both passes
+        // ── Pass 1 + Pass 2: batched entity resolution ─────────────────────────
+        // Runs BEFORE the write transaction — both passes
         // only read the frozen `existing_entities` snapshot loaded above and
         // do zero DB writes, so they execute in the pre-transaction window
         // (shrinking lock-hold vs the pairwise path, which resolves inline
         // inside the transaction's entity loop below).
         //
         // Pass 1 (deterministic, no LLM): for each extracted entity, run the
-        // existing ADR-075 candidate block + the cheap Tier-1/Tier-2 tiers.
+        // existing candidate block + the cheap Tier-1/Tier-2 tiers.
         // A hit pre-resolves the entity; a miss adds it to the ambiguous
         // worklist. Pass 2 batches the ambiguous remainder into windowed
         // structured-output calls (`resolver_batched::resolve_batched`).
@@ -1227,7 +1225,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // entity id` for every CONFIDENT resolution (deterministic or
         // batched-LLM); entities absent from this map are NEW. Only built
         // when the strategy is `Batched` — the `Pairwise` arm below resolves
-        // inline exactly as before ADR-076.
+        // inline exactly as before this batched-resolution mechanism.
         let mut batched_resolved: HashMap<String, String> = HashMap::new();
         if self.config.resolution_strategy == ResolutionStrategy::Batched {
             let mut ambiguous: Vec<crate::core::resolver_batched::AmbiguousEntity<'_>> =
@@ -1260,7 +1258,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Some(existing_id) => {
                         batched_resolved.insert(normalize_name(&extracted.name), existing_id);
                     }
-                    // Quinn HIGH (ADR-076): an entity whose OWN block is empty
+                    // An entity whose OWN block is empty
                     // (e.g. cold-store first ingest — `existing_entities` empty)
                     // can never merge (the map-back own-block guard would reject
                     // any assignment anyway), so it must NOT enter the batch —
@@ -1304,13 +1302,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let mut inserted_fact_ids: Vec<i64> = Vec::new();
         let mut invalidated_fact_ids: Vec<i64> = Vec::new();
         let mut stub_entities_inserted: usize = 0;
-        // DUR-7 (V1-CANONICAL §4.2): sink callbacks and durable-write counters captured
+        // Sink callbacks and durable-write counters captured
         // during the transaction and replayed only after it commits. Declared alongside
         // the other cross-phase accumulators so it survives the `'phases` block.
         let mut deferred: Vec<DeferredEmission> = Vec::new();
 
         // Forward-reference stub names awaiting an embedding, flushed POST-COMMIT
-        // beside `flush_deferred_emissions` for the same DUR-7 reason: embedding is a
+        // beside `flush_deferred_emissions` for the same reason: embedding is a
         // network round-trip, and holding the write transaction open across it would
         // serialise every other writer behind an LLM call. Collected here so it
         // survives the `'phases` block.
@@ -1344,18 +1342,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // Already inserted as a stub in a previous fact iteration.
                         continue;
                     }
-                    // RISK-003: entities.id is a sole TEXT PK pre-migration-004.
+                    // entities.id is a sole TEXT PK pre-migration-004.
                     // Post-migration-004: composite PK (id, group_id) closes the bypass surface.
                     // Stub INSERT uses INSERT OR IGNORE — cross-namespace name collision silently
                     // skips stub creation. Single-namespace use only for v0.1.1.
                     //
                     // Strategy: attempt insert_entity_with_group; if the entity already exists
                     // (UNIQUE constraint error), that is fine — a real row is present.
-                    // TD-113: `properties["name"]` is REQUIRED for FTS findability.
+                    // `properties["name"]` is REQUIRED for FTS findability.
                     // `entities_fts` indexes `properties` ONLY — `entities_fts.label` is
                     // empty post-Migration-009 — so a stub without a name token is
-                    // invisible to the FTS seed arm. TD-113 established exactly this for
-                    // the `with_facts` pinned path (`:458-466`: *"A bare `{"stub": false}`
+                    // invisible to the FTS seed arm. The `with_facts` pinned path
+                    // established exactly this (`:458-466`: *"A bare `{"stub": false}`
                     // stub carried no name token → recall returned 0"*), but the
                     // EXTRACTION forward-reference path never received the same fix.
                     //
@@ -1382,17 +1380,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             // Newly inserted stub.
                             name_to_id.insert(norm_name.clone(), norm_name.clone());
                             stub_entities_inserted += 1;
-                            // DUR-7: both counters claim a persisted stub row, so they
+                            // Both counters claim a persisted stub row, so they
                             // are replayed after the outer commit, never here.
                             deferred.push(DeferredEmission::StubInserted);
                             // A stub written here carries NO embedding, so it is absent
                             // from the ANN index while still being counted by
                             // `plan_index_fetch`'s `namespace_rows` — which is exactly
-                            // the TD-114 shortfall `search.rs:353-383` reports. Measured
+                            // the shortfall `search.rs:353-383` reports. Measured
                             // on LoCoMo conv-26: 25 of 67 entities (37%) had a NULL
                             // embedding and were unreachable by dense retrieval, and the
                             // filtered-ANN arm under-filled (requested=10 delivered=7)
-                            // even with the group filter matching every row.
+                            // even with the group filter matching every row (see
+                            // `search.rs:353-383`'s namespace-shortfall reporting).
                             //
                             // Queued, not embedded inline: see `stub_names_to_embed`.
                             stub_names_to_embed.push(norm_name.clone());
@@ -1415,19 +1414,19 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             // sites (merge/promote-stub, L4-merge, new-insert) immediately after a
             // successful insert — NOT at a single consolidated point, because the
             // L4-merge branch `continue`s and would skip a consolidated insert
-            // (Quinn F-01). The fact loop consults this to keep presence
+            // The fact loop consults this to keep presence
             // single-owned: an extracted entity already linked here MUST NOT also
             // receive an "object" edge (the duplicate `(episode_id, entity_id)`
             // bug). Keyed on the RESOLVED id (post merge/alias) so it is robust to
-            // disambiguation, unlike a surface-name set. ADR-052 §3.1 fire-sites.
+            // disambiguation, unlike a surface-name set.
             let mut entity_loop_ids: HashSet<String> = HashSet::new();
 
             // ── Phase 1: entity loop (Bug B snippet + Bug A episodic_edge) ──────────
             for extracted in &all_entities {
-                // TD-013 Phase 8 finalizes Vera M1: the TD-012 over-rejection guard
+                // The over-rejection guard
                 // (`is_canonical_entity_type` + `allowed_entity_types` policy) is
                 // DELETED under the L1 integer-ID design. Live diagnostic
-                // 2026-06-03 showed it rejecting 14 "Entity" emissions per
+                // showed it rejecting 14 "Entity" emissions per
                 // mock_interview ingest — id=0 "Entity" is the legitimate
                 // Graphiti-pattern catch-all, NOT a placeholder to drop.
                 //
@@ -1442,7 +1441,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // FTS get the canonical case ("ORG" → "Organisation").
                 let label = normalize_label(&extracted.label);
 
-                // ADR-076 (TD-127): which existing id (if any) `extracted`
+                // Which existing id (if any) `extracted`
                 // resolves to, computed differently per strategy.
                 //
                 // - `Batched` (default): Pass 1 (deterministic tiers) + Pass 2
@@ -1450,8 +1449,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 //   see `batched_resolved` above. This arm is a pure lookup;
                 //   it must NOT call `block_resolution_candidates` again
                 //   (that already ran once per entity in Pass 1).
-                // - `Pairwise`: the pre-ADR-076 behaviour, unchanged. ADR-075
-                //   (TD-124) resolves `extracted` only against a bounded
+                // - `Pairwise`: the earlier behaviour, unchanged. It
+                //   resolves `extracted` only against a bounded
                 //   candidate block (exact-name ∪ embedding-ANN top-k), not
                 //   every existing entity — collapses the LLM
                 //   `ResolutionVerdict` fan-out from O(new × existing) to
@@ -1520,9 +1519,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             "context": context_snippet,
                             "name": extracted.name.clone()
                         });
-                        // TD-021 open vocabulary: register novel type label on the fly.
+                        // Open vocabulary: register novel type label on the fly.
                         // If registration itself fails (DB error), fall back to id=0
-                        // and emit a swallow counter (Vera Finding 1) — the stub
+                        // and emit a swallow counter — the stub
                         // promotion is best-effort and must not abort the transaction.
                         let entity_type_id =
                             match crate::core::entity_types::label_to_id_or_register(
@@ -1560,7 +1559,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // is now being filled with LLM-extracted content. Count it as
                         // a NET-NEW llm-source write (the stub row is no longer a
                         // stub after this upsert).
-                        // DUR-7: claims a persisted row — replayed after the outer commit.
+                        // Claims a persisted row — replayed after the outer commit.
                         deferred.push(DeferredEmission::EntityPersisted {
                             source: "llm",
                             via: Some("stub_promotion"),
@@ -1574,11 +1573,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         );
                     }
 
-                    // Bug A: episodic edge for merged entity (this episode now references it).
-                    // ADR-052 Gap 1 fire-sites: on_entity_extracted + on_edge_added("mention").
-                    // Fires on Ok only (insert error is soft `.ok()` precedent). D7: ids in
-                    // tracing fields only, NOT metric labels.
-                    // ADR-052 / Migration 006: thread the ingest namespace so the
+                    // Episodic edge for merged entity (this episode now references it).
+                    // Fires on Ok only (insert error is soft `.ok()` precedent). ids
+                    // in tracing fields only, NOT metric labels.
+                    // Migration 006: thread the ingest namespace so the
                     // composite FK (entity_id, entity_group_id) resolves — the
                     // entity was just merged/promoted under `group_id`, so the edge
                     // must reference the same namespace or it silently FK-fails.
@@ -1592,7 +1590,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         })
                         .await
                         .is_ok();
-                    // DUR-7: captured, not fired — replayed after the outer commit.
+                    // Captured, not fired — replayed after the outer commit.
                     deferred.push(DeferredEmission::EntityMention {
                         entity_id: existing_id.clone(),
                         name: extracted.name.clone(),
@@ -1643,8 +1641,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         union_find.union(&norm, l4_existing_id);
                         merged_entities.push((l4_existing_id.clone(), extracted.name.clone()));
                         // Episodic edge: this episode now references the existing entity.
-                        // ADR-052 Gap 1 fire-sites: on_entity_extracted + on_edge_added("mention").
-                        // ADR-052 / Migration 006: thread the ingest namespace so
+                        // Migration 006: thread the ingest namespace so
                         // the composite FK resolves for the L4-merged entity (stored
                         // under `group_id`).
                         let mention_ok = self
@@ -1657,7 +1654,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             })
                             .await
                             .is_ok();
-                        // DUR-7: captured, not fired — replayed after the outer commit.
+                        // Captured, not fired — replayed after the outer commit.
                         deferred.push(DeferredEmission::EntityMention {
                             entity_id: l4_existing_id.clone(),
                             name: extracted.name.clone(),
@@ -1688,7 +1685,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         "name": extracted.name.clone(),
                     });
 
-                    // TD-021 open vocabulary: register novel type label on the fly.
+                    // Open vocabulary: register novel type label on the fly.
                     // Unlike the stub-promotion site, the insert-new path is NOT
                     // best-effort — registration failure propagates as a hard
                     // ingest failure (matches the existing insert_entity_with_group
@@ -1716,20 +1713,20 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         })
                         .await
                     {
-                        // TD-168: a UNIQUE violation here means the row ALREADY
+                        // A UNIQUE violation here means the row ALREADY
                         // EXISTS — benign, and exactly what the sibling stub
                         // path at :1114 already concluded ("that is fine — a
                         // real row is present"). This path previously failed the
                         // ENTIRE ingest on it, because the raw libsql error was
-                        // indistinguishable from a genuine DB failure. Observed
-                        // 2026-07-29: 1 of 8 LongMemEval sessions HTTP 500'd on
+                        // indistinguishable from a genuine DB failure. Observed:
+                        // 1 of 8 LongMemEval sessions HTTP 500'd on
                         // `UNIQUE constraint failed: entities.id, entities.group_id`.
                         //
                         // The reachable cause is the extractor emitting the same
                         // NORMALISED name twice within one episode — this path
                         // believes the entity is new because it just decided so.
                         //
-                        // NOT a blanket swallow (Rule 8): only the unique case
+                        // NOT a blanket swallow: only the unique case
                         // is tolerated, and it is COUNTED so the rate stays
                         // visible. Every other error still fails the ingest.
                         if e.is_unique_violation() {
@@ -1741,20 +1738,20 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             tracing::warn!(
                                 entity_id = %entity_id,
                                 "kremory.ingest.entity_insert_duplicate — row already \
-                                 exists; continuing (TD-168). Extractor likely emitted \
+                                 exists; continuing. Extractor likely emitted \
                                  the same normalised name twice in one episode."
                             );
                         } else {
                             break 'phases Err(e);
                         }
                     }
-                    // DUR-7: claims a persisted row — replayed after the outer commit.
+                    // Claims a persisted row — replayed after the outer commit.
                     deferred.push(DeferredEmission::EntityPersisted {
                         source: "llm",
                         via: Some("insert_new"),
                     });
 
-                    // ADR-045 §6 / spec §1.1: persist GLiNER span confidence when present.
+                    // Persist GLiNER span confidence when present.
                     // `properties["confidence"]` is written by ner.rs for Phase 1 GLiNER
                     // extractions; absent on LLM-only paths. Best-effort — warn only.
                     if let Some(conf_val) = extracted.properties.get("confidence") {
@@ -1779,7 +1776,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
 
                     // Embed and store the entity name vector for L4 disambiguation probing.
-                    // TD-143: this is a WRITE into `entities.embedding` — document-prefix it.
+                    // This is a WRITE into `entities.embedding` — document-prefix it.
                     let embedding = match self
                         .embedder
                         .embed(&document_embed_text(
@@ -1791,7 +1788,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         Ok(v) => v,
                         Err(e) => break 'phases Err(e),
                     };
-                    // TD-206 / ADR-029d: SCOPED write. This previously used the
+                    // SCOPED write. This previously used the
                     // namespace-unscoped `set_entity_embedding`, whose SQL matches
                     // `WHERE id = ?` alone — so ingesting an entity named X into
                     // namespace A silently overwrote X's embedding in EVERY other
@@ -1842,8 +1839,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         .ok();
                     }
 
-                    // Bug A: episodic edge for newly inserted entity.
-                    // ADR-052 Gap 1 fire-sites: on_entity_extracted + on_edge_added("mention").
+                    // Episodic edge for newly inserted entity.
                     // Migration 006: thread `group_id` — the entity was just inserted
                     // via `insert_entity_with_group(.., group_id)` above, so the edge
                     // must reference the same namespace for the composite FK to resolve.
@@ -1857,7 +1853,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         })
                         .await
                         .is_ok();
-                    // DUR-7: captured, not fired — replayed after the outer commit.
+                    // Captured, not fired — replayed after the outer commit.
                     deferred.push(DeferredEmission::EntityMention {
                         entity_id: entity_id.clone(),
                         name: extracted.name.clone(),
@@ -1877,8 +1873,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
             // ── Phase 2: detect contradictions and store facts ───────────────────────
             //
-            // TD-167 / ADR-079 rev.2: contradiction detection is DEFAULT-ON again.
-            // It was default-OFF for ~4h on 2026-07-29 while it treated every
+            // Contradiction detection is DEFAULT-ON again.
+            // It was default-OFF for ~4h while it treated every
             // predicate as functional and SUPERSEDED SET-VALUED FACTS (81 of 1,021
             // facts invalidated over 8 LongMemEval sessions, ≥31% provably
             // multi-valued — a festival's 2nd..6th performer superseded by the
@@ -1957,14 +1953,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(hits) => hits,
                     Err(e) => break 'phases Err(e),
                 };
-                // TD-165: keep only candidates that SHARE AN ENTITY with the new
+                // Keep only candidates that SHARE AN ENTITY with the new
                 // fact. The FTS above matches on the PREDICATE alone, so without
                 // this it returns other subjects' facts entirely — "Alice likes
                 // tea" pulls in "Bob likes coffee" and buys a full LLM
                 // round-trip to ask whether they contradict. They cannot.
                 //
                 // Measured before adding this filter (Groq, 8 sessions,
-                // 2026-07-29, counters below):
+                // counters below):
                 //   pool_a contributed to 85 LLM-reachable checks -> 33 contradictions + 4 duplicates
                 //   pool_b contributed to 63 LLM-reachable checks ->  0 contradictions,  0 duplicates
                 // 0/63 gives a 95% CI upper bound of 4.8% on pool_b's hit rate,
@@ -1979,7 +1975,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // contradiction ("X is CEO of Acme" vs "Y is CEO of Acme")
                 // needs predicate CARDINALITY, which kremory does not model.
                 // Build that deliberately if wanted; do not leave it as an
-                // accident of a text search. See TD-165.
+                // accident of a text search.
                 //
                 // The `contradiction_outcome_total{source=...}` counter added
                 // alongside this keeps the decision falsifiable: if pool_b ever
@@ -2001,7 +1997,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     })
                     .collect();
 
-                // Run contradiction detection (TD-167: skipped when disabled —
+                // Run contradiction detection (skipped when disabled —
                 // no LLM call, no invalidation; the fact below is still stored)
                 let contradiction_result = match &detector {
                     Some(d) => match d
@@ -2019,10 +2015,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     None => crate::core::contradiction::ContradictionResult::no_conflicts(),
                 };
 
-                // ── TD-165 o11y: did this check EARN its LLM call? ──────────────
+                // ── Did this check EARN its LLM call? ───────────────────────────
                 //
                 // Contradiction detection is 38.4% of all ingest LLM calls
-                // (361/941 measured over 20 real sessions, 2026-07-29) and had
+                // (361/941 measured over 20 real sessions) and had
                 // NO success metric of any kind — the only related counter in
                 // the crate was `kremory.graph.unsupersede_total`, which meters
                 // the REVERSE operation. So the single largest consumer of the
@@ -2089,17 +2085,17 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 //
                 // `invalid_at: ref_time` is CORRECT — do not "fix" it to the
                 // superseding fact's `valid_at`. That change was proposed during
-                // TD-187 round 2 (adversarial-review finding L4: "an as_of()-visible
+                // adversarial review ("an as_of()-visible
                 // window overlap") and REFUTED on classification:
                 //
                 //   * `Fact.invalid_at` is the CONTRADICTION-RESOLVER'S invalidation
                 //     timestamp — "when did the resolver rule this out" — an
                 //     explicitly DISTINCT concept from `valid_to`, per the
-                //     `RetrievedFact` mapping at `memory/engine_handle.rs:831-837`
-                //     (ADR-074 review M4). The wire-facing world-clock `invalid_at`
+                //     `RetrievedFact` mapping at `memory/engine_handle.rs:831-837`.
+                //     The wire-facing world-clock `invalid_at`
                 //     the consumer sees IS `Fact.valid_to`, not this column.
                 //   * NOTHING filters on `invalid_at`. `as_of()` gates on
-                //     `valid_from`/`valid_to` (ADR-068), and every read path
+                //     `valid_from`/`valid_to`, and every read path
                 //     (`facts_at`, `entity_facts_at`, `get_facts_by_subject_predicate`)
                 //     additionally requires `expired_at IS NULL` — which this same
                 //     call sets. A superseded fact is therefore excluded by
@@ -2122,7 +2118,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
                     invalidated_fact_ids.push(*fact_id);
 
-                    // ── ADR-052 Gap 1 fire-site: on_contradiction ───────────────────
+                    // ── Fire-site: on_contradiction ─────────────────────────────────
                     // The new `fact` superseded a prior fact (`*fact_id`) that lives in
                     // pool_a/pool_b (both already fetched above). Build a faithful
                     // ContradictionDetected from the prior fact snapshot + the new triple.
@@ -2131,7 +2127,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // branch in `ingest_with`). Best-effort: if the prior fact cannot be
                     // located in the pools, skip the sink call rather than fabricate a
                     // payload (parse-loudly: no silent defaults for load-bearing fields).
-                    // DUR-7: the payload is BUILT here (it needs `pool_a`/`pool_b`, which
+                    // The payload is BUILT here (it needs `pool_a`/`pool_b`, which
                     // are scoped to this loop iteration) but DELIVERED after the commit.
                     let contradiction_event = if sink.is_some() {
                         pool_a
@@ -2141,7 +2137,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             .map(|prior| {
                             use crate::core::sink::{ContradictionDetected, EntityId, SinkFact};
                             // An empty object_id is LEGITIMATE here, not a silent
-                            // default / parse-loudly violation (Rule 21): a fact may
+                            // default / parse-loudly violation: a fact may
                             // be a unary predicate / objectless triple where BOTH
                             // `object_id` and `object_value` are absent. `unwrap_or_default()`
                             // yields "" for that case, which is the correct faithful
@@ -2179,9 +2175,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     });
                 }
 
-                // F5 — within-episode DUPLICATE pre-check (SQL-only).
+                // Within-episode DUPLICATE pre-check (SQL-only).
                 //
-                // DUR-2 (V1-CANONICAL §4.1): this compared subject+predicate only, and
+                // This compared subject+predicate only, and
                 // `pool_a` comes from `get_facts_by_subject_predicate` — i.e. it is
                 // object-agnostic. So one episode asserting "Alice speaks English",
                 // "Alice speaks French", "Alice speaks Spanish" stored ONLY THE FIRST:
@@ -2204,7 +2200,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 });
                 if within_episode_duplicate {
                     let ns = group_id.unwrap_or("default");
-                    // Renamed from `within_episode_contradiction` with DUR-2: the check
+                    // Renamed from `within_episode_contradiction`: the check
                     // now fires only on an exact repeated triple, which is a duplicate,
                     // not a contradiction. The old name described what the code was
                     // wrongly doing.
@@ -2223,12 +2219,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     continue;
                 }
 
-                // ADR-045 §11's DETECTION intent, preserved additively.
+                // DETECTION intent, preserved additively.
                 //
-                // ADR-045 specified a *contradiction* check — same subject+predicate with a
-                // DIFFERENT object — that kept the higher-confidence fact and surfaced the
-                // loser via `IngestError`. That mechanism never shipped; what shipped
-                // silently dropped, object-agnostically (DUR-2). The DUR-2 fix stores every
+                // An earlier design specified a *contradiction* check — same subject+predicate
+                // with a DIFFERENT object — that kept the higher-confidence fact and surfaced
+                // the loser via `IngestError`. That mechanism never shipped; what shipped
+                // silently dropped, object-agnostically. The fix stores every
                 // value, because within one episode there is no temporal ordering that
                 // could make one assertion supersede another, and a set-valued predicate is
                 // indistinguishable from a contradiction without predicate-cardinality
@@ -2238,7 +2234,6 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // asserts multiple DISTINCT objects for the same subject+predicate. Data
                 // loss is irreversible; detection is additive — so measure the phenomenon
                 // first, then design policy against real counts instead of assumptions.
-                // ADR-045 §11 is superseded with this reasoning recorded inline.
                 let within_episode_multivalue = pool_a
                     .iter()
                     .any(|f| f.source_episode_id == Some(episode_id));
@@ -2271,9 +2266,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // (`Memory::remember` always passes `group_id = Some(namespace)`),
                 // even though `Engine::ingest_with(group_id = None)` worked. Mirrors the
                 // pre-pinned `with_facts` path above. (Deterministic repro: facts=1 at
-                // group_id=None vs facts=0 at group_id=Some, 2026-06-29.)
+                // group_id=None vs facts=0 at group_id=Some.)
                 //
-                // ADR-035 §5 Option A: the `_with_group` variant still dedups
+                // The `_with_group` variant still dedups
                 // caller-pinned `with_facts` triples (caller wins by being there first).
                 match self
                     .graph
@@ -2283,12 +2278,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             predicate: &fact.predicate,
                             object_id: object_id.as_deref(),
                             object_value,
-                            // TD-187 round 2 — per-fact world time, episode time as fallback.
-                            // `None` reproduces the pre-TD-187 behaviour EXACTLY (every fact
+                            // Per-fact world time, episode time as fallback.
+                            // `None` reproduces the earlier behaviour EXACTLY (every fact
                             // from an episode shared `ref_time`), so this is strictly additive:
                             // only facts whose source text stated a resolvable date change.
                             // Measured on a 30-turn real-corpus sample, that is ~10% of facts.
-                            // `as_of()` filters on this column (ADR-068).
+                            // `as_of()` filters on this column.
                             valid_from: fact.valid_at.unwrap_or(ref_time),
                             confidence: fact.confidence,
                             source_episode_id: Some(episode_id),
@@ -2307,7 +2302,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(Some(fact_id)) => {
                         // Embed the fact triple as a single string (subject predicate object)
                         // and store it so vector_search_facts can find it semantically.
-                        // TD-143: WRITE into `facts.embedding` — document-prefix it.
+                        // WRITE into `facts.embedding` — document-prefix it.
                         let fact_text =
                             format!("{} {} {}", fact.subject, fact.predicate, fact.object);
                         let prefixed_fact_text = document_embed_text(
@@ -2323,7 +2318,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         inserted_fact_ids.push(fact_id);
                     }
                     Ok(None) => {
-                        // ADR-035 Path X: caller pre-pinned this triple via with_facts;
+                        // Caller pre-pinned this triple via with_facts;
                         // LLM duplicate silently deduped. Counter already incremented in
                         // try_insert_fact. This is the expected silent-dedup path.
                         tracing::debug!(
@@ -2334,12 +2329,12 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         );
                     }
                     Err(e) => {
-                        // Rule 19: a swallowed fact-insert failure (e.g. FK constraint) was
+                        // A swallowed fact-insert failure (e.g. FK constraint) was
                         // previously only a tracing::warn — invisible in aggregate, which hid
                         // the composite-FK namespace bug (facade facts silently dropped). Emit
                         // a counter so dropped facts are observable, not silent.
                         //
-                        // B2 observability hardening (2026-07-21): this bare counter gave the
+                        // Observability hardening: this bare counter gave the
                         // foreground path no `reason`/`namespace` attribution, unlike its
                         // deferred-path sibling (`deferred.rs`). Bring it to parity: label via
                         // the shared `Error::fact_insert_failure_reason` taxonomy and
@@ -2351,7 +2346,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         // (group_id) is consumer-supplied + unbounded — it stays
                         // in the warn log + KREMORY_DEBUG dump below, never a
                         // metric label (observability-first: no unbounded label
-                        // cardinality). TD-133 B3 follow-up.
+                        // cardinality).
                         metrics::counter!(
                             "kremory.ingest.phase2_fact_insert_failed_total",
                             "reason" => reason,
@@ -2381,7 +2376,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     }
                 }
 
-                // Bug A: subject-side episodic edge is written in the entity loop
+                // Subject-side episodic edge is written in the entity loop
                 // (role="mention"), guaranteeing presence coverage for all extracted
                 // entities regardless of whether they appear in facts.
                 // The object-side episodic edge is the SOLE presence source for fact
@@ -2394,8 +2389,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // resolution is honoured.
                 if let Some(ref obj_id) = object_id {
                     if !entity_loop_ids.contains(obj_id.as_str()) {
-                        // ADR-052 Gap 1 fire-site: on_edge_added("object"). Fires on Ok
-                        // only (insert error is soft `.ok()` precedent). D7: ids in
+                        // Fire-site: on_edge_added("object"). Fires on Ok
+                        // only (insert error is soft `.ok()` precedent). ids in
                         // tracing fields only, NOT metric labels. Migration 006: thread
                         // `group_id` — this branch is gated on the object being in
                         // `name_to_id` (a this-batch entity stored under `group_id`),
@@ -2411,7 +2406,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             .await
                             .is_ok();
                         if object_ok {
-                            // DUR-7: captured, not fired — replayed after the outer commit.
+                            // Captured, not fired — replayed after the outer commit.
                             deferred.push(DeferredEmission::ObjectEdge {
                                 to_entity_id: obj_id.clone(),
                             });
@@ -2425,16 +2420,16 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         // Commit or rollback the outer transaction based on phase result.
         //
-        // ── ADR-052 Gap 1 fire-sites: terminal stage transitions ─────────────────
+        // ── Fire-sites: terminal stage transitions ──────────────────────────────
         // Re-establishes 737e152 verify_stage Fire-sites 4 (EntitiesReady) + 5
         // (Failed) on the unified inline routine, plus Complete. Successful
         // sequence per IngestStatus doc: Extracting → EntitiesReady → Complete.
-        // On error: Failed. Triple-emit at each (sink + counter + tracing). D7:
+        // On error: Failed. Triple-emit at each (sink + counter + tracing).
         // episode_id is a tracing field only, NEVER a metric label. Failed-arm
-        // tracing is `tracing::error!` (ADR-052 §3.1 row 12 / MED-01 precedent).
+        // tracing is `tracing::error!`.
         match phase_result {
             Ok(()) => {
-                // ── DUR-7: the flush point ───────────────────────────────────────
+                // ── The flush point ───────────────────────────────────────────────
                 // `commit()` FIRST, then replay. Every emission buffered during the
                 // transaction describes a row that only becomes real on the line above,
                 // and neither a sink callback nor a counter can be rolled back.
@@ -2454,9 +2449,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 outer_guard.commit().await?;
                 flush_deferred_emissions(deferred, sink, episode_id);
 
-                // ── Embed forward-reference stubs (TD-114 shortfall root cause) ──
+                // ── Embed forward-reference stubs (shortfall root cause) ────────
                 //
-                // POST-COMMIT for the DUR-7 reason above plus one of its own: each
+                // POST-COMMIT for the reason above plus one of its own: each
                 // iteration is a network round-trip to the embedder, and running it
                 // inside the write transaction would hold the lock across an LLM call.
                 //
@@ -2464,10 +2459,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // forward reference to an entity the extractor never described. Failing
                 // the whole ingest because its name vector could not be written would
                 // trade a retrieval gap for data loss. The per-reason counter is what
-                // makes the failure visible instead of silent
-                // ([[observability-first-class]]).
+                // makes the failure visible instead of silent.
                 //
-                // TD-143: this is a WRITE into `entities.embedding`, so it MUST go
+                // This is a WRITE into `entities.embedding`, so it MUST go
                 // through `document_embed_text` with the same `embed_task_prefix_enabled`
                 // config as the main entity path (`:1699-1714`). Embedding the bare name
                 // here would place the vector in a DIFFERENT space from every other
@@ -2478,7 +2472,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         self.config.search.embed_task_prefix_enabled,
                     );
                     match self.embedder.embed(&text).await {
-                        // TD-206 / ADR-029d: scoped by `effective_gid` — the SAME
+                        // Scoped by `effective_gid` — the SAME
                         // value the stub's own `insert_entity_with_group` used
                         // above. The unscoped form wrote this vector into every
                         // namespace holding an entity of the same name.
@@ -2558,8 +2552,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // async block's `Err`. The `Failed` sink/counter/tracing fire is
                 // performed ONCE at the single exit point below (the outer
                 // `match ingest_outcome`), covering this phase-rollback path AND
-                // every other post-`Extracting` `?` failure uniformly — Quinn
-                // MED-01. Do NOT fire `Failed` here too, or it would double-emit.
+                // every other post-`Extracting` `?` failure uniformly. Do NOT
+                // fire `Failed` here too, or it would double-emit.
                 let _ = outer_guard.rollback().await;
                 return Err(e);
             }
@@ -2571,7 +2565,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let merge_count = merged_entities.len();
         let contradiction_count = invalidated_fact_ids.len();
         histogram!("rql.ingest.total_ms").record(total_ms);
-        // TD-019 Gap 2: phase1_ms exposes the sync ingest-with-extraction phase
+        // phase1_ms exposes the sync ingest-with-extraction phase
         // separately from total_ms so consumers can distinguish user-facing
         // latency (this) from deferred relationship work (phase2_ms).
         histogram!("rql.ingest.phase1_ms").record(total_ms);
@@ -2602,7 +2596,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
         .await;
 
-        // ── Single Failed-fire exit (ADR-051 §4 / Quinn MED-01) ─────────────────
+        // ── Single Failed-fire exit ─────────────────────────────────────────────
         // The async block above captured every fallible step after the `Extracting`
         // fire. On ANY `Err`, fire `Failed` exactly once (sink + counter + tracing)
         // BEFORE re-propagating — the error is NOT swallowed.
@@ -2610,7 +2604,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             Ok(result) => Ok(result),
             Err(e) => {
                 fire_failed(&e);
-                // TD-168 (second defect): persist Failed. Previously the inline
+                // Second defect: persist Failed. Previously the inline
                 // path left the row at 'Pending', while BackgroundIngestor
                 // writes 'Failed' — so a FAILED inline ingest was
                 // indistinguishable from an IN-FLIGHT one. That is the
@@ -2641,7 +2635,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         episode_id,
                         error = %status_err,
                         "kremory.ingest.failed_status_write_failed — episode remains \
-                         Pending and is indistinguishable from in-flight (TD-168)"
+                         Pending and is indistinguishable from in-flight"
                     );
                 }
                 Err(e)
@@ -2649,9 +2643,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
     }
 
-    /// TD-113: make a caller-pinned entity recall-findable AND attributable
+    /// Make a caller-pinned entity recall-findable AND attributable
     /// WITHOUT a second LLM. Recall seeds on entities (`Engine::contextualize`
-    /// — TD-158: NOT `hybrid_search_entities`, which has zero production
+    /// — NOT `hybrid_search_entities`, which has zero production
     /// callers) then renders via the DEFAULT `TemporalFacts` template — so a
     /// pin must satisfy THREE channels to actually surface, all mirroring
     /// mode-(a):
@@ -2661,7 +2655,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     ///    `entities_fts.properties` (label is empty post-Migration-009). This is
     ///    the channel that works even under a null embedder.
     /// 2. **Vector** — embed the literal name into `entities.embedding`. The
-    ///    embedder is NOT the chat LLM, so spec §3 F1 "no second LLM" holds.
+    ///    embedder is NOT the chat LLM, so "no second LLM" holds.
     /// 3. **Attribution** — link the entity to its source episode via an episodic
     ///    edge (`role="mention"`). Without it the entity has zero `source_refs`,
     ///    and the default `TemporalFacts` renderer (which emits output ONLY per
@@ -2669,7 +2663,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     ///    hit. This is the piece the skip-extraction early-return skipped (all
     ///    other `insert_episodic_edge` calls run AFTER it).
     ///
-    /// All best-effort per [[observability-first-class]] (success + failure both
+    /// All best-effort (success + failure both
     /// emit a labeled signal): a null/failing embedder still leaves the entity
     /// FTS-findable + attributed. `set_entity_embedding` + `insert_episodic_edge`
     /// are UPDATE/INSERT-OR-IGNORE, so they also cover entities that pre-existed
@@ -2680,7 +2674,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             group_id,
             episode_id,
         } = p;
-        // Channel 2 — vector. TD-143: WRITE into `entities.embedding` — document-prefix it.
+        // Channel 2 — vector. WRITE into `entities.embedding` — document-prefix it.
         match self
             .embedder
             .embed(&document_embed_text(
@@ -2690,7 +2684,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .await
         {
             Ok(embedding) => {
-                // TD-206 / ADR-029d: scoped by the pin's own `group_id`, matching
+                // Scoped by the pin's own `group_id`, matching
                 // the sibling `insert_entity_with_group` pin call site.
                 if let Err(e) = self
                     .graph

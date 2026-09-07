@@ -1,4 +1,4 @@
-//! # Three-Cache Separation (Story #149)
+//! # Three-Cache Separation
 //!
 //! kremory uses three distinct cache tiers with explicit invalidation contracts:
 //!
@@ -43,7 +43,7 @@ use crate::core::schema::{Entity, TemporalGraph};
 use crate::core::search::SearchHit;
 
 /// A cached entity with its pre-computed PageRank score and expiry time.
-#[allow(dead_code)] // planned consumer: SpeculativeCache (wired in search hot-path, Story #149)
+#[allow(dead_code)] // planned consumer: SpeculativeCache (wired in search hot-path)
 #[derive(Debug, Clone)]
 struct CachedEntry {
     entity: Entity,
@@ -64,9 +64,9 @@ struct CachedEntry {
 /// Invalidation: entries are TTL-bounded. Callers MUST call `evict_expired()`
 /// or `clear()` when `DIRTY` is observed (see three-cache separation above).
 ///
-/// Not yet wired into the search hot-path — Story #149 integration pending.
+/// Not yet wired into the search hot-path — integration pending.
 /// Surgical exemption for the struct and all its methods until that wiring is done.
-#[allow(dead_code)] // planned consumer: search hot-path integration (Story #149)
+#[allow(dead_code)] // planned consumer: search hot-path integration
 pub(crate) struct SpeculativeCache {
     /// entity_id -> cached entry
     entries: Mutex<HashMap<String, CachedEntry>>,
@@ -78,7 +78,7 @@ pub(crate) struct SpeculativeCache {
     max_prefetch: usize,
 }
 
-#[allow(dead_code)] // planned consumer: search hot-path integration (Story #149)
+#[allow(dead_code)] // planned consumer: search hot-path integration
 impl SpeculativeCache {
     pub fn new(ttl: Duration, prefetch_depth: u32, max_prefetch: usize) -> Self {
         Self {
@@ -100,7 +100,7 @@ impl SpeculativeCache {
     ///
     /// The `dirty` parameter is the per-handle `AtomicBool` from `TemporalGraph`.
     /// Passing it explicitly (rather than reading a global) ensures cache
-    /// invalidation is scoped to the owning graph handle — FU.6 fix.
+    /// invalidation is scoped to the owning graph handle.
     ///
     /// Called automatically at the entry of every read method (`get`, `get_many`)
     /// so callers never need to check the dirty flag themselves.
@@ -504,19 +504,19 @@ mod tests {
         assert!(cache.len() <= 2, "cache should respect max_prefetch limit");
     }
 
-    /// Story #149 (updated by FU.2): Tier-2 cache must not return stale data
+    /// Tier-2 cache must not return stale data
     /// after a write.
     ///
-    /// Original flow (pre-FU.2, caller-manual eviction):
+    /// Original flow (caller-manual eviction):
     ///   1. Prefetch → cache is warm.
     ///   2. Set DIRTY.
     ///   3. Caller manually calls clear() + resets DIRTY.
     ///   4. get() returns None.
     ///
-    /// FU.2 wired auto-invalidation into get(). Step 3 is now handled
+    /// Auto-invalidation is now wired into get(). Step 3 is now handled
     /// internally — callers no longer need to check DIRTY before reading.
     /// This test retains the manual clear() path for backward-compat coverage;
-    /// the FU.2 AC tests (below) verify the no-manual-clear path.
+    /// the tests below verify the no-manual-clear path.
     #[tokio::test]
     async fn tier2_cache_stale_data_evicted_after_dirty_write() {
         use std::sync::atomic::Ordering;
@@ -544,7 +544,7 @@ mod tests {
         dirty.store(true, Ordering::Release);
 
         // Step 3: manual eviction path (backward-compat — still valid).
-        // FU.2 auto-wiring means the next get() would also do this; manual
+        // Auto-wiring means the next get() would also do this; manual
         // clear() here exercises the explicit eviction branch.
         cache.clear();
         dirty.store(false, Ordering::Release);
@@ -557,10 +557,10 @@ mod tests {
     }
 
     // -------------------------------------------------------------------------
-    // FU.2 — Story #149 Steps 2+3: check_dirty_and_invalidate + auto-wiring
+    // check_dirty_and_invalidate + auto-wiring
     // -------------------------------------------------------------------------
 
-    /// FU.2 AC1+AC2: setting dirty then calling get() returns None without any
+    /// Setting dirty then calling get() returns None without any
     /// manual clear() call — auto-invalidation fires inside get().
     #[tokio::test]
     async fn cache_get_returns_none_when_dirty_set() {
@@ -594,7 +594,7 @@ mod tests {
         );
     }
 
-    /// FU.2 AC3 (atomic reset): after the first get() that observes dirty=true,
+    /// Atomic reset: after the first get() that observes dirty=true,
     /// the flag must be reset to false — no second invalidation needed.
     #[tokio::test]
     async fn cache_get_resets_dirty_atomically() {
@@ -623,7 +623,7 @@ mod tests {
         );
     }
 
-    /// FU.2 AC3 (concurrent swap): N threads race to call check_dirty_and_invalidate()
+    /// Concurrent swap: N threads race to call check_dirty_and_invalidate()
     /// while dirty=true. Exactly one swap wins (sees `was_dirty=true`); all others
     /// see `was_dirty=false`. The test verifies the cache ends up consistently
     /// empty (no stale data) and dirty is false afterward.

@@ -28,9 +28,9 @@ impl EntityExtractor for FixedExtractor {
 
 /// Build a MockChatProvider with staged responses matching the prompt substrings
 /// used by LlmExtractor, IntegerIdLlmExtractor, CascadeResolver, and TwoPoolDetector.
-// Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a documented
-// too_many_arguments allow); TD-042 args-as-object targets `src/` production fns,
-// not test-module builders.
+// Test helper: test helpers may carry a documented `too_many_arguments`
+// allow per clippy.toml; the args-as-object pattern used elsewhere targets
+// `src/` production fns, not test-module builders.
 #[allow(clippy::too_many_arguments)]
 fn build_mock_llm(
     entities_json: &str,
@@ -60,7 +60,7 @@ fn build_mock_llm(
     // graphiti build_graphiti_entity_prompt above. Response must be the integer-ID
     // object form `{"entities":[{"name","entity_type_id":<int>}]}` (parse_entities_integer),
     // not an array of {name,label}. (Stale prior key/format was never exercised because
-    // IntegerId was not the Engine::new default before the 2026-06-29 wiring fix.)
+    // IntegerId was not the Engine::new default before a prior wiring fix.)
     map.insert(
         "Each entity must appear exactly once".to_string(),
         entities_json.to_string(),
@@ -121,12 +121,12 @@ async fn make_engine_with_mock() -> Engine<MockChatProvider, MockEmbeddingProvid
 /// `IntegerIdLlmExtractor` (`name()=="default"`), not the 2-stage graphiti
 /// `LlmExtractor` (`name()=="llm"`).
 ///
-/// Why this matters (real-LLM probe, 2026-06-29, qwen2.5:14b, identical harness):
+/// Why this matters (real-LLM probe, qwen2.5:14b, identical harness):
 /// on the rich `mock_interview` corpus IntegerIdLlmExtractor extracted **16** facts
 /// vs graphiti LlmExtractor's **3**; on short prose, **3 vs 0**. Until this fix the
 /// facade (`Memory::with_ollama().remember()` → `open_graph` → `Engine::new`)
 /// silently shipped the weaker extractor while every test validated the stronger one
-/// via explicit `ingest_with` — see `.ai-docs/research/extractor-wiring-investigation-2026-06-29.md`.
+/// via explicit `ingest_with`.
 #[tokio::test]
 async fn default_engine_uses_integer_id_extractor() {
     let engine = make_engine_with_mock().await;
@@ -249,7 +249,7 @@ async fn test_ingest_creates_episodic_edges() {
 /// Invariant (new, this fix): an entity appears in an episode AT MOST ONCE —
 /// ≤1 presence edge per (episode_id, entity_id). An extracted entity that is
 /// ALSO a fact object must NOT receive both a "mention" edge (entity loop) and
-/// an "object" edge (fact loop). Governing: ADR-052 §3.1 fire-sites; the
+/// an "object" edge (fact loop). The
 /// duplicate was discovered via the published-crate new-user e2e (recall
 /// rendered the same source episode twice). RED before the disjoint-writer fix.
 #[tokio::test]
@@ -403,7 +403,7 @@ async fn test_ingest_entities_stored_in_graph() {
 /// The proper noun scanner catches Title-Case tokens the LLM extractor missed.
 /// It assigns label="Entity" (a placeholder) because it cannot classify the type.
 ///
-/// Post-TD-012 fix: the L2 guard at the persistence boundary rejects label="Entity".
+/// The L2 guard at the persistence boundary rejects label="Entity".
 /// This means proper-noun-scanned entities with placeholder labels are correctly
 /// filtered out — we accept fewer entities with correct labels over many with garbage
 /// labels.  The canonical-label entities ("Alice" / "Person") still persist.
@@ -456,27 +456,27 @@ async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
         result.upserted_entities
     );
 
-    // TD-013 Phase 8 v3: scan_proper_nouns DISABLED — pure-LLM extraction
+    // scan_proper_nouns DISABLED — pure-LLM extraction
     // matches Graphiti/Cognee/LightRAG peer pattern. "Zenith Dynamics"
     // was previously caught by the scanner; with scanner off, it relies on
-    // the LLM extractor. When task #15 re-enables scanner with LLM
+    // the LLM extractor. If the scanner is re-enabled with an LLM
     // classification round-trip, restore the original assertion.
     assert!(
         !result
             .upserted_entities
             .iter()
             .any(|e| e.contains("zenith")),
-        "Phase 8 v3: scanner-only entities no longer persist; \
+        "scanner-only entities no longer persist; \
          got: {:?}",
         result.upserted_entities
     );
 
-    // TD-013 Phase 8 v3: scanner disabled — only LLM-extracted entities persist.
+    // Scanner disabled — only LLM-extracted entities persist.
     let entities = graph.list_entities().await.expect("list");
     assert_eq!(
         entities.len(),
         1,
-        "Phase 8 v3 (pure LLM): only LLM-extracted entity persists; got: {entities:?}"
+        "pure LLM: only LLM-extracted entity persists; got: {entities:?}"
     );
     assert!(
         entities.iter().any(|e| e.id == "alice"),
@@ -489,7 +489,7 @@ async fn test_ingest_catches_proper_nouns_missed_by_extractor() {
 /// `tracing::warn!` so noisy small-model extractors (llama3.2, gemma4-e2b)
 /// can be used safely.
 ///
-/// Story #150 history: previously this returned
+/// History: previously this returned
 /// `Err(IntraBatchDuplicate)`. The variant is retained on the error enum
 /// for forward-compat with a possible explicit-strict-batch API in v0.2.0+
 /// but is not currently raised from `ingest_with`.
@@ -780,7 +780,7 @@ async fn stub_entity_promoted_on_reingestion_lib() {
     );
 }
 
-/// ADR-075 (TD-124): stub promotion MUST still fire when candidate blocking is
+/// Stub promotion MUST still fire when candidate blocking is
 /// ACTIVE (group has > `resolution_block_k` existing entities + a real,
 /// non-zero embedder). This is the load-bearing safety case: stubs are stored
 /// with `embedding=None`, so the embedding-ANN arm can NEVER surface them —
@@ -907,7 +907,7 @@ async fn stub_promoted_under_active_blocking_lib() {
 }
 
 /// v0.1.4 — soft-dedup ingest writes exactly one row per duplicated name.
-/// Previously (Story #150): after FATAL `IntraBatchDuplicate`, zero rows
+/// Previously: after FATAL `IntraBatchDuplicate`, zero rows
 /// were written. Post-v0.1.4: the substrate dedupes silently so one row
 /// per normalized name lands, regardless of the extractor's noise.
 #[tokio::test]
@@ -927,8 +927,8 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
         model: None,
     });
 
-    // Use a canonical label ("Person") so the TD-012 guard does not filter
-    // these out before the dedup logic runs.  The test invariant is dedup,
+    // Use a canonical label ("Person") so the persistence-boundary guard does
+    // not filter these out before the dedup logic runs.  The test invariant is dedup,
     // not label validation — use a label that passes the L2 allowlist check.
     let extractor = FixedExtractor {
         entities: vec![
@@ -976,15 +976,13 @@ async fn ingest_intra_batch_duplicate_writes_one_per_name() {
     );
 }
 
-// ── Engine model field threading tests (Option-1, 2026-06-23) ─────────────
+// ── Engine model field threading tests ─────────────────────────────────────
 //
-// Option-1 inverted the original P7b contract: the Engine model string is now
-// CONSUMER-SUPPLIED via `EngineNewParams.model`, NOT read off `llm.model()`
-// (which only exists on autoagents-llm `main`, not published 0.3.7). The mocks
-// below deliberately do NOT override `fn model()` — that override would be
-// E0407 against 0.3.7 and is no longer consulted by the Engine.
-//
-// Spec: .ai-docs/specs/option1-drop-model-accessor-impl-spec-2026-06-23.md §1.
+// The Engine model string is CONSUMER-SUPPLIED via `EngineNewParams.model`,
+// NOT read off `llm.model()` (which only exists on autoagents-llm `main`, not
+// published 0.3.7). The mocks below deliberately do NOT override `fn model()`
+// — that override would be E0407 against 0.3.7 and is no longer consulted by
+// the Engine.
 
 /// Engine stores the consumer-supplied model string from `EngineNewParams.model`.
 #[tokio::test]
@@ -1054,13 +1052,13 @@ async fn engine_model_none_when_param_none() {
 
 // ── End Engine model field tests ──────────────────────────────────────────
 
-/// TD-013 Phase 8 finalises Vera M1: the TD-012 over-rejection guard is
-/// DELETED. Under the L1 integer-ID design, "Entity" id=0 is the legitimate
-/// catch-all (per Graphiti peer pattern); "UNKNOWN" / unrecognised labels
-/// also resolve to id=0 via registry.label_to_id fallback. These entities
-/// MUST be persisted, not rejected.
+/// The over-rejection guard that used to drop "Entity"/"UNKNOWN"-labelled
+/// entities is gone. Under the L1 integer-ID design, "Entity" id=0 is the
+/// legitimate catch-all (per Graphiti peer pattern); "UNKNOWN" / unrecognised
+/// labels also resolve to id=0 via registry.label_to_id fallback. These
+/// entities MUST be persisted, not rejected.
 ///
-/// Replacement guardrails (all wired by Phase 1-7):
+/// Replacement guardrails:
 /// - L3 validate_or_fallback bounds-checks emitted entity_type_id
 /// - L4 disambiguation handles surface-form duplicates
 /// - L5 vector canonicalisation merges variant spellings
@@ -1069,7 +1067,7 @@ async fn engine_model_none_when_param_none() {
 ///
 /// Invariant: a FixedExtractor returning "Entity"-labelled entities MUST
 /// persist them with entity_type_id=0 (catch-all). Earlier behaviour was
-/// to drop them entirely — that was the TD-012 mistake reverted here.
+/// to drop them entirely — that mistake is reverted here.
 #[tokio::test]
 async fn ingest_persists_entity_catchall_under_l1_design() {
     let graph = Arc::new(TemporalGraph::open_in_memory().await.expect("open"));
@@ -1146,9 +1144,9 @@ async fn ingest_persists_entity_catchall_under_l1_design() {
     );
 }
 
-// ── TD-013 per-call entity_types override tests ───────────────────────────
+// ── Per-call entity_types override tests ──────────────────────────────────
 //
-// Tests #4-#6 (spec §1, Graphiti pattern).
+// Tests #4-#6 (Graphiti pattern).
 //
 // Tests #4 and #5 call ingest_with with `entity_types_override: Some(...)` on
 // SourceParams — a field that does not yet exist.
@@ -1273,14 +1271,13 @@ async fn test_ingest_with_entity_types_override_persists_on_first_call_then_reus
     let _ = r1;
 }
 
-/// #5 — entity_types_override is ADDITIVELY MERGED when the DB has rows (TD-023).
+/// #5 — entity_types_override is ADDITIVELY MERGED when the DB has rows.
 ///
-/// Was previously "ephemeral, do not touch DB" (TD-013 design). That created
+/// Was previously "ephemeral, do not touch DB". That created
 /// a JOIN hole: an entity row stored with entity_type_id = an override-only
 /// id had no entity_types row, so SQL COALESCE(et.name, 'Entity') resolved
 /// label='Entity' at read time regardless of the stored integer id. The
-/// TD-023 hybrid extractor exposed this — see
-/// [[td022-gliner-empirical-speed-wins-precision-ties-or-loses]].
+/// hybrid extractor exposed this.
 ///
 /// New invariant: pre-existing rows survive unchanged AND missing override
 /// types are added (INSERT OR IGNORE — additive only, no clobber).
@@ -1369,7 +1366,7 @@ async fn test_ingest_with_entity_types_override_ephemeral_when_db_has_rows() {
         .await
         .expect("ingest_with with ephemeral override must succeed");
 
-    // TD-023: DB has 3 rows for "g1" — original 2 (Entity, Person) PLUS
+    // DB has 3 rows for "g1" — original 2 (Entity, Person) PLUS
     // CustomType added by the additive merge.
     let mut rows = engine
         .graph
@@ -1389,23 +1386,23 @@ async fn test_ingest_with_entity_types_override_ephemeral_when_db_has_rows() {
     assert_eq!(
         found.len(),
         3,
-        "#5 TD-023: entity_types for 'g1' must have 3 rows after additive merge \
+        "#5: entity_types for 'g1' must have 3 rows after additive merge \
          (2 original + 1 added override type); got {:?}",
         found
     );
     assert!(
         found.iter().any(|(id, n)| *id == 0 && n == "Entity"),
-        "#5 TD-023: original Entity(0) row preserved; got {:?}",
+        "#5: original Entity(0) row preserved; got {:?}",
         found
     );
     assert!(
         found.iter().any(|(id, n)| *id == 1 && n == "Person"),
-        "#5 TD-023: original Person(1) row preserved; got {:?}",
+        "#5: original Person(1) row preserved; got {:?}",
         found
     );
     assert!(
         found.iter().any(|(id, n)| *id == 5 && n == "CustomType"),
-        "#5 TD-023: CustomType(5) row added by additive merge; got {:?}",
+        "#5: CustomType(5) row added by additive merge; got {:?}",
         found
     );
 }

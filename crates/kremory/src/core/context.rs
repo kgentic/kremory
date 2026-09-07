@@ -12,18 +12,17 @@ use crate::core::search::{
     VectorSearchEntitiesNoCountParams,
 };
 
-// recall-v2 Phase 4 (TD-056): the former module consts `NEIGHBOUR_SCORE_DECAY`
+// The former module consts `NEIGHBOUR_SCORE_DECAY`
 // and `MAX_NEIGHBOURS_PER_SEED` are now `SearchConfig::neighbour_score_decay`
 // (default 0.5) and `SearchConfig::expansion_fan_out_cap` (default 8) — read per
 // recall from `self.config.search`. Grounding for the decay (unchanged):
-// `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-traversal--
-// reranking-wave-1-substrate.md` — HippoRAG's ablation (arXiv 2405.14831 Table
+// HippoRAG's ablation (arXiv 2405.14831 Table
 // 5) shows plain UNWEIGHTED graph expansion measurably HURTS recall; only
 // *weighted* expansion beats the no-expansion baseline. 0.5 is mid-range of the
 // literature's [0.3, 0.7] band (HippoRAG's PPR damping is also 0.5).
 
-/// Bundled parameters for [`Engine::contextualize`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`Engine::contextualize`] — args-as-object to keep
+/// the function under clippy's `too_many_arguments` threshold.
 #[derive(Debug, Clone, Copy)]
 pub struct ContextualizeParams<'a> {
     /// Free-text query to search for.
@@ -32,7 +31,7 @@ pub struct ContextualizeParams<'a> {
     pub group_id: Option<&'a str>,
     /// Optional result cap (defaults to `config.search.top_k`).
     pub limit: Option<usize>,
-    /// ADR-068 — point-in-time (valid-time) filter for the 1-hop fact
+    /// Point-in-time (valid-time) filter for the 1-hop fact
     /// expansion. `None` = today's behaviour (all non-expired facts,
     /// valid-time-agnostic). `Some(t)` = only facts whose
     /// `[valid_from, valid_to)` window contains `t` are surfaced. Entity
@@ -50,9 +49,9 @@ pub struct ContextResult {
     /// Relevance scores, keyed by entity ID, all clamped to `[0.0, 1.0]`.
     ///
     /// Seed entities: RRF-derived, min-max normalised, plus a small additive
-    /// [`graph_degree_bonus`] (TD-066 Change 2) for their own 1-hop degree.
+    /// [`graph_degree_bonus`] for their own 1-hop degree.
     /// 1-hop neighbour entities (not themselves seeds): [`NEIGHBOUR_SCORE_DECAY`]
-    /// `* ` their connecting seed's score (TD-066 Change 1) — always below
+    /// `* ` their connecting seed's score — always below
     /// that seed's own score, but may still out-rank a weaker seed if
     /// strongly connected, matching the literature's "weighted expansion
     /// beats no expansion" finding. A neighbour reachable from multiple
@@ -81,19 +80,18 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         } = params;
         let limit = limit.unwrap_or(self.config.search.top_k);
 
-        // TD-066 phase 1 (recall-v2 spec Decision 1, #77): classify query intent
-        // up-front, BEFORE FTS/vector search, so downstream scoring axes can read
-        // it for per-intent weight defaults. PHASE 1 CLASSIFIES + OBSERVES ONLY —
-        // it does NOT yet alter scoring (phase 2 wires the per-axis weight-override
-        // lookup). Emitting it now makes intent visible on every recall for the
-        // pattern-tuning the spec (Decision 5) defers to build-time eval feedback
-        // (observability-first-class).
+        // Classify query intent up-front, BEFORE FTS/vector search, so
+        // downstream scoring axes can read it for per-intent weight defaults.
+        // This CLASSIFIES + OBSERVES ONLY — it does NOT yet alter scoring (a
+        // later phase wires the per-axis weight-override lookup). Emitting it
+        // now makes intent visible on every recall for the pattern-tuning
+        // that build-time eval feedback will later drive.
         let intent = crate::core::intent::classify_intent(query);
         metrics::counter!("kremory.recall.intent_total", "intent" => intent.as_str()).increment(1);
         tracing::debug!(
             target: "kremory.recall.intent",
             intent = intent.as_str(),
-            "recall query intent classified (TD-066 phase 1: observe-only)"
+            "recall query intent classified (observe-only)"
         );
 
         // Build search filters from the optional group_id
@@ -103,7 +101,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         };
 
         // Step 1: Compute query embedding for vector search (Bug D)
-        // TD-143: this is a QUERY against the document-prefixed `entities`
+        // This is a QUERY against the document-prefixed `entities`
         // vector index — must use `query_embed_text`.
         let query_embedding = self
             .embedder
@@ -114,7 +112,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             .await?;
 
         // Step 2: Run FTS + vector search in parallel, suppressing per-call
-        // access_count increments (RISK-002 — we do one increment after RRF)
+        // access_count increments (we do one increment after RRF)
         let fts_hits = self
             .graph
             .fts_search_entities_no_count(FtsSearchEntitiesNoCountParams {
@@ -133,7 +131,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             .await?;
 
         // Step 3: Reciprocal Rank Fusion (RRF) (Bug C + NEW-004).
-        // recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): the RRF
+        // The RRF
         // constant is read from `config.search.rrf_k` (default 60), NOT a
         // hardcoded const, so the `KREMORY_RRF_K` boot override reaches this —
         // the entity-graph FTS+vector fusion — sweep site.
@@ -169,7 +167,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // identically) were previously broken by `rrf_scores`'s `HashMap`
         // iteration order — nondeterministic across process restarts on
         // identical input (recall-ranking nondeterminism bug; same class of
-        // fix as TD-066 Change 1's neighbour-sort determinism guard below).
+        // fix as the neighbour-sort determinism guard below).
         // Comparator extracted to `score_desc_id_asc` so its determinism is
         // directly unit-testable without a full async DB round trip.
         let mut ranked: Vec<(String, f32)> =
@@ -202,13 +200,13 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 .collect()
         };
 
-        // recall-v2 Phase 5 (Decision 6): the single access-count increment
-        // (RISK-002) MOVED from here (pre-boost) to AFTER the boost loop + floor
-        // — so the floor gates on POST-boost scores and a seed dropped by the
-        // floor is never counted as recalled. See the floor block near the end.
+        // The single access-count increment MOVED from here (pre-boost) to
+        // AFTER the boost loop + floor — so the floor gates on POST-boost
+        // scores and a seed dropped by the floor is never counted as
+        // recalled. See the floor block near the end.
 
-        // Step 7: Expand 1-hop from each seed entity (TD-066 Changes 1 + 2 —
-        // weighted/capped expansion + seed degree bonus; see the module-level
+        // Step 7: Expand 1-hop from each seed entity (weighted/capped
+        // expansion + seed degree bonus; see the module-level
         // config docs above for the neighbour-decay / fan-out-cap knobs).
         let mut all_entities: Vec<Entity> = Vec::new();
         let mut all_facts: Vec<Fact> = Vec::new();
@@ -221,11 +219,11 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // decayed one — merged in below via `entry().or_insert()`.
         let mut expansion_scores: HashMap<String, f32> = HashMap::new();
 
-        // recall-v2 Phase 2b (Decision 1/5): resolve the per-intent axis weights
+        // Resolve the per-intent axis weights
         // over the config base. All intent multipliers are 1.0 for now, so this
         // returns the config base unchanged — intent is CONSULTED (the
-        // `intent_total` counter above) but behaviourally neutral until Phase 7
-        // calibrates the multipliers (spec risk R3 resolved with a VISIBLE
+        // `intent_total` counter above) but behaviourally neutral until a
+        // later phase calibrates the multipliers (resolved with a VISIBLE
         // half-state: the reorder counters below read 0 until a weight is set).
         let weights = crate::core::scoring::weight_overrides_for(
             intent,
@@ -237,7 +235,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         // attribution (`kremory.search.<axis>_reorder_total`).
         let mut axis_contributions: Vec<crate::core::scoring::SeedAxisContribution> =
             Vec::with_capacity(seed_ids.len());
-        // ADR-062 §6 observability: wall time across the WHOLE batch of
+        // Wall time across the WHOLE batch of
         // proximity walks this recall (one extra `get_neighbours_at` call per
         // seed, only when the axis is on) + how many seeds actually received
         // a non-zero proximity score — the "is this signal firing at all"
@@ -248,26 +246,26 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         let mut proximity_seeds_boosted = 0usize;
 
         for seed_id in &seed_ids {
-            // ADR-068 Decision 2/3: `get_neighbours_at` with `as_of: None`
+            // `get_neighbours_at` with `as_of: None`
             // runs the copy-identical query `get_neighbours` ran here before
-            // this spec — switching unconditionally to the `_at` sibling
+            // this was introduced — switching unconditionally to the `_at` sibling
             // keeps this call site single-shaped rather than branching on
             // `as_of.is_some()`.
             let mut subgraph = self
                 .graph
                 .get_neighbours_at(crate::core::graph::GetNeighboursAtParams {
                     entity_id: seed_id,
-                    // recall-v2 Phase 4 (TD-056): config-driven hop bound (default
+                    // Config-driven hop bound (default
                     // 1 = today's behaviour) + MANDATORY in-BFS fan-out cap in the
-                    // SAME call (spec R1 — widening hops without a cap reintroduces
-                    // hub-explosion). At defaults (hops=1, cap=8) byte-identical.
+                    // SAME call — widening hops without a cap reintroduces
+                    // hub-explosion. At defaults (hops=1, cap=8) byte-identical.
                     hops: self.config.search.expansion_hop_bound,
                     as_of,
                     max_visited: Some(self.config.search.expansion_fan_out_cap),
                 })
                 .await?;
 
-            // TD-066 Change 1 (determinism guard): `SubGraph::entities` is
+            // Determinism guard: `SubGraph::entities` is
             // built by iterating a `HashSet` (`TemporalGraph::get_neighbours_at`
             // visited_entities), whose order depends on Rust's per-thread
             // random hash seed — NOT stable across repeated calls (a query
@@ -280,7 +278,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             // not a relevance signal, just a stable, reproducible tie-break.
             subgraph.entities.sort_by(|a, b| a.id.cmp(&b.id));
 
-            // TD-066 Change 2: `SubGraph::entities` always includes the seed
+            // `SubGraph::entities` always includes the seed
             // itself (see `TemporalGraph::get_neighbours_at`), so degree =
             // len - 1. This is the seed's true out-degree (computed BEFORE
             // the fan-out cap below trims which neighbours get returned) —
@@ -290,12 +288,12 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             // invariant even in the degenerate single-seed case where the
             // base score is already 1.0.
             let degree = subgraph.entities.len().saturating_sub(1);
-            // recall-v2 Phase 2a: config-driven graph-degree bonus (default 0.05,
+            // Config-driven graph-degree bonus (default 0.05,
             // resolved through the per-intent weights above).
             let degree_bonus = graph_degree_bonus(degree, weights.graph_degree_weight);
-            // recall-v2 Phase 2b: additive temporal-recency boost over the facts
+            // Additive temporal-recency boost over the facts
             // already fetched for THIS seed's 1-hop expansion — no new query
-            // (read-side-pure, spec RISK-003). Bounded `[0, weight]` like the
+            // (read-side-pure). Bounded `[0, weight]` like the
             // degree bonus, so base + degree + temporal shares ONE `.min(1.0)`
             // clamp (Fork-1 additive hybrid — no second normalization pass).
             let temporal_bonus = crate::core::scoring::temporal::temporal_boost(
@@ -306,13 +304,13 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                     now,
                 },
             );
-            // ADR-062 / ADR-082 Phase 3: additive graph-proximity boost. Unlike
+            // Additive graph-proximity boost. Unlike
             // degree/temporal (which reuse data this loop already fetched),
             // proximity needs a WIDER, independently-bounded walk
             // (`proximity_hop_bound`, default 2, vs `expansion_hop_bound`'s
             // default 1) — so it issues its OWN `get_neighbours_at` call,
-            // reusing ADR-082 Amendment 2's `max_visited` in-BFS cap
-            // (ADR-062 §8/ASMP-001 spike criterion 2a: bounds a high-degree
+            // reusing the same `max_visited` in-BFS cap
+            // (bounds a high-degree
             // hub seed's worst-case cost by construction, not just spike
             // measurement). Gated on `weight > 0.0` so the axis is not just a
             // no-op at its default — the SECOND graph query never fires,
@@ -374,7 +372,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
                 let is_seed = entity.id == *seed_id;
                 if !is_seed {
                     if neighbours_added_for_seed >= self.config.search.expansion_fan_out_cap {
-                        // recall-v2 Phase 4 (was TD-066 const): caller-side per-seed
+                        // Caller-side per-seed
                         // fan-out cap reached — skip remaining neighbours for
                         // SCORING (their connecting facts may still surface under
                         // the seed's own fact list). Complements the in-BFS
@@ -408,11 +406,12 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             normalized.entry(id).or_insert(score);
         }
 
-        // recall-v2 Phase 2b measurement discipline: per-axis reorder attribution
+        // Per-axis reorder attribution
         // + axis-off counters. `axis_reorders` reports whether each axis actually
         // changed the score-descending OUTPUT order of the seed set (HONEST — a
-        // non-zero boost that doesn't move the order reads `changed=false`, per
-        // observability Rule 19 #9 "counters must not lie"). This is the cheap
+        // non-zero boost that doesn't move the order reads `changed=false`, so
+        // the counter can't lie about whether the axis actually did anything).
+        // This is the cheap
         // gate the eval reads before spending an llm-judge run: `changed=true`
         // count 0 ⇒ the axis reordered nothing ⇒ the judge run measures nothing.
         let (degree_reordered, temporal_reordered, proximity_reordered) =
@@ -427,7 +426,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             "changed" => if temporal_reordered { "true" } else { "false" },
         )
         .increment(1);
-        // ADR-062 §6: the load-bearing "is axis-C doing anything" signal — if
+        // The load-bearing "is axis-C doing anything" signal — if
         // `changed=true` never fires in production traffic, the feature is
         // dead weight regardless of what a synthetic fixture showed.
         metrics::counter!(
@@ -442,7 +441,7 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
         if weights.temporal_weight <= 0.0 {
             metrics::counter!("kremory.search.temporal_weight_zero_total").increment(1);
         }
-        // ADR-062 §6: lets operators confirm the axis is actually OFF in a
+        // Lets operators confirm the axis is actually OFF in a
         // given deployment, not just assume the default holds.
         if weights.proximity_weight <= 0.0 {
             metrics::counter!("kremory.search.proximity_weight_zero_total").increment(1);
@@ -475,10 +474,10 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             metrics::histogram!("kremory.recall.fact_confidence").record(fact.confidence);
         }
 
-        // Rule 19 / ADR-074 review H1: observe the fact-collection width of
+        // Observe the fact-collection width of
         // `contextualize`'s output — the upstream half of the same silent
-        // projection/filter shape whose prior version dropped facts undetected
-        // (TD-116). `graph_search` (the consumer) separately counts how many of
+        // projection/filter shape whose prior version dropped facts undetected.
+        // `graph_search` (the consumer) separately counts how many of
         // these candidates survive the per-entity ownership filter; this
         // histogram catches a regression further upstream, at collection time.
         let facts_count = all_facts.len();
@@ -489,14 +488,14 @@ impl<L: ChatProvider, Emb: EmbeddingProvider> Engine<L, Emb> {
             "kremory.contextualize.facts_collected"
         );
 
-        // recall-v2 Phase 5 (Decision 6): floor threshold + the moved
+        // Floor threshold + the moved
         // access-count increment. Apply the floor to the POST-BOOST scores over
         // the seed set, drop floored seeds from the output, then increment
         // access counts on SURVIVORS ONLY. Because this runs AFTER the boost
         // loop, the gate sees boosted scores (a seed a boost lifted above the
         // floor survives even over a higher-RRF-but-unboosted one) — and a
-        // dropped seed is neither returned nor counted as recalled. RISK-002
-        // single-increment is preserved: exactly one increment per unique
+        // dropped seed is neither returned nor counted as recalled. The
+        // single-increment invariant is preserved: exactly one increment per unique
         // surviving seed. `floor_threshold <= 0.0` (default) → no-op.
         let floor = self.config.search.floor_threshold;
         let surviving_seeds = floor_survivors(&seed_ids, &normalized, floor);
@@ -543,7 +542,7 @@ fn score_desc_id_asc(a: &(String, f32), b: &(String, f32)) -> std::cmp::Ordering
         .then_with(|| a.0.cmp(&b.0))
 }
 
-/// recall-v2 Phase 5 (Decision 6): partition seed ids by their POST-BOOST score
+/// Partition seed ids by their POST-BOOST score
 /// against `floor` — a seed survives iff `scores[seed] >= floor`.
 ///
 /// Gates on the boosted score (the value in `normalized` AFTER the
@@ -575,7 +574,7 @@ mod tests {
     use crate::core::ingest::SimpleGraph;
     use chrono::Utc;
 
-    // recall-v2 Phase 4: the fan-out cap + neighbour decay are config-driven now
+    // The fan-out cap + neighbour decay are config-driven
     // (`SearchConfig`). `SimpleGraph::open_in_memory_simple` uses the DEFAULT
     // config, so these tests assert against the default values.
     fn default_fan_out_cap() -> usize {
@@ -757,12 +756,10 @@ mod tests {
         }
     }
 
-    /// TD-066 Change 1: a genuine 1-hop neighbour (not itself a seed) must
-    /// score strictly below the seed that surfaced it. Grounding:
-    /// `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-
-    /// traversal--reranking-wave-1-substrate.md` — naive unweighted
-    /// expansion (neighbour score == seed score, or a flat default) is the
-    /// pattern the research identifies as harmful.
+    /// A genuine 1-hop neighbour (not itself a seed) must
+    /// score strictly below the seed that surfaced it. Naive unweighted
+    /// expansion (neighbour score == seed score, or a flat default) is a
+    /// pattern known to hurt recall.
     #[tokio::test]
     async fn test_contextualize_neighbour_score_decays_below_seed() {
         let rql = SimpleGraph::open_in_memory_simple().await.unwrap();
@@ -817,10 +814,10 @@ mod tests {
         );
     }
 
-    /// TD-066 Change 1 / recall-v2 Phase 4: a hub seed's 1-hop expansion must not
+    /// A hub seed's 1-hop expansion must not
     /// flood the result set past `expansion_fan_out_cap` genuine neighbours, even
     /// when the seed is connected to far more entities than that. Reads the cap
-    /// from the default `SearchConfig` (Phase 4 promoted the const to config).
+    /// from the default `SearchConfig`.
     #[tokio::test]
     async fn test_contextualize_expansion_fanout_capped() {
         let rql = SimpleGraph::open_in_memory_simple().await.unwrap();
@@ -869,10 +866,10 @@ mod tests {
         );
     }
 
-    /// ADR-074 review H1 (Rule 19): `contextualize` must record the width of
+    /// `contextualize` must record the width of
     /// the fact collection it hands back, so a future silent regression in the
-    /// 1-hop expansion (the exact shape that dropped facts undetected pre-
-    /// TD-116) shows up as a metric drop, not just a passing-looking test.
+    /// 1-hop expansion (the exact shape that once dropped facts undetected)
+    /// shows up as a metric drop, not just a passing-looking test.
     #[tokio::test]
     async fn test_contextualize_emits_facts_count_histogram() {
         use metrics_util::debugging::{DebugValue, DebuggingRecorder};
@@ -912,10 +909,10 @@ mod tests {
         );
     }
 
-    /// recall-v2 Phase 2b DoD ("Counters live") + Quinn TEST-001: drive the real
+    /// Drive the real
     /// producer (`contextualize`) and assert the new scoring observability actually
     /// emits — a pure unit test of `axis_reorders` proves the LOGIC but not that
-    /// `context.rs` WIRES it (feedback_test_the_producer_not_the_callback). At
+    /// `context.rs` WIRES it (test the producer, not the callback). At
     /// default config the temporal axis is off (weight 0) and graph-degree is live
     /// (0.05), which pins the two axes' weight-zero counters in opposite states.
     #[tokio::test]
@@ -976,7 +973,7 @@ mod tests {
         );
     }
 
-    // === ADR-062 / ADR-082 Phase 3: axis-C graph-proximity boost ===============
+    // === Axis-C graph-proximity boost ===============
 
     /// Default-off byte-identical guard: at `proximity_weight = 0.0` (the
     /// shipped default) the SECOND `get_neighbours_at` graph query must never
@@ -1018,7 +1015,7 @@ mod tests {
         );
     }
 
-    /// ADR-062 §7 spike criterion 2 (benefit) — the mechanism test: a
+    /// The mechanism test: a
     /// lower-RRF-scored-but-graph-proximate seed must overtake a
     /// higher-scored-but-graph-distant seed once axis-C is enabled. Must
     /// FAIL if the axis is wired but inert (e.g. the config knob doesn't
@@ -1042,8 +1039,7 @@ mod tests {
     /// PROXIMITY_SATURATION (20)`, saturating its bonus to the full
     /// `proximity_weight = 0.6` — pushing `zzz_prox` (0.0 -> 0.6) strictly
     /// above `mmm_mid` (~0.49, unboosted) without exceeding `aaa_top`'s 1.0
-    /// ceiling (matches ADR-062's own "re-rank within top-K, never past the
-    /// top" boundary).
+    /// ceiling ("re-rank within top-K, never past the top").
     #[tokio::test]
     async fn test_contextualize_proximity_boost_overtakes_higher_scored_distant_seed() {
         let rql = SimpleGraph::open_in_memory_with_search_config(|cfg| {
@@ -1138,7 +1134,7 @@ mod tests {
         // NOT asserted against: it sits ONE hop from the seed, and
         // `expansion_hop_bound` defaults to 1, so the pre-existing expansion
         // arm legitimately adds it via `all_entities.push(entity)` whether
-        // this axis is on or off. Verified empirically 2026-07-27 — with the
+        // this axis is on or off. Verified empirically — with the
         // axis ON, `ctx.entities` is exactly
         // `["aaa_top", "hubprox", "mmm_mid", "zzz_prox"]`: zero leaves, so the
         // 2-hop walk's discoveries genuinely do not leak. The original form of
@@ -1157,10 +1153,10 @@ mod tests {
         );
     }
 
-    /// ADR-062 §8/ASMP-001 spike criterion 2a: a synthetic high-degree hub
+    /// A synthetic high-degree hub
     /// (500+ facts) at `proximity_hop_bound=2` must not cliff — the in-BFS
-    /// `max_visited` cap (`proximity_fan_out_cap`, reusing ADR-082 Amendment
-    /// 2's mechanism) bounds worst-case cost by construction. Measures and
+    /// `max_visited` cap (`proximity_fan_out_cap`, reusing the same
+    /// mechanism) bounds worst-case cost by construction. Measures and
     /// reports real wall-clock time (not asserted against the DEFAULT cap of
     /// 8 kept in place — the fixture intentionally exceeds it by 60x+ to
     /// prove the cap, not the fixture size, determines the cost).
@@ -1216,16 +1212,16 @@ mod tests {
         assert!(
             elapsed.as_secs() < 5,
             "hub-fixture proximity walk took {elapsed:?} — the fan-out cap must bound \
-             worst-case cost regardless of hub degree (ADR-062 §8/ASMP-001)"
+             worst-case cost regardless of hub degree"
         );
         eprintln!(
-            "[ADR-062 spike criterion 2a] {HUB_FACT_COUNT}-fact hub, \
+            "{HUB_FACT_COUNT}-fact hub, \
              proximity_hop_bound=2, proximity_fan_out_cap=8 (default): \
              contextualize() wall time = {elapsed:?}"
         );
     }
 
-    /// ADR-062 §7 membership-floor guarantee (structural, not just spike-
+    /// Membership-floor guarantee (structural, not just spike-
     /// measured): the boost only re-weights keys already in `seed_ids` — it
     /// can never insert a new one. The returned SEED SET (the keys of
     /// `ctx.scores` that were genuine RRF hits, i.e. every entity here since
@@ -1260,7 +1256,7 @@ mod tests {
         assert_eq!(
             off, on,
             "the proximity axis must never change WHICH entities are returned — only \
-             their relative order/score (ADR-062 §7 membership floor)"
+             their relative order/score (membership floor)"
         );
     }
 
@@ -1379,7 +1375,7 @@ mod tests {
         }
     }
 
-    // === recall-v2 Phase 5 (Decision 6): floor threshold + increment ordering ===
+    // === Floor threshold + increment ordering ===
 
     /// STRUCTURAL ordering proof: the floor gates on the POST-boost score, not
     /// the pre-boost RRF rank. "promoted" has a LOWER base than "unpromoted" but
@@ -1435,7 +1431,7 @@ mod tests {
         );
     }
 
-    /// Single-increment spike (RISK-002): the access-count increment moved to
+    /// Single-increment spike: the access-count increment moved to
     /// AFTER the boost loop must still fire EXACTLY ONCE per recalled seed.
     #[tokio::test]
     async fn test_contextualize_default_floor_increments_surviving_seed_once() {
@@ -1449,7 +1445,7 @@ mod tests {
             .expect("acme must exist");
         assert_eq!(
             acme.access_count, 1,
-            "recalled seed incremented exactly once post-move (RISK-002 preserved)"
+            "recalled seed incremented exactly once post-move"
         );
     }
 

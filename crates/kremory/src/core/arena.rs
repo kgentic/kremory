@@ -1,14 +1,14 @@
 //! Arena allocator primitives for kremory::core.
 //!
-//! ## P4 — per-episode arena allocation
+//! ## Per-episode arena allocation
 //!
-//! Per architecture spec §2.4.B (P4 confidence gate): intermediate strings and
+//! Intermediate strings and
 //! structs allocated during a single `add_episode` call are bump-allocated from
 //! a `Bump` arena. The arena is reset between episodes — avoiding per-episode
 //! heap allocation overhead while keeping the hot path alloc-free.
 //!
-//! A.0 outcome: `bumpalo::Bump` survives `.await` on tokio multi-thread runtime
-//! (K7 = HIGH confidence). B.1 wires `Bump` through the arena module.
+//! `bumpalo::Bump` survives `.await` on tokio multi-thread runtime — verified
+//! empirically, high confidence.
 //!
 //! ## Usage
 //!

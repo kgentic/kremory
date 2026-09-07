@@ -13,7 +13,7 @@ use super::types::{EntityCandidate, IngestPhase1Result, ResolvedDecision, Upsert
 use crate::core::intelligence::EntityExtractor;
 
 /// Bundled parameters for [`Engine::write_verified_entities`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments).
+/// to keep the function under clippy's `too_many_arguments` threshold.
 pub struct WriteVerifiedEntitiesParams<'a> {
     /// FK linking entities to their source episode (from Phase 1).
     pub episode_id: i64,
@@ -30,7 +30,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// writes are deferred to [`write_verified_entities`] after the verify stage
     /// has resolved the NER candidates.
     ///
-    /// Per C6 spec §5.5 — the hot path (`ingest_phase1_ner`) must be callable
+    /// The hot path (`ingest_phase1_ner`) must be callable
     /// without an LLM (NER is GLiNER or empty-candidates; no LLM call fires here).
     /// Using `MockChatProvider::null()` with this method is safe and correct.
     ///
@@ -61,8 +61,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         }
         let episode_id = self.graph.insert_episode_with_group(episode, None).await?;
 
-        // TD-136: dense episode arm — embed + store the episode's embedding when
-        // the dense arm is enabled (no-op / byte-identical when off).
+        // Dense episode arm: embed + store the episode's embedding when the
+        // dense arm is enabled (no-op / byte-identical when off).
         #[cfg(feature = "content-search")]
         self.maybe_embed_episode(episode_id, text).await;
 
@@ -99,8 +99,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 existing_graph_entities: &[],
                 arm_budget_ms: self.config.extraction_arm_budget_ms,
                 model: self.model.as_deref(),
-                // TD-187: Phase 1 is NER-candidate-only (no LLM triplet call),
-                // so `reference_time` is not consulted here — `None` is correct.
+                // Phase 1 is NER-candidate-only (no LLM triplet call), so
+                // `reference_time` is not consulted here — `None` is correct.
                 reference_time: None,
                 prior_turns: &[],
             };
@@ -141,7 +141,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
     /// Write entity rows for the given NER candidates based on verify decisions.
     ///
-    /// Per C6 spec §5.5 decision semantics:
+    /// Decision semantics:
     /// - `Confirm { candidate_idx }` → write with `candidate.entity_type_id_raw`
     /// - `Correct { candidate_idx, new_type_id }` → write with `new_type_id`
     /// - `Demote { candidate_idx }` → write with `entity_type_id = 0` (catch-all)

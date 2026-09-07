@@ -27,7 +27,7 @@ pub(crate) const DEFAULT_NS_POLICY_CACHE_CAP: NonZeroUsize = NonZeroUsize::MIN.s
 
 /// Identity of whoever currently owns the open `BEGIN IMMEDIATE` transaction.
 ///
-/// DUR-1 (V1-CANONICAL §4.1) exists because `begin_immediate_if_needed` could not
+/// This type exists because `begin_immediate_if_needed` could not
 /// tell **re-entrancy** (the same logical operation nesting, which must be a no-op)
 /// from **concurrency** (a different writer, which must wait). Both looked identical:
 /// `has_outer_transaction == true`. The concurrent writer was handed a nested no-op
@@ -56,7 +56,7 @@ impl WriterId {
     }
 }
 
-/// LRU cache for namespace policies (ADR-029b Decision 4).
+/// LRU cache for namespace policies.
 ///
 /// Capacity-bounded (default 256 entries); no TTL — entries are invalidated
 /// explicitly via `invalidate` when a policy is upgraded.
@@ -106,7 +106,7 @@ impl NamespacePolicyCache {
 }
 
 /// Last TTL sweep timestamp as Unix milliseconds. Zero = never swept.
-/// CAS-protected — only one goroutine wins the sweep window. Story #235.
+/// CAS-protected — only one goroutine wins the sweep window.
 pub static LAST_TTL_SWEEP: AtomicI64 = AtomicI64::new(0);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -128,11 +128,12 @@ pub struct Entity {
     pub entity_type_id: u32,
     pub properties: serde_json::Value,
     /// When this row was recorded in the database (audit timestamp).
-    /// Renamed from `created_at` per Story #A1 (honesty fix).
+    /// Renamed from `created_at` (honesty fix — this is when the row was
+    /// recorded, not when it was created in a domain sense).
     pub recorded_at: DateTime<Utc>,
     pub updated_at: Option<DateTime<Utc>>,
     pub group_id: Option<String>,
-    /// Number of times this entity was retrieved by a search query (Story #247).
+    /// Number of times this entity was retrieved by a search query.
     /// Column lives on `entities`; incremented atomically by search paths.
     pub access_count: i64,
 }
@@ -148,27 +149,29 @@ pub struct Fact {
     pub valid_from: DateTime<Utc>,
     pub valid_to: Option<DateTime<Utc>>,
     /// When this row was recorded in the database (audit timestamp).
-    /// Renamed from `created_at` per Story #A1 (honesty fix).
+    /// Renamed from `created_at` (honesty fix — this is when the row was
+    /// recorded, not when the fact became true).
     pub recorded_at: DateTime<Utc>,
     pub expired_at: Option<DateTime<Utc>>,
     /// SQL column `invalid_at` = contradiction-resolver invalidation timestamp.
-    /// NOT the struct field `valid_to` (window boundary). Distinct concept per
-    /// Story #318 HITL.
+    /// NOT the struct field `valid_to` (window boundary) — a distinct concept:
+    /// `valid_to` is a caller-asserted bounded validity window, while
+    /// `invalid_at` marks when the contradiction resolver invalidated the fact.
     pub invalid_at: Option<DateTime<Utc>>,
     pub group_id: Option<String>,
     pub confidence: f64,
     pub source_episode_id: Option<i64>,
-    /// Semantic memory type classification. None = unclassified. Story #208.
+    /// Semantic memory type classification. None = unclassified.
     pub memory_type: Option<crate::memory::types::MemoryType>,
-    /// SHA-256 content hash for dedup (Story #209). Absent on legacy rows.
+    /// SHA-256 content hash for dedup. Absent on legacy rows.
     pub content_hash: Option<String>,
-    /// Number of times this fact was retrieved (Story #247).
+    /// Number of times this fact was retrieved.
     /// DEPRECATED: active access tracking moved to `Entity.access_count` on
     /// `entities`. This field remains for backward compat (libsql does not
     /// support DROP COLUMN on older SQLite builds). Value is always 0 going
     /// forward; do not write to `facts.access_count` in new code.
     pub access_count: i64,
-    // ── ADR-029b (v0.1.5): composite FK fields ───────────────────────────────
+    // ── Composite FK fields (v0.1.5) ────────────────────────────────────────
     /// group_id of the subject entity in the composite FK after migration 004.
     /// Populated from `COALESCE(old_group_id, 'default')` during migration 004
     /// backfill. On pre-migration DBs this is absent and defaults to `None`.
@@ -189,23 +192,23 @@ pub struct Episode {
     pub group_id: Option<String>,
     pub saga_id: Option<String>,
     pub sequence_number: Option<i64>,
-    /// SHA-256 content hash for insert-level dedup (Story #209).
+    /// SHA-256 content hash for insert-level dedup.
     pub content_hash: Option<String>,
     /// When this row was recorded in the database (audit timestamp).
     /// Matches the `recorded_at` column on episodes table (SQL DEFAULT
     /// `datetime('now')`). `Option` because pre-G2 episode rows pre-date
-    /// the column existing. Added v0.1.6 per Quinn cycle-1 G2 review —
+    /// the column existing. Added v0.1.6 —
     /// makes the Rust model consistent with the schema (mirrors
     /// `EpisodicEdge.recorded_at` pattern).
     pub recorded_at: Option<String>,
     /// Opaque caller-supplied identifier for the source document/conversation
     /// (e.g. a slug or UUID). Matches the `source_id` column added by
     /// Migration 007. `None` for episodes ingested before the column existed.
-    /// TD-003 Phase G — closes struct ↔ table column asymmetry.
+    /// Closes struct ↔ table column asymmetry.
     pub source_id: Option<String>,
     /// Optional URI pointing to the original source artifact (URL, file path,
     /// etc.). Matches `source_uri` column added by Migration 007.
-    /// TD-003 Phase G — closes struct ↔ table column asymmetry.
+    /// Closes struct ↔ table column asymmetry.
     pub source_uri: Option<String>,
 }
 
@@ -216,9 +219,10 @@ pub struct EpisodicEdge {
     pub entity_id: String,
     pub role: String,
     /// When this row was recorded in the database (audit timestamp).
-    /// Renamed from `created_at` per Story #A1 (honesty fix).
+    /// Renamed from `created_at` (honesty fix — this is when the row was
+    /// recorded, not when it was created in a domain sense).
     pub recorded_at: DateTime<Utc>,
-    // ── ADR-029b (v0.1.5): composite FK field ────────────────────────────────
+    // ── Composite FK field (v0.1.5) ─────────────────────────────────────────
     /// group_id of the target entity in the composite FK after migration 004.
     /// Populated from `COALESCE(e.group_id, 'default')` during migration 004
     /// backfill. On pre-migration DBs this is absent and defaults to `None`.
@@ -231,7 +235,7 @@ pub struct EpisodicEdge {
 /// Returned by `TemporalGraph::begin_immediate_if_needed`. Must be explicitly
 /// committed via `.commit().await?` or rolled back via `.rollback().await?`.
 /// Dropping without an explicit dispatch emits a `tracing::warn!` + metrics
-/// counter and resets `has_outer_transaction` (defensive). Story #246 / ADR-020.
+/// counter and resets `has_outer_transaction` (defensive).
 #[must_use = "BeginGuard must be committed or rolled back explicitly"]
 pub struct BeginGuard<'a> {
     graph: &'a TemporalGraph,
@@ -244,7 +248,7 @@ pub struct BeginGuard<'a> {
     /// this guard opened it (`None` for a nested guard, which is covered by the
     /// outer guard's lock).
     ///
-    /// DUR-1 fix: previously `begin_immediate_if_needed` released the serialiser
+    /// Fix: previously `begin_immediate_if_needed` released the serialiser
     /// when it *returned*, so it only serialised the `BEGIN` statement and not the
     /// transaction. A second writer therefore proceeded immediately, lost the CAS,
     /// and silently joined the first writer's transaction. Holding the lock here
@@ -295,7 +299,7 @@ impl<'a> BeginGuard<'a> {
         if self.opened {
             self.graph.conn.execute("COMMIT", ()).await?;
             // Per-handle dirty flag — only this graph handle's flag is set,
-            // not a process-global. FU.6: prevents one TG instance's writes
+            // not a process-global. Prevents one TG instance's writes
             // from invalidating another's speculative cache.
             self.graph.dirty.store(true, Ordering::Release);
             self.graph.release_transaction_ownership();
@@ -321,7 +325,7 @@ impl Drop for BeginGuard<'_> {
         // `dispatched = true`. Without this, a failed COMMIT would leave a stale
         // owner recorded, and the next writer — which correctly waits for the
         // serialiser — would then be mis-identified as re-entrant and handed a
-        // no-op guard, reintroducing DUR-1 on the error path. Idempotent.
+        // no-op guard, reintroducing the race on the error path. Idempotent.
         if self.opened {
             self.graph.release_transaction_ownership();
         }
@@ -332,7 +336,7 @@ impl Drop for BeginGuard<'_> {
             );
             metrics::counter!("rql.db.begin_guard_drop_without_explicit_commit").increment(1);
             // Real defensive ROLLBACK (fixes a connection-poisoning bug found via
-            // the LoCoMo benchmark smoke, 2026-07-17): a `BEGIN IMMEDIATE`
+            // the LoCoMo benchmark smoke): a `BEGIN IMMEDIATE`
             // transaction stays open at the SQLite engine level until an
             // explicit COMMIT/ROLLBACK executes. Drop cannot `.await`, so this
             // previously ONLY reset the Rust-side `has_outer_transaction` flag
@@ -354,7 +358,7 @@ impl Drop for BeginGuard<'_> {
             // actually closed.
             let conn = self.graph.conn.clone();
             let flag = Arc::clone(&self.graph.has_outer_transaction);
-            // DUR-1: MOVE the write-serialiser into the spawned task rather than
+            // MOVE the write-serialiser into the spawned task rather than
             // letting it drop when this function returns. Struct fields drop after
             // the body, so without this the lock would be released while the
             // deferred ROLLBACK is still queued — letting the next writer acquire
@@ -405,17 +409,17 @@ pub struct TemporalGraph {
     /// `features = ["test-utils"]` can issue PRAGMA queries directly.
     /// Not part of the stable public API — use the typed methods instead.
     pub conn: libsql::Connection,
-    /// Write-serialiser mutex (ADR-022). Acquired first on every write path.
+    /// Write-serialiser mutex. Acquired first on every write path.
     /// Prevents concurrent `BEGIN IMMEDIATE` races on a single libsql connection.
     /// Uses `AsyncMutex` (tokio) so the lock can be held across `.await` points.
     pub(crate) write_lock: Arc<AsyncMutex<()>>,
     /// `true` when a `BEGIN IMMEDIATE` is already active on this connection.
-    /// Used by `begin_immediate_if_needed` to skip nested BEGIN. Story #246.
+    /// Used by `begin_immediate_if_needed` to skip nested BEGIN.
     /// `Arc`-wrapped (like `dirty` below) so `BeginGuard::drop`'s spawned
     /// defensive-rollback task can hold its own clone without borrowing
     /// `&'a TemporalGraph` past the guard's lifetime.
     pub(crate) has_outer_transaction: Arc<AtomicBool>,
-    /// Which writer owns the currently-open `BEGIN IMMEDIATE`, if any (DUR-1).
+    /// Which writer owns the currently-open `BEGIN IMMEDIATE`, if any.
     ///
     /// Read on every `begin_immediate_if_needed` to answer the question the old
     /// code could not: *is this call re-entrant, or is it a different writer?*
@@ -426,13 +430,13 @@ pub struct TemporalGraph {
     /// successful write. `flush_if_dirty()` CAS-clears it and checkpoints.
     /// `SpeculativeCache::check_dirty_and_invalidate()` takes `&Arc<AtomicBool>`
     /// from this field so cache invalidation is scoped to the owning graph handle,
-    /// not the process. Story #215 / FU.6 (per-handle not global).
+    /// not the process (per-handle not global).
     pub(crate) dirty: Arc<AtomicBool>,
     /// Embedding vector dimensionality used when creating the schema. Default 384.
     /// Must match the `EmbeddingProvider` output dimension or the SQLite vector
     /// index will reject inserts with a dimension mismatch error.
     pub(crate) embedding_dim: usize,
-    /// LRU cache for namespace policies (ADR-029b Decision 4).
+    /// LRU cache for namespace policies.
     /// Capacity 256; invalidated on upgrade.
     pub(crate) policy_cache: NamespacePolicyCache,
 }
@@ -485,9 +489,9 @@ impl TemporalGraph {
 
     /// Begin an IMMEDIATE transaction if one is not already active.
     ///
-    /// Acquires the `write_lock` mutex (ADR-022) first to serialise concurrent write
+    /// Acquires the `write_lock` mutex first to serialise concurrent write
     /// paths on the single libsql connection. Returns a `BeginGuard` that must be
-    /// explicitly committed or rolled back. Story #246 / ADR-020.
+    /// explicitly committed or rolled back.
     ///
     /// If an outer `BEGIN IMMEDIATE` is already in progress on this connection
     /// (i.e., `has_outer_transaction == true`), the guard is returned without issuing
@@ -505,7 +509,7 @@ impl TemporalGraph {
         // A DIFFERENT writer either holds the transaction or is about to. Wait.
         // The guard returned below keeps this lock for the transaction's whole
         // life, so the next writer blocks here until we COMMIT or ROLLBACK
-        // rather than silently joining our transaction (DUR-1).
+        // rather than silently joining our transaction.
         let lock = Arc::clone(&self.write_lock).lock_owned().await;
 
         // Holding the serialiser means no other writer can be mid-transaction,
@@ -553,7 +557,7 @@ impl TemporalGraph {
     /// last flush), returns immediately without touching the connection.
     ///
     /// Called by background task and shutdown path — never on the hot write path.
-    /// Story #215. Returns `Result<()>` to propagate DB errors from the WAL
+    /// Returns `Result<()>` to propagate DB errors from the WAL
     /// checkpoint step (rationale: `bool` would hide checkpoint failures).
     pub async fn flush_if_dirty(&self) -> Result<()> {
         // CAS old=true → new=false. Ok → we won the race and must flush.
@@ -574,21 +578,21 @@ impl TemporalGraph {
     }
 
     async fn run_migrations(&self) -> Result<()> {
-        // Backward migration (S5.C P1.F1, 2026-05-19): pre-rename dev DBs
+        // Backward migration: pre-rename dev DBs
         // hold the rql graph table at bare name `entities`. The workspace
-        // P1 amend installed a colliding workspace `entities` on the same
+        // amend installed a colliding workspace `entities` on the same
         // file. Rename the legacy rql table out of the way before installing
         // the canonical `rql_entities` shape. Idempotent: only renames when
         // a label-shaped legacy table exists AND the new name is free.
         crate::core::migrations::migrate_legacy_rql_entities_table(&self.conn).await?;
 
-        // ADR-029b Migration 002: rename rql_entities → entities.
+        // Migration 002: rename rql_entities → entities.
         // Idempotent: only runs when rql_entities still exists.
         // Must run BEFORE the CREATE TABLE IF NOT EXISTS block below so that
         // the base DDL targets `entities` (not `rql_entities`) on all paths.
         crate::core::migrations::migrate_002_drop_rql_prefix(&self.conn).await?;
 
-        // Migration 024 (TD-117, Vera M2): hard-error on embedding_dim mismatch
+        // Migration 024: hard-error on embedding_dim mismatch
         // against a persisted registry row or pre-existing stored vector byte
         // lengths — BEFORE any table below is created/rebuilt using `dim`.
         // See `defs_k.rs` doc comment for the two independent guards.
@@ -615,8 +619,8 @@ impl TemporalGraph {
             .await?;
         // Vector index — may legitimately fail on in-memory DBs (non-fatal), but a
         // real (file-backed, correctly-typed) DB failing here silently regressed to
-        // brute-force search for months (TD-115) because this result was discarded.
-        // Rule 19: capture + count + warn on failure; still non-fatal here (the
+        // brute-force search for months because this result was discarded.
+        // Capture + count + warn on failure; still non-fatal here (the
         // authoritative, LOUD create lives in migrate_023, which runs once the
         // column is guaranteed to be `F32_BLOB(dim)`).
         if let Err(e) = self.conn.execute(
@@ -633,7 +637,7 @@ impl TemporalGraph {
                 error = %e,
                 table = "entities",
                 "kremory.search.vector_index_create_failed — entities_vec_idx did not create; \
-                 vector search will fall back to brute-force until TD-115's migrate_023 runs"
+                 vector search will fall back to brute-force until migrate_023 runs"
             );
         }
         let _ = self
@@ -643,7 +647,7 @@ impl TemporalGraph {
                 (),
             )
             .await;
-        // Story #247 migration: add access_count column to existing entities tables
+        // Migration: add access_count column to existing entities tables
         // created before this column was added to the DDL. Idempotent — ALTER TABLE ADD
         // COLUMN is a no-op when the column already exists in libsql (SQLite 3.37+).
         // Errors are swallowed: duplicate-column errors are expected on fresh DBs where
@@ -734,8 +738,8 @@ impl TemporalGraph {
             )
             .await;
         // Vector index for fact embeddings — may legitimately fail on in-memory DBs
-        // (non-fatal), but TD-115: a real DB whose `embedding` column is a plain
-        // `BLOB` (not `F32_BLOB(dim)`) fails here silently too. Rule 19: capture +
+        // (non-fatal), but a real DB whose `embedding` column is a plain
+        // `BLOB` (not `F32_BLOB(dim)`) fails here silently too. Capture +
         // count + warn. Non-fatal here — migrate_023 is the LOUD authoritative fix.
         if let Err(e) = self.conn.execute(
             "CREATE INDEX IF NOT EXISTS facts_vec_idx ON facts(libsql_vector_idx(embedding, 'metric=cosine'))",
@@ -751,15 +755,15 @@ impl TemporalGraph {
                 error = %e,
                 table = "facts",
                 "kremory.search.vector_index_create_failed — facts_vec_idx did not create; \
-                 vector search will fall back to brute-force until TD-115's migrate_023 runs"
+                 vector search will fall back to brute-force until migrate_023 runs"
             );
         }
-        // FU.1: UNIQUE partial index on content_hash — storage-layer backstop for the
+        // UNIQUE partial index on content_hash — storage-layer backstop for the
         // TOCTTOU-safe check+insert (partial: NULL allowed for pre-hash-rollout rows).
-        // TD-133 B2: scoped to ACTIVE (non-expired) rows so the index predicate matches
+        // Scoped to ACTIVE (non-expired) rows so the index predicate matches
         // the dedup pre-check SELECT (`graph/facts.rs`: `... AND expired_at IS NULL`).
         // Without this, re-asserting a superseded/expired triple (a legitimate
-        // bi-temporal assert→expire→re-assert, ADR-003) collides on the stale expired
+        // bi-temporal assert→expire→re-assert) collides on the stale expired
         // row → `UNIQUE constraint failed` → the re-assertion is silently lost. Existing
         // DBs are migrated by `migrate_025_fact_dedup_expired_partial` (runs last).
         self.conn
@@ -769,7 +773,7 @@ impl TemporalGraph {
                 (),
             )
             .await?;
-        // FU.1: non-unique index for dedup-check SELECT performance (eliminates full-table scan).
+        // Non-unique index for dedup-check SELECT performance (eliminates full-table scan).
         // Note: SQLite can use the unique index above for equality lookups; this non-unique
         // index is kept as an explicit covering hint and for parity with the spec AC.3.
         self.conn
@@ -825,11 +829,11 @@ impl TemporalGraph {
                 (),
             )
             .await?;
-        // ADR-029a (v0.1.4): namespaces table for per-namespace policy storage.
+        // Namespaces table for per-namespace policy storage (v0.1.4).
         // CREATE-only, no backfill — populated lazily via register_namespace +
         // first-encounter writes (see TemporalGraph::ensure_namespace_policy_row).
-        // The unprefixed name `namespaces` is deliberate (ADR-029a Decision 8);
-        // the rest of the `rql_*` rename lands in ADR-029b.
+        // The unprefixed name `namespaces` is deliberate; the rest of the
+        // `rql_*` rename lands in the next migration.
         self.conn
             .execute(
                 "CREATE TABLE IF NOT EXISTS namespaces (
@@ -842,16 +846,16 @@ impl TemporalGraph {
             )
             .await?;
 
-        // ADR-029b Migration 004: composite PK on entities table.
+        // Migration 004: composite PK on entities table.
         // Must run AFTER the base DDL (entities table may have just been created).
         // Idempotent: PRAGMA-shape gate — skips when group_id is already in the PK.
         crate::core::migrations::migrate_004_composite_pk_entities(&self.conn).await?;
 
-        // ADR-029b Migration 005: add upgraded_at to namespaces.
+        // Migration 005: add upgraded_at to namespaces.
         // Idempotent: swallows duplicate-column error.
         crate::core::migrations::migrate_005_policy_upgraded_at(&self.conn).await?;
 
-        // ADR-029b Migration 006: composite FK on facts + episodic_edges.
+        // Migration 006: composite FK on facts + episodic_edges.
         // Replaces the placeholder ADD COLUMN stubs in migration 004.
         // Must run AFTER migrate_004 (pre-condition gate inside).
         // Idempotent: skips when facts_bak_006 already present.
@@ -861,25 +865,25 @@ impl TemporalGraph {
         )
         .await?;
 
-        // v0.1.6 G1 Migration 007: source_id + source_uri columns on episodes.
+        // v0.1.6 Migration 007: source_id + source_uri columns on episodes.
         // Additive ALTER TABLE — no restructure, no FK changes.
         // Idempotent: PRAGMA table_info gate skips when both columns already present.
         crate::core::migrations::migrate_007_source_id_source_uri(&self.conn).await?;
 
-        // TD-013 Migration 008: entity_types registry + entity_type_id on entities.
+        // Migration 008: entity_types registry + entity_type_id on entities.
         // Creates entity_types table, seeds per-group_id catch-all (id=0 "Entity")
         // + observed labels, adds entity_type_id column backfilled from label.
-        // Idempotent: PRAGMA table_info gate (G1) + IF NOT EXISTS + INSERT OR IGNORE.
+        // Idempotent: PRAGMA table_info gate + IF NOT EXISTS + INSERT OR IGNORE.
         crate::core::migrations::migrate_008_entity_types(&self.conn).await?;
 
-        // TD-013 Migration 009 (Phase 2): DROP entities.label column.
+        // Migration 009: DROP entities.label column.
         // All INSERT/SELECT paths now use entity_type_id + LEFT JOIN entity_types
         // to resolve the label at query time.  Must run AFTER migrate_008 which
         // guarantees entity_type_id is populated.
         // Idempotent: PRAGMA table_info gate — skips when label column is already absent.
         crate::core::migrations::migrate_009_drop_label_column(&self.conn).await?;
 
-        // TD-013 Migration 010: seed default entity_types vocabulary per group_id.
+        // Migration 010: seed default entity_types vocabulary per group_id.
         // Backfills Migration 008's gap: 008 only seeded id=0 for groups with
         // pre-existing entities. 010 ensures every observed group_id has the
         // full default OntoNotes vocabulary (Entity+Person+Organisation+Location
@@ -889,35 +893,35 @@ impl TemporalGraph {
         // Idempotent: ensure_default_types_seeded no-ops when group_id already has rows.
         crate::core::migrations::migrate_010_default_entity_types(&self.conn).await?;
 
-        // TD-003 Migration 011 (Phase G, ADR-042): add content_hash column to
+        // Migration 011: add content_hash column to
         // episodes with SHA-256 backfill. Idempotent: PRAGMA table_info gate
         // skips the ALTER TABLE when the column already exists.
         crate::core::migrations::migrate_011_episodes_content_hash(&self.conn).await?;
 
-        // ADR-045 §2 Migration 012 (v0.1.1): add entity_type_source / entity_type_assigned_at /
+        // Migration 012 (v0.1.1): add entity_type_source / entity_type_assigned_at /
         // ner_confidence columns to `entities`; create v_entity_drift_candidates view;
         // backfill legacy NULL rows to 'Phase1Ner'. Idempotent: PRAGMA table_info guards.
         crate::core::migrations::migrate_012_source_tier_columns(&self.conn).await?;
 
-        // ADR-037 §9.5 Migration 014 (v0.1.1, Dream Pass 0): add provenance columns
+        // Migration 014 (v0.1.1, Dream Pass 0): add provenance columns
         // to `entity_types` — discovered_at / discovered_by / evidence_count / confidence.
         // Backfills pre-existing seed types with discovered_by = 'seed'.
         // Idempotent: PRAGMA table_info gate per column.
         crate::core::migrations::migrate_014_entity_types_provenance(&self.conn).await?;
 
-        // ADR-047 Migration 013 (v0.1.2, Phase B): extend entity_type_source CHECK with
+        // Migration 013 (v0.1.2): extend entity_type_source CHECK with
         // 'DreamPass4' + create dream_pass4_audit table.
         // Idempotent: sqlite_master DDL gate (checks for 'DreamPass4' in entities DDL).
         crate::core::migrations::migrate_013_pass4_source_tier(&self.conn).await?;
 
-        // ADR-051 Migration 015a (v0.2.2, Phase 1): add episode_processing_status column
-        // to episodes for the ADR-051 async extraction gate state machine.
+        // Migration 015a (v0.2.2): add episode_processing_status column
+        // to episodes for the async extraction gate state machine.
         // Values: Pending → Extracting → Verified | Failed.
-        // Backfill: episodes with episodic_edges are already Verified (R-02 mitigation).
+        // Backfill: episodes with episodic_edges are already Verified.
         // Idempotent: PRAGMA table_info gate + IF NOT EXISTS index.
         crate::core::migrations::migrate_015a_episode_processing_status(&self.conn).await?;
 
-        // ADR-050 Migration 016 (v0.2.4, Phase 1): crash-safety schema cluster.
+        // Migration 016 (v0.2.4): crash-safety schema cluster.
         // Adds dream_idempotency_keys, op_checkpoints, dream_pass_budget_usage tables
         // and is_dream_generated columns on entities + facts.
         // Idempotent: CREATE TABLE/INDEX IF NOT EXISTS + PRAGMA-guarded ADD COLUMN.
@@ -931,14 +935,14 @@ impl TemporalGraph {
         // on a clean db + CREATE UNIQUE INDEX IF NOT EXISTS is re-runnable.
         crate::core::migrations::migrate_017_episodic_edges_presence_unique(&self.conn).await?;
 
-        // Migration 018 (ADR-063 spec §5.0 + §5.1): identity-verdict / write-gate
+        // Migration 018: identity-verdict / write-gate
         // prerequisites — `idx_facts_subject` (subject-side index mirroring
-        // idx_facts_object; needed for Site #5's cooccurs_in_graph query, resolves
-        // RISK-002) + the `identity_verdict_audit` table (Site #5/#3 adjudication
+        // idx_facts_object; needed for Site #5's cooccurs_in_graph query) +
+        // the `identity_verdict_audit` table (Site #5/#3 adjudication
         // audit trail). Idempotent: CREATE INDEX/TABLE IF NOT EXISTS.
         crate::core::migrations::migrate_018_identity_verdict_prereqs(&self.conn).await?;
 
-        // Migration 019 (ADR-066 spec §2): dream CONSOLIDATION sub-phase substrate
+        // Migration 019: dream CONSOLIDATION sub-phase substrate
         // — `facts_archive` (append-only P2 archive history), `entity_communities`
         // + `community_summaries` (P4 deterministic label-propagation membership).
         // OPTIONAL feature tables: intentionally NOT in `CRITICAL_TABLES` — absence
@@ -946,28 +950,28 @@ impl TemporalGraph {
         // Idempotent: CREATE TABLE/INDEX IF NOT EXISTS.
         crate::core::migrations::migrate_019_consolidation_substrate(&self.conn).await?;
 
-        // Migration 020 (ADR-067 V1): facts.corroboration_inert — provenance-anchored
+        // Migration 020: facts.corroboration_inert — provenance-anchored
         // corroboration column, the convergence fix for cross_episode_merges (P3).
         // Additive, PRAGMA-guarded, mirrors migration 016's is_dream_generated idiom.
         // Idempotent: PRAGMA-guarded ADD COLUMN.
         crate::core::migrations::migrate_020_facts_corroboration_inert(&self.conn).await?;
 
-        // Migration 021 (reversible-graph-mutations arch-spec §2.1/§2.2/§8.4):
+        // Migration 021: reversible-graph-mutations
         // provenance + anti-re-merge substrate — `graph_mutation_log` (kind-tagged
         // in-txn snapshot log) + `merge_nogood` (sorted-pair anti-re-merge marker).
         // FOUNDATION ONLY: schema install; snapshot capture + undo replay are wired
         // in later sub-phases. Idempotent: CREATE TABLE/INDEX IF NOT EXISTS.
         crate::core::migrations::migrate_021_graph_mutation_log(&self.conn).await?;
 
-        // Migration 022 (ADR-072 seq1 impl-spec §1): `episodes_fts` — BM25/FTS5
+        // Migration 022: `episodes_fts` — BM25/FTS5
         // content-search substrate over raw `episodes.content`. Feature-gated:
         // only compiled + called behind `content-search`; default build is
-        // unaffected (two-lever gating model, ADR-072 §6 Finding 3).
+        // unaffected (two-lever gating model).
         // Idempotent: CREATE VIRTUAL TABLE IF NOT EXISTS + guarded backfill.
         #[cfg(feature = "content-search")]
         crate::core::migrations::migrate_022_episodes_content_recall(&self.conn).await?;
 
-        // Migration 023 (TD-115): rebuild entities/facts with a real
+        // Migration 023: rebuild entities/facts with a real
         // `embedding F32_BLOB(dim)` column when the current declared type is
         // a generic `BLOB` — the DiskANN vector index rejects BLOB columns,
         // so every migrated DB has been silently falling back to
@@ -976,13 +980,13 @@ impl TemporalGraph {
         // Err), unlike every prior migration's best-effort index create.
         crate::core::migrations::migrate_023_vector_index_column_type(&self.conn, dim).await?;
 
-        // Migration 025 (TD-133 B2): make idx_facts_content_hash_unique a partial index
+        // Migration 025: make idx_facts_content_hash_unique a partial index
         // over ACTIVE (non-expired) rows only, matching the dedup SELECT predicate.
         // MUST run LAST — after migrate_023 (defs_j) recreates the old-form index —
         // else the un-partitioned form would be re-introduced. Idempotent + conditional.
         crate::core::migrations::migrate_025_fact_dedup_expired_partial(&self.conn).await?;
 
-        // Migration 026 (TD-136): dense episode retrieval substrate — add an
+        // Migration 026: dense episode retrieval substrate — add an
         // `embedding F32_BLOB(dim)` column + `episodes_vec_idx` (libsql cosine
         // vector index) to `episodes`, mirroring `entities`/`facts`. Feature-
         // gated behind `content-search` (same two-lever gate as Migration 022's
@@ -993,7 +997,7 @@ impl TemporalGraph {
         #[cfg(feature = "content-search")]
         crate::core::migrations::migrate_026_episodes_embedding(&self.conn, dim).await?;
 
-        // Migration 027 (steal-matrix-rescore item 2): tokenize='porter unicode61'
+        // Migration 027: tokenize='porter unicode61'
         // on entities_fts/facts_fts (unconditional) and episodes_fts
         // (content-search only, gated internally). Idempotent: each table's
         // own sqlite_master.sql is checked for "porter" before dropping +
@@ -1033,14 +1037,14 @@ impl TemporalGraph {
     /// - **Forward / backward version compat** — both directions refused until an
     ///   explicit ADR relaxes them. Strict table-presence semantics for now.
     ///
-    /// ## Observability (Rule 19)
+    /// ## Observability
     ///
     /// Emits `kremory.store.integrity_check_total{outcome="ok"|"corrupt"}`.
     /// On corruption emits `tracing::error!` naming the specific missing table.
     async fn check_integrity(&self) -> Result<()> {
-        // Quinn LOW-01 fix: extended from 4 → 6 tables to include `episodic_edges`
+        // Extended from 4 → 6 tables to include `episodic_edges`
         // (load-bearing for graph traversal — episodes are joined to entities via this
-        // edge table) and `dream_pass4_audit` (ADR-049 audit trail; consistency_check
+        // edge table) and `dream_pass4_audit` (audit trail; consistency_check
         // writes here on every correction). A missing `episodic_edges` would silently
         // produce empty disambiguation candidate sets; a missing `dream_pass4_audit`
         // would break verify_batch on first Pass 4 correction.
@@ -1112,9 +1116,8 @@ impl TemporalGraph {
     /// `migrate_023_vector_index_column_type` is `pub(crate)` (it is called
     /// exactly once, internally, from `run_migrations`) — this wrapper is
     /// the only way an integration test can drive it directly, which is
-    /// required for the crash-window regression tests
-    /// (`.ai-docs/architecture-review/vera-adr-074-migrate-023-review-2026-07-14.md`
-    /// H3/H4): those tests manually construct a mid-crash DB state (e.g. a
+    /// required for the crash-window regression tests: those tests
+    /// manually construct a mid-crash DB state (e.g. a
     /// populated `facts_bak_023` + an empty `facts_new_023` + a dropped live
     /// `facts` table) and must re-invoke the migration on exactly that
     /// state, not on a fresh `open_with_dim`.
@@ -1181,7 +1184,7 @@ impl TemporalGraph {
 mod schema_tests {
     use super::TemporalGraph;
 
-    /// Story #246: nested begin_immediate_if_needed is a no-op (guard.opened == false).
+    /// Nested begin_immediate_if_needed is a no-op (guard.opened == false).
     #[tokio::test]
     async fn begin_immediate_nested_call_does_not_issue_second_begin() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
@@ -1201,7 +1204,7 @@ mod schema_tests {
         outer.commit().await.expect("outer commit");
     }
 
-    /// Story #246: has_outer_transaction is cleared after commit.
+    /// has_outer_transaction is cleared after commit.
     #[tokio::test]
     async fn begin_immediate_outer_transaction_flag_cleared_after_commit() {
         use std::sync::atomic::Ordering;
@@ -1218,15 +1221,15 @@ mod schema_tests {
         );
     }
 
-    /// Story #210: concurrent `BEGIN IMMEDIATE` calls serialise via `write_lock` —
+    /// Concurrent `BEGIN IMMEDIATE` calls serialise via `write_lock` —
     /// one opens, the other **blocks until the first commits**.
     ///
-    /// REWRITTEN 2026-08-03 (V1-CANONICAL §3.2). The previous version of this test
+    /// REWRITTEN. The previous version of this test
     /// asserted only that `has_outer_transaction` was clear once both tasks had
     /// finished. That is true whether or not serialisation happens — a flag set and
     /// cleared by the *winner* alone reads identically when the loser silently
     /// joined the winner's transaction. It therefore documented blocking that did
-    /// not occur, and passed for as long as the DUR-1 defect existed.
+    /// not occur, and passed for as long as the defect existed.
     ///
     /// This version measures the property the doc comment claims: the **maximum
     /// number of writers simultaneously inside a transaction**. Serialised ⇒ 1.
@@ -1287,7 +1290,7 @@ mod schema_tests {
             max_concurrent.load(Ordering::Acquire),
             1,
             "two writers were inside a transaction at once — the write_lock is \
-             serialising the BEGIN statement but not the transaction (DUR-1)"
+             serialising the BEGIN statement but not the transaction"
         );
         assert!(
             !graph.has_outer_transaction.load(Ordering::Acquire),
@@ -1295,7 +1298,7 @@ mod schema_tests {
         );
     }
 
-    /// DUR-1 (V1-CANONICAL §4.1): two CONCURRENT writers on one `TemporalGraph`
+    /// Two CONCURRENT writers on one `TemporalGraph`
     /// must not silently share a transaction.
     ///
     /// Today the loser of the `has_outer_transaction` CAS receives a *nested*
@@ -1307,8 +1310,8 @@ mod schema_tests {
     /// This test writes real rows inside both transactions, which is precisely
     /// what `concurrent_begin_immediate_serialises_via_write_lock` fails to do —
     /// that test observes only the bookkeeping flag and therefore cannot see the
-    /// loss (V1-CANONICAL §3.2, "guards that pass while asserting properties the
-    /// code lacks").
+    /// loss — a guard that passes while asserting a property the
+    /// code doesn't actually hold.
     ///
     /// FAILS before the fix: t2's row count is 0 because t1's ROLLBACK took it.
     #[tokio::test]
@@ -1377,7 +1380,7 @@ mod schema_tests {
 
         assert_eq!(
             t2_rows, 1,
-            "DUR-1: t2's commit() returned Ok(()) so its row MUST be durable, but \
+            "t2's commit() returned Ok(()) so its row MUST be durable, but \
              t1's rollback destroyed it — the two writers shared one transaction"
         );
 
@@ -1395,11 +1398,11 @@ mod schema_tests {
         );
     }
 
-    /// Story #215 / FU.6: flush_if_dirty() called twice without intervening write
+    /// flush_if_dirty() called twice without intervening write
     /// only checkpoints once — second call is a no-op (per-handle dirty cleared).
     ///
     /// Uses `graph.dirty_flag()` to observe the per-handle flag directly —
-    /// no global DIRTY needed (FU.6: static was removed in favour of per-handle).
+    /// no global DIRTY needed (the static was removed in favour of per-handle).
     #[tokio::test]
     async fn flush_if_dirty_double_call_only_flushes_once() {
         use std::sync::atomic::Ordering;
@@ -1426,7 +1429,7 @@ mod schema_tests {
         // No cleanup needed — per-handle flag is isolated to this graph instance.
     }
 
-    /// G3 gate: DDL must use `recorded_at` not `created_at`. Story #A1.
+    /// G3 gate: DDL must use `recorded_at` not `created_at`.
     #[test]
     fn schema_uses_recorded_at_not_created_at() {
         // Inline the DDL strings that run_migrations executes and verify
@@ -1479,7 +1482,7 @@ mod schema_tests {
         }
     }
 
-    // ── migrate_006 test suite (D3, ADR-029b planning doc §7) ──────────────────
+    // ── migrate_006 test suite ─────────────────────────────────────────────────
 
     // Helper: open a raw in-memory libsql connection (no TemporalGraph scaffolding).
     // Used for tests that need to call migration fns directly without running
@@ -1688,11 +1691,11 @@ mod schema_tests {
         );
     }
 
-    /// Migration 020 (ADR-067 V1): `facts.corroboration_inert` must be present on a
+    /// Migration 020: `facts.corroboration_inert` must be present on a
     /// FRESH in-memory DB (open runs the full migration chain including 020) AND
     /// survive a re-run of the whole chain unchanged (idempotent PRAGMA-guarded ADD
-    /// COLUMN — impl-spec §C0 DoD: "a fresh in-memory DB + a migrated-from-prior DB
-    /// both end with the column present").
+    /// COLUMN — a fresh in-memory DB and a migrated-from-prior DB
+    /// both end with the column present).
     #[tokio::test]
     async fn migrate_020_facts_corroboration_inert_present_and_idempotent() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
@@ -1747,7 +1750,7 @@ mod schema_tests {
         );
     }
 
-    /// Migration 027 (steal-matrix-rescore item 2): `entities_fts` must stem via
+    /// Migration 027: `entities_fts` must stem via
     /// porter, not just tokenize via unicode61. The discriminating assertion is
     /// `MATCH 'painting'` finding a row stored as "...painted...": bare unicode61
     /// requires an exact token match, so this assertion would go RED if the
@@ -2279,7 +2282,7 @@ mod schema_tests {
         };
         // Run migrations so all tables exist — then corrupt one.
         graph.run_migrations().await.expect("run_migrations");
-        // TD-136: under `content-search`, Migration 026 installs the DiskANN
+        // Under `content-search`, Migration 026 installs the DiskANN
         // `episodes_vec_idx` on `episodes`; libsql refuses `DROP TABLE` while its
         // vector index survives, so drop the index first (mirrors defs_j.rs's
         // `DROP INDEX IF EXISTS entities_vec_idx` before table restructure). IF

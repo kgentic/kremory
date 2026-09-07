@@ -1,19 +1,18 @@
-//! Nomic-embed-text asymmetric task-prefix helpers (TD-143,
-//! `.ai-docs/tech-debt/tech-debt-register.md` §TD-143).
+//! Nomic-embed-text asymmetric task-prefix helpers.
 //!
 //! `nomic-embed-text` (the default kremory embedder, `facade/providers.rs`)
 //! is an ASYMMETRIC embedding model: it requires a task prefix prepended to
 //! the raw text before embedding — `search_document: ` for text that gets
 //! STORED and later searched against, `search_query: ` for text that is a
 //! QUERY compared (via vector search) against that stored corpus. Embedding
-//! both sides with no prefix (kremory's pre-TD-143 behaviour) collapses the
+//! both sides with no prefix (kremory's previous behaviour) collapses the
 //! query↔document asymmetry the model was trained on.
 //!
 //! Gated behind [`crate::core::config::SearchConfig::embed_task_prefix_enabled`]
 //! (default `false` — every call below is then a no-op passthrough,
-//! byte-identical to pre-TD-143 behaviour). This module intentionally stays
+//! byte-identical to the previous behaviour). This module intentionally stays
 //! OUTSIDE the `EmbeddingProvider` / `DynEmbeddingProvider` trait contract —
-//! per TD-143's DoD, the prefix is nomic-specific, so it is applied by CALL
+//! the prefix is nomic-specific, so it is applied by CALL
 //! SITES via these two helpers rather than baked into the (provider-agnostic,
 //! BYOM) embedder trait. A consumer using a different, non-nomic embedder
 //! never flips the knob and is completely unaffected.
@@ -28,9 +27,8 @@
 //! Every call site that embeds text destined for, or compared against, a
 //! persisted `entities.embedding` / `episodes.embedding` / `facts.embedding`
 //! column MUST route through [`document_embed_text`] (write side) or
-//! [`query_embed_text`] (read side) — see the TD-143 tech-debt register
-//! entry for the full call-site inventory this module's introduction
-//! required (13 call sites across ingest, recall, and entity resolution).
+//! [`query_embed_text`] (read side) — this module's introduction required
+//! updating 13 call sites across ingest, recall, and entity resolution.
 //!
 //! Flipping this knob on an EXISTING corpus makes every previously-stored
 //! embedding stale (a document-prefixed write and an unprefixed write occupy
@@ -45,7 +43,7 @@ use std::borrow::Cow;
 /// Prefix `text` with nomic's `search_document: ` task prefix when `enabled`.
 ///
 /// No-op (borrows `text` unchanged) when `enabled` is `false` — byte-identical
-/// to pre-TD-143 behaviour. Apply at every call site that embeds text
+/// to the previous behaviour. Apply at every call site that embeds text
 /// destined to be STORED into a persisted `entities` / `episodes` / `facts`
 /// embedding column (ingest-time writes, the backfill subcommand, and the
 /// dream-phase merge re-embed).
@@ -60,11 +58,11 @@ pub(crate) fn document_embed_text(text: &str, enabled: bool) -> Cow<'_, str> {
 /// Prefix `text` with nomic's `search_query: ` task prefix when `enabled`.
 ///
 /// No-op (borrows `text` unchanged) when `enabled` is `false` — byte-identical
-/// to pre-TD-143 behaviour. Apply at every call site that embeds text to be
+/// to the previous behaviour. Apply at every call site that embeds text to be
 /// COMPARED, via vector search, against a persisted, document-prefixed
 /// `entities` / `episodes` / `facts` embedding column — this includes the
 /// recall query path AND entity-resolution probes (L4 disambiguation,
-/// ADR-075 candidate blocking) that search the same `entities` index.
+/// candidate blocking) that search the same `entities` index.
 pub(crate) fn query_embed_text(text: &str, enabled: bool) -> Cow<'_, str> {
     if enabled {
         Cow::Owned(format!("search_query: {text}"))
@@ -77,7 +75,7 @@ pub(crate) fn query_embed_text(text: &str, enabled: bool) -> Cow<'_, str> {
 mod tests {
     use super::*;
 
-    // ── Default-off byte-identical passthrough (TD-143 DoD item 1) ──────────
+    // ── Default-off byte-identical passthrough ──────────
 
     #[test]
     fn document_embed_text_disabled_is_passthrough() {

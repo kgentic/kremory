@@ -67,7 +67,7 @@ pub struct HybridExtractor<L: ChatProvider> {
 }
 
 /// Bundled parameters for [`HybridExtractor::stage2_gleaning`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments).
+/// to keep the function under clippy's `too_many_arguments` threshold.
 struct Stage2GleaningParams<'a> {
     /// Source text to glean from.
     text: &'a str,
@@ -78,7 +78,7 @@ struct Stage2GleaningParams<'a> {
 }
 
 /// Bundled parameters for [`HybridExtractor::stage4_typing`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments).
+/// to keep the function under clippy's `too_many_arguments` threshold.
 struct Stage4TypingParams<'a> {
     /// Source text used for typing context.
     text: &'a str,
@@ -88,8 +88,8 @@ struct Stage4TypingParams<'a> {
     ctx: &'a ExtractionContext<'a>,
 }
 
-/// Bundled parameters for [`HybridExtractor::stage5_merge`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`HybridExtractor::stage5_merge`] — args-as-object
+/// to keep the function under clippy's `too_many_arguments` threshold.
 pub struct Stage5MergeParams<'a> {
     /// Base entity set.
     pub base: Vec<ExtractedEntity>,

@@ -105,8 +105,8 @@ mod inner {
         text_length: i64,
     }
 
-    /// Bundled parameters for [`encode_prompt`] — args-as-object per TD-042
-    /// (rust-conventions §too_many_arguments).
+    /// Bundled parameters for [`encode_prompt`] — args-as-object to keep the
+    /// function under clippy's `too_many_arguments` threshold.
     struct EncodePromptParams<'a> {
         tokenizer: &'a tokenizers::Tokenizer,
         text: &'a str,
@@ -393,8 +393,8 @@ mod inner {
     ///
     /// For each span, we take the class with the highest sigmoid score above `threshold`.
     /// Greedy non-overlapping selection is then applied (highest score wins).
-    /// Bundled parameters for [`decode_logits`] — args-as-object per TD-042
-    /// (rust-conventions §too_many_arguments).
+    /// Bundled parameters for [`decode_logits`] — args-as-object to keep the
+    /// function under clippy's `too_many_arguments` threshold.
     pub(crate) struct DecodeLogitsParams<'a> {
         pub(crate) logits: &'a ndarray::ArrayViewD<'a, f32>,
         pub(crate) batch_idx: usize,

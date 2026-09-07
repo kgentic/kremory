@@ -1,6 +1,6 @@
 //! Ingest module — Engine struct, constructors, and the public ingest API.
 //!
-//! Split from `ingest.rs` as part of TD-001 (E0-C).
+//! Split from `ingest.rs` to keep each file under the size that invites drift.
 //!
 //! Sub-modules:
 //! - `helpers` — context snippet extraction + SimpleGraph test alias
@@ -42,11 +42,11 @@ pub(crate) use crate::core::intelligence::{EntityExtractor, ExtractedEntity, Ext
 #[cfg(any(test, feature = "test-utils"))]
 pub use helpers::SimpleGraph;
 
-// Phase A foundational types (C6 spec §5.5 GAP-001) — public so integration
+// Foundational ingest types — public so integration
 // tests and verify_stage can reference them.
 pub use pipeline::{EntityCandidate, IngestPhase1Result, ResolvedDecision, UpsertedEntities};
 
-// Args-as-object params structs for the pipeline `impl Engine` methods (TD-042).
+// Args-as-object params structs for the pipeline `impl Engine` methods.
 // Re-exported here so consumers reach them at `kremory::core::ingest::*`
 // alongside `Engine` and `SourceParams`.
 pub use pipeline::{IngestDeferredParams, IngestWithParams, WriteVerifiedEntitiesParams};
@@ -69,7 +69,7 @@ pub struct SourceParams {
     pub source_uri: Option<String>,
     /// Wall-clock time the episode was recorded (defaults to ingest time when None).
     pub recorded_at: Option<DateTime<Utc>>,
-    /// Per-call entity type vocabulary override (TD-013 §1 hybrid registry).
+    /// Per-call entity type vocabulary override (hybrid registry).
     ///
     /// When `Some(specs)`:
     /// - Build registry from override: `EntityTypeRegistry::from_specs(specs)`.
@@ -86,7 +86,7 @@ pub struct SourceParams {
     /// The override list MUST include `id=0 "Entity"` catch-all (caller
     /// responsibility).
     pub entity_types_override: Option<Vec<crate::core::entity_types::EntityTypeSpec>>,
-    /// ADR-035 §5 Option A: caller-pre-extracted facts to pin into the graph
+    /// Caller-pre-extracted facts to pin into the graph
     /// BEFORE Phase 2 LLM extraction runs. Engine.ingest writes these via
     /// `graph.try_insert_fact_with_group` after episode insertion; subsequent
     /// Phase 2 LLM duplicates of the same triple are silently swallowed by
@@ -98,12 +98,12 @@ pub struct SourceParams {
     /// `memory::types::StructuredFact` into this core-level type to avoid a
     /// circular `core → memory` dependency.
     pub pre_pinned_facts: Vec<PrePinnedFact>,
-    /// ADR-035 §2/§6 — when `true`, engine.ingest bails after episode insert
+    /// When `true`, engine.ingest bails after episode insert
     /// and caller-pre-pinned-facts write, without invoking Phase 2 LLM extraction.
     /// Backs the facade `RememberRequest::skip_extraction()` builder method;
     /// default `false` preserves pre-v0.1.8 full-pipeline behavior.
     pub skip_extraction: bool,
-    /// ADR-052 Gap 1 — per-episode event sink fired synchronously at the real
+    /// Per-episode event sink fired synchronously at the real
     /// extraction/edge/stage-transition call sites inside [`Engine::ingest_with`].
     ///
     /// This carries the **core-layer** [`IngestEventSink`](crate::core::sink::IngestEventSink)
@@ -114,8 +114,8 @@ pub struct SourceParams {
     /// the supertrait `as`-cast before calling `ingest`.
     ///
     /// `None` (default) = no sink wired; all fire-site call sites are guarded by
-    /// `if let Some(s) = &source_params.sink`. Re-established by the ADR-052
-    /// Gap 1 sink-callsite cause-fix after the fb85ba8 consolidation regressed
+    /// `if let Some(s) = &source_params.sink`. Re-established by a
+    /// sink-callsite cause-fix after the fb85ba8 consolidation regressed
     /// the original 737e152/34fdc60 fire-sites.
     pub sink: Option<Arc<dyn crate::core::sink::IngestEventSink>>,
 }
@@ -134,7 +134,7 @@ impl std::fmt::Debug for SourceParams {
     }
 }
 
-/// Core-level pre-pinned fact passed via [`SourceParams`] (ADR-035 §5).
+/// Core-level pre-pinned fact passed via [`SourceParams`].
 ///
 /// This is the engine's internal representation of `memory::types::StructuredFact`,
 /// kept in `core` to preserve substrate's layer boundaries.
@@ -151,8 +151,8 @@ pub struct PrePinnedFact {
     /// World-time start of the fact's validity window.
     pub valid_from: DateTime<Utc>,
     /// World-time end of the fact's validity window, `None` = open-ended.
-    /// Mirrors `memory::types::StructuredFact.valid_to` (Story #318) — added
-    /// alongside ADR-068 (`as_of` point-in-time recall): before this field
+    /// Mirrors `memory::types::StructuredFact.valid_to` — added
+    /// alongside `as_of` point-in-time recall: before this field
     /// existed, a caller-asserted bounded window was silently dropped on the
     /// pin path (`PrePinnedFact` carried `valid_from` only), so a fact like
     /// "worked here 2020-2022" could never close except via the separate,
@@ -181,7 +181,7 @@ pub struct IngestionResult {
     pub merged_entities: Vec<(String, String)>,
     /// Token usage across all LLM calls.
     ///
-    /// ⚠️ **ALWAYS ZERO — this field does not work yet (TD-179).** It is set from
+    /// ⚠️ **ALWAYS ZERO — this field does not work yet.** It is set from
     /// `TokenUsage::default()` at `ingest/pipeline/ingest_with.rs:228` and never
     /// written. Do NOT read it as a cost figure: a `0` here means *"not
     /// measured"*, not *"free"*.
@@ -196,7 +196,7 @@ pub struct IngestionResult {
     /// extraction — roughly 27 of ~47 calls per session — producing an
     /// authoritative-looking undercount, which is worse than the honest zero.
     ///
-    /// **Measure ingest cost via metrics instead**, which ARE wired (TD-166):
+    /// **Measure ingest cost via metrics instead**, which ARE wired:
     /// `kremory_core_tokens_total{operation="extraction", schema, arm, direction}`
     /// — and check `kremory_core_tokens_usage_missing_total` before believing any
     /// total, because local Ollama reports no usage at all.
@@ -204,12 +204,12 @@ pub struct IngestionResult {
     /// Filling this field requires wrapping the provider at BUILDER time so all
     /// holders share one accumulator; that is a real design decision (per-`Memory`
     /// totals vs per-`remember()` attribution under concurrent ingests), not a
-    /// mechanical fix. Tracked as TD-179.
+    /// mechanical fix.
     pub token_usage: TokenUsage,
     /// Forward references in the fact list that had no corresponding extracted entity
     /// and were inserted as UNKNOWN stub entities so facts can resolve correctly.
     pub stub_entities_inserted: usize,
-    /// TD-232: `true` unless the dense (content-search) arm was enabled AND
+    /// `true` unless the dense (content-search) arm was enabled AND
     /// attempted AND failed. See `maybe_embed_episode`'s doc comment for the
     /// exact semantics; this is that call's return value, captured on the
     /// inline `ingest_with` path. `true` when the `content-search` feature is
@@ -222,24 +222,19 @@ pub struct IngestionResult {
     pub dense_embedded: bool,
 }
 
-// ── Dream pass types (Phase C DoD C1/C2) ──────────────────────────────────────
+// ── Dream pass types ────────────────────────────────────────────────────────
 
 /// Options for a synchronous dream pass.
 ///
 /// Passed to [`Engine::run_dream_pass_sync`]. All fields have sensible defaults
 /// via [`Default`] — callers can construct with `DreamPassOpts::default()` and
 /// selectively override.
-///
-/// # ADR reference
-///
-/// ADR-045 §3 (dream pass architecture); Phase C DoD C2
-/// (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
 #[derive(Debug, Clone)]
 pub struct DreamPassOpts {
     /// When `true`, Pass 0 type-discovery runs to find novel entity types not
     /// in the current registry. Requires LLM. Default: `false`.
     ///
-    /// Phase D wires the actual Pass 0 logic; Phase C stubs this path.
+    /// Currently stubbed — Pass 0 type-discovery logic is not yet wired in.
     pub include_type_discovery: bool,
     /// Minimum confidence threshold for entity type assignments to be re-examined
     /// during the reclassify pass. Range [0.0, 1.0]. Default: `0.5`.
@@ -249,7 +244,7 @@ pub struct DreamPassOpts {
     pub max_episodes_per_run: Option<usize>,
     /// Confidence threshold above which `ConsumerPinned` entities are protected
     /// from reclassification during the dream pass. Range [0.0, 1.0].
-    /// Default: `0.7` (ADR-045 §3).
+    /// Default: `0.7`.
     pub reclassify_high_conf_threshold: f32,
 }
 
@@ -259,7 +254,7 @@ impl Default for DreamPassOpts {
             include_type_discovery: false,
             confidence_threshold: 0.5,
             max_episodes_per_run: None,
-            // ADR-045 §3: 0.7 is the ConsumerPinned protection threshold.
+            // 0.7 is the ConsumerPinned protection threshold.
             reclassify_high_conf_threshold: 0.7,
         }
     }
@@ -267,8 +262,8 @@ impl Default for DreamPassOpts {
 
 /// Summary returned by [`Engine::run_dream_pass_sync`].
 ///
-/// Phase C returns zeroed counts (Pass 0 + Pass 2 are stubbed). Phase D/E
-/// will populate with real counts from the LLM consolidation pass.
+/// Currently returns zeroed counts (Pass 0 + Pass 2 are stubbed); a
+/// future pass will populate real counts from the LLM consolidation pass.
 #[derive(Debug, Clone, Default)]
 pub struct DreamPassSummary {
     /// Number of ghost episodes reprocessed (Phase 2 retry).
@@ -294,16 +289,16 @@ pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     /// Optional OOV auditor for language-agnostic entity safety net.
     /// When set, runs after each chunk extraction to catch domain terms the LLM missed.
     pub(crate) oov_auditor: Option<text_utils::OovAuditor>,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). Sourced from
+    /// Consumer-supplied model identifier. Sourced from
     /// the builder, NOT read off `llm.model()`. `None` when the consumer did not
     /// supply one (raw `with_llm` path) or supplied an empty string.
     pub(crate) model: Option<String>,
     /// Entity extractor — constructed once per Engine, shared via Arc across
     /// all ingest hot-path callsites.  Built-in variants are `Llm` and
     /// `GlinerLlm` (behind `ner` feature); consumer extensions via `Custom`.
-    /// See ADR-039 and `factory.rs`.
+    /// See `factory.rs`.
     pub(crate) extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
-    /// Serialization lock for dream passes (Phase C DoD C3).
+    /// Serialization lock for dream passes.
     ///
     /// At-most-one dream pass runs concurrently per engine instance. Concurrent
     /// callers block on this mutex — dream passes are expected to be rare
@@ -313,15 +308,15 @@ pub struct Engine<L: ChatProvider, Emb: EmbeddingProvider> {
     pub(crate) dream_lock: Arc<Mutex<()>>,
 }
 
-/// Bundled parameters for [`Engine::new`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments). Generic over the provider params
-/// because every field is provider-typed (`Arc<L>` / `Arc<Emb>`).
+/// Bundled parameters for [`Engine::new`] — args-as-object to keep the
+/// function under clippy's too_many_arguments threshold. Generic over the
+/// provider params because every field is provider-typed (`Arc<L>` / `Arc<Emb>`).
 pub struct EngineNewParams<L: ChatProvider, Emb: EmbeddingProvider> {
     pub graph: Arc<TemporalGraph>,
     pub llm: Arc<L>,
     pub embedder: Arc<Emb>,
     pub config: PipelineConfig,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). kremory owns
+    /// Consumer-supplied model identifier. kremory owns
     /// this string as *data* — it is NOT read back off the provider trait. Used
     /// for capability detection (`extraction/structured.rs`) + metric labels.
     /// `None` / empty → capability detection falls to `PromptOnly`, metric label
@@ -330,21 +325,21 @@ pub struct EngineNewParams<L: ChatProvider, Emb: EmbeddingProvider> {
     pub model: Option<String>,
 }
 
-/// Bundled parameters for [`Engine::with_extractor`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`Engine::with_extractor`] — args-as-object to keep
+/// the function under clippy's too_many_arguments threshold.
 pub(crate) struct EngineWithExtractorParams<L: ChatProvider, Emb: EmbeddingProvider> {
     pub graph: Arc<TemporalGraph>,
     pub llm: Arc<L>,
     pub embedder: Arc<Emb>,
     pub config: PipelineConfig,
     pub extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
-    /// Consumer-supplied model identifier (Option-1, 2026-06-23). See
+    /// Consumer-supplied model identifier. See
     /// [`EngineNewParams::model`] for semantics.
     pub model: Option<String>,
 }
 
 /// Bundled parameters for [`Engine::with_custom_extractor_no_llm`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 pub(crate) struct EngineWithCustomExtractorNoLlmParams<L: ChatProvider, Emb: EmbeddingProvider> {
     pub graph: Arc<TemporalGraph>,
     pub embedder: Arc<Emb>,
@@ -352,30 +347,30 @@ pub(crate) struct EngineWithCustomExtractorNoLlmParams<L: ChatProvider, Emb: Emb
     pub extractor: Arc<crate::core::extraction::factory::ExtractorKind<L>>,
 }
 
-/// Bundled parameters for [`Engine::ingest_document`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`Engine::ingest_document`] — args-as-object to
+/// keep the function under clippy's too_many_arguments threshold.
 pub struct IngestDocumentParams<'a> {
     pub source: &'a str,
     pub title: &'a str,
     pub text: &'a str,
 }
 
-/// Bundled parameters for [`Engine::assert_entity_type`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`Engine::assert_entity_type`] — args-as-object to
+/// keep the function under clippy's too_many_arguments threshold.
 pub struct AssertEntityTypeParams<'a> {
     pub entity_id: &'a str,
-    /// Currently unused by the storage layer (Phase C DoD C5 future-compat);
+    /// Currently unused by the storage layer (reserved for future compat);
     /// see [`Engine::assert_entity_type`] doc.
     pub entity_type_id: u32,
     pub group_id: Option<&'a str>,
 }
 
-/// Bundled parameters for [`Engine::ingest`] — args-as-object per TD-042
-/// (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`Engine::ingest`] — args-as-object to keep the
+/// function under clippy's too_many_arguments threshold.
 pub struct IngestParams<'a> {
     pub text: &'a str,
     pub reference_time: Option<DateTime<Utc>>,
-    /// TD-187: the caller-DECLARED document anchor (`SourceRef::published_at`)
+    /// The caller-DECLARED document anchor (`SourceRef::published_at`)
     /// ONLY — never `reference_time` / `occurred_at` / wall-clock. See
     /// [`crate::core::intelligence::ExtractionContext::reference_time`] for
     /// why this must stay a distinct channel from `reference_time` above.
@@ -407,7 +402,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             config,
             model,
         } = params;
-        // Option-1 (2026-06-23): model is consumer-supplied data, not read off
+        // Model is consumer-supplied data, not read off
         // `llm.model()`. Normalise empty → None for capability detection.
         let model = model.and_then(|m| {
             let t = m.trim().to_string();
@@ -419,9 +414,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         });
         // Production default = IntegerIdLlmExtractor (3-stage, integer-ID). It extracts
         // materially more relationship facts than the 2-stage graphiti LlmExtractor on
-        // real LLMs (16 vs 3 on mock_interview, 3 vs 0 on short prose — qwen2.5:14b,
-        // 2026-06-29 probe). This amends ADR-039, which wired `Llm` (graphiti) here;
-        // see `.ai-docs/research/extractor-wiring-investigation-2026-06-29.md`.
+        // real LLMs (16 vs 3 on mock_interview, 3 vs 0 on short prose — qwen2.5:14b
+        // probe). This supersedes the prior default, which wired `Llm` (graphiti) here.
         let extractor = Arc::new(crate::core::extraction::factory::ExtractorKind::IntegerId(
             crate::core::extraction::default_extractor::IntegerIdLlmExtractor::new(Arc::clone(
                 &llm,
@@ -454,7 +448,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             extractor,
             model,
         } = params;
-        // Option-1 (2026-06-23): model is consumer-supplied data, not read off
+        // Model is consumer-supplied data, not read off
         // `llm.model()`. Normalise empty → None for capability detection.
         let model = model.and_then(|m| {
             let t = m.trim().to_string();
@@ -518,7 +512,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         Arc::clone(&self.graph)
     }
 
-    /// Consumer-supplied model identifier captured at construction (Option-1).
+    /// Consumer-supplied model identifier captured at construction.
     ///
     /// Returns `None` when the consumer did not supply a model id (raw `with_llm`
     /// path) or supplied an empty/whitespace-only string. Pub-scoped pending a
@@ -527,17 +521,17 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         self.model.as_deref()
     }
 
-    /// TD-136 (dense episode retrieval): embed one episode's content + store it
+    /// Dense episode retrieval: embed one episode's content + store it
     /// on `episodes.embedding`, IFF the dense arm is enabled
     /// (`config.search.episode_dense_enabled`). Called after every episode
     /// INSERT in the ingest pipeline (`pipeline/ingest_with.rs`,
     /// `pipeline/phase1.rs`).
     ///
     /// DEFAULT OFF → this is a pure no-op (no embedder call, no UPDATE), so
-    /// ingest is byte-identical to pre-TD-136 when the flag is unset — the write
-    /// side of the same A/B lever that gates the read arm in
-    /// `facade::recall::fuse_content_stream`. The existing corpus is populated
-    /// separately by `Memory::backfill_episode_embeddings`.
+    /// ingest is byte-identical to the pre-dense-episode-arm behaviour when the
+    /// flag is unset — the write side of the same A/B lever that gates the read
+    /// arm in `facade::recall::fuse_content_stream`. The existing corpus is
+    /// populated separately by `Memory::backfill_episode_embeddings`.
     ///
     /// Feature-gated behind `content-search` (the `episodes.embedding` column
     /// only exists there). Failures are surfaced as a WARN + counter and
@@ -545,7 +539,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// otherwise succeeded (the episode is still BM25-searchable; the dense arm
     /// simply misses it until a re-embed/backfill).
     /// Returns `true` unless the dense arm was ENABLED and ATTEMPTED and
-    /// FAILED — i.e. `false` is exactly the TD-232 silent-degrade case the
+    /// FAILED — i.e. `false` is exactly the silent-degrade case the
     /// caller needs to know about. `episode_dense_enabled: false` (a
     /// deliberate config choice, not a failure) returns `true` — "nothing
     /// went wrong" is true either way; only the caller already knows WHY
@@ -558,7 +552,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         if !self.config.search.episode_dense_enabled {
             return true;
         }
-        // TD-143: WRITE into `episodes.embedding` — document-prefix it.
+        // WRITE into `episodes.embedding` — document-prefix it.
         let prefixed_content =
             document_embed_text(content, self.config.search.embed_task_prefix_enabled);
         match self.embedder.embed(&prefixed_content).await {
@@ -637,7 +631,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .increment(1);
 
         // 2. Embed the full document text for vector search.
-        // TD-143: WRITE into `entities.embedding` (this document-anchor entity
+        // WRITE into `entities.embedding` (this document-anchor entity
         // shares the same index as every other entity) — document-prefix it.
         let embedding = self
             .embedder
@@ -646,7 +640,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 self.config.search.embed_task_prefix_enabled,
             ))
             .await?;
-        // TD-206 / ADR-029d: scoped write. `"default"` is correct HERE and is not
+        // Scoped write. `"default"` is correct HERE and is not
         // a guess: this fn persists the document anchor via `insert_entity` (the
         // NON-group variant, `:607`), which leaves `entities.group_id` at its
         // schema default of `'default'`. The scoped write must therefore target
@@ -673,33 +667,29 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         .await
     }
 
-    // ── Dream pass API (Phase C DoD C1–C5, C8) ───────────────────────────────
+    // ── Dream pass API ────────────────────────────────────────────────────────
 
     /// Run a synchronous dream pass on the graph.
     ///
-    /// **Phase C stub**: Pass 0 (type discovery) and Pass 2 (LLM re-extraction of
+    /// **Stub**: Pass 0 (type discovery) and Pass 2 (LLM re-extraction of
     /// ghost episodes) are not yet implemented. This method acquires the
-    /// serialization lock (C3), records timing + metrics (C8), and returns a
-    /// zeroed [`DreamPassSummary`]. Phase D wires the actual pass logic.
+    /// serialization lock, records timing + metrics, and returns a
+    /// zeroed [`DreamPassSummary`]. A future pass wires the actual pass logic.
     ///
     /// Concurrent callers block until the running pass completes — at-most-one
-    /// dream pass runs per engine instance (ADR-045 §3 / Phase C DoD C3).
-    ///
-    /// # ADR reference
-    ///
-    /// ADR-045 §3; Phase C DoD C1 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
+    /// dream pass runs per engine instance.
     pub async fn run_dream_pass_sync(&self, opts: DreamPassOpts) -> Result<DreamPassSummary> {
         let start = std::time::Instant::now();
 
-        // C3: acquire dream serialization lock (blocks concurrent passes).
+        // Acquire dream serialization lock (blocks concurrent passes).
         // Uses tokio::sync::Mutex so the guard is Send across .await points.
         // The lock is released when `_guard` is dropped at end of scope.
         let _guard = self.dream_lock.lock().await;
 
-        // C8: emit dream pass start counter.
+        // Emit dream pass start counter.
         metrics::counter!("rql.dream.pass_started_total").increment(1);
 
-        // Phase C stub: Pass 0 (type discovery) — wired in Phase D.
+        // Stub: Pass 0 (type discovery) — not yet wired.
         if opts.include_type_discovery {
             metrics::counter!(
                 "rql.dream.pass0_type_discovery_total",
@@ -708,17 +698,17 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .increment(1);
             tracing::debug!(
                 confidence_threshold = opts.confidence_threshold,
-                "kremory.dream.pass0 type discovery: stubbed in Phase C — Phase D wires impl"
+                "kremory.dream.pass0 type discovery: stubbed — not yet wired"
             );
         }
 
-        // Phase C stub: ghost episode retry pass — wired in Phase D.
+        // Stub: ghost episode retry pass — not yet wired.
         let ghost_episodes_retried = 0usize;
 
-        // Phase E: entity reclassify pass (ADR-046 Option E, 2-arm SELECT).
+        // Entity reclassify pass (2-arm SELECT).
         // Runs only when LLM is wired; returns 0 silently on NoLlm path.
         //
-        // ADR-050 Phase 4 — budget tracking:
+        // Budget tracking:
         // The provider is wrapped in TokenCountingChatProvider for the ENTIRE
         // duration of reclassify_all_groups, so ALL LLM calls made during the
         // pass (reclassify + sub-calls) are counted through the decorator.
@@ -731,10 +721,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // TokenCountingChatProvider: ChatProvider (via #[async_trait] impl), so
         // &TokenCountingChatProvider satisfies the &L: ChatProvider generic bound.
         let entities_reclassified = if let Some(llm_arc) = self.llm.as_ref() {
-            // ── ADR-050 Phase 4: budget-tracking setup ────────────────────────
+            // ── Budget-tracking setup ──────────────────────────────────────────
             //
             // Generate pass_run_id before the pass: same ID used for both the
-            // cooldown checkpoint (Phase 3) and the budget_usage INSERT (Phase 4).
+            // cooldown checkpoint and the budget_usage INSERT.
             // microsecond timestamp → unique per pass, human-readable in SQL.
             let pass_run_id = format!("dream_pass_{}", Utc::now().timestamp_micros());
 
@@ -748,7 +738,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             // Clone the accumulator handle BEFORE moving counting into the reclassify call.
             // The budget-INSERT site reads totals from this handle after pass completes.
             let acc_handle = counting.accumulator();
-            // Option-1 (2026-06-23): model is the Engine's consumer-supplied string,
+            // Model is the Engine's consumer-supplied string,
             // not read off the provider wrapper.
             let model_str = self.model.clone().unwrap_or_default();
 
@@ -764,7 +754,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .await
             {
                 Ok(r) => {
-                    // ── ADR-050 Phase 3 — Guard #3: cooldown-on-success ───────
+                    // ── Guard: cooldown-on-success ─────────────────────────────
                     //
                     // Records pass completion ONLY on success so transient
                     // failures do NOT update the cooldown timestamp. A consumer
@@ -781,7 +771,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // Soft-fail: cooldown write failure is logged + metered but
                     // NOT propagated — it degrades schedule enforcement (scheduler
                     // may fire again sooner than intended) but does NOT corrupt
-                    // data. Rule 8: the cause is a DB write failure, NOT a
+                    // data. The cause is a DB write failure, NOT a
                     // dream-pass logic error.
                     //
                     // D7: no high-cardinality metric labels.
@@ -804,8 +794,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         );
                         metrics::counter!("kremory.dream.cooldown_write_fail_total").increment(1);
                     } else {
-                        // Phase 5 seam: on_dream_pass_complete (or equivalent) fires here
-                        // when Phase 5 sink-wiring lands for the inline dream-pass path.
+                        // Seam for a future on_dream_pass_complete (or equivalent) sink
+                        // fire, once sink-wiring lands for the inline dream-pass path.
                         metrics::counter!("kremory.dream.cooldown_recorded_total").increment(1);
                         tracing::debug!(
                             completed_at = now_epoch,
@@ -813,7 +803,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         );
                     }
 
-                    // ── ADR-050 Phase 4 — budget INSERT ───────────────────────
+                    // ── Budget INSERT ───────────────────────────────────────────
                     //
                     // Read accumulator totals after reclassify completes (all LLM
                     // calls for this pass have already settled). Soft-fail: a budget
@@ -860,7 +850,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     // cost_usd_micro: None = rate unknown (NULL in DB).
                     // Anthropic Haiku rate (Claude Haiku 3.5): $0.80/M input + $4/M output
                     //   = 800 micro_usd/M input = 0.8 micro_usd/K input tokens.
-                    // Source: https://www.anthropic.com/pricing (2026-06-16 spot check).
+                    // Source: https://www.anthropic.com/pricing (spot check).
                     // claude-haiku-4-* uses the same tier.
                     // Ollama: always 0 (local inference, no API cost).
                     // Other providers (OpenAI, unknown): NULL (rate not implemented).
@@ -928,9 +918,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     r.entities_reclassified
                 }
                 Err(e) => {
-                    // Non-fatal per E7 — surface as debug log, continue.
-                    // ADR-050 Guard #3: transient failure → cooldown NOT recorded.
-                    // ADR-050 Phase 4: reclassify failure → budget row NOT written
+                    // Non-fatal — surface as debug log, continue.
+                    // Transient failure → cooldown NOT recorded.
+                    // Reclassify failure → budget row NOT written
                     // (partial token counts not meaningful for a failed pass).
                     tracing::warn!(
                         error = %e,
@@ -945,7 +935,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         let duration_ms = start.elapsed().as_millis() as u64;
 
-        // C8: emit dream pass completion histogram + summary counters.
+        // Emit dream pass completion histogram + summary counters.
         metrics::histogram!("rql.dream.pass_duration_ms").record(duration_ms as f64);
         metrics::counter!("rql.dream.ghost_episodes_retried_total")
             .increment(ghost_episodes_retried as u64);
@@ -984,10 +974,6 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// An optional `group_id` restricts the query to a single namespace/thread
     /// (use `namespace_to_group_id()` to derive it from a `Namespace`). `None`
     /// returns ghost episodes across all namespaces.
-    ///
-    /// # ADR reference
-    ///
-    /// ADR-045 §3; Phase C DoD C4 (`v0-1-1-dream-impl-sprint-plan-2026-06-09.md`).
     pub async fn ghost_episodes(&self, group_id: Option<&str>) -> Result<Vec<i64>> {
         let start = std::time::Instant::now();
 
@@ -1038,7 +1024,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
 
         let elapsed_ms = start.elapsed().as_millis() as u64;
 
-        // C8: ghost episodes gauge + query duration.
+        // Ghost episodes gauge + query duration.
         metrics::gauge!("rql.dream.ghost_episodes_count").set(ids.len() as f64);
         metrics::histogram!("rql.dream.ghost_episodes_query_ms").record(elapsed_ms as f64);
 
@@ -1065,13 +1051,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     ///
     /// The `entity_type_id` parameter is currently unused by the storage layer
     /// (the tier-update path only stamps `source` + `assigned_at`). It is
-    /// present in the public API per Phase C DoD C5 for future-compat — Phase E
+    /// present in the public API for future-compat — a later pass
     /// may wire it to update the `entity_type_id` column when an explicit type
     /// is supplied alongside the pin.
-    ///
-    /// # ADR reference
-    ///
-    /// ADR-045 §3 (ConsumerPinned protection); Phase C DoD C5.
     pub async fn assert_entity_type(&self, params: AssertEntityTypeParams<'_>) -> Result<()> {
         let AssertEntityTypeParams {
             entity_id,
@@ -1099,7 +1081,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Uses the engine's configured `EntityExtractor`. For a caller-supplied
     /// extractor, use `ingest_with()`.
     ///
-    /// ## Cause-fix (2026-07-12): must NOT hardcode GLiNER when `ner` is compiled
+    /// ## Cause-fix: must NOT hardcode GLiNER when `ner` is compiled
     ///
     /// This function previously special-cased `#[cfg(feature = "ner")]` to always
     /// dispatch through `crate::core::ner::ner_singleton()` — a bare, LLM-less
@@ -1141,7 +1123,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     }
 }
 
-// ── ADR-050 Phase 4: budget-tracking helpers ──────────────────────────────────
+// ── Budget-tracking helpers ─────────────────────────────────────────────────
 //
 // These are free functions (not methods) so they carry no generic parameter
 // and can be tested without an Engine instance.
@@ -1196,10 +1178,10 @@ pub(crate) fn detect_provider_name(model: &str) -> String {
 /// is an unknown tier (caller writes NULL to the DB column). Ollama is
 /// always `Some(0)` (self-hosted, no provider cost).
 ///
-/// TD-133 C3 — this is now the SOLE cost-computation path for dream-pass
+/// This is now the SOLE cost-computation path for dream-pass
 /// budget tracking: it routes through [`ProviderRates::cost_usd`] (backed by
 /// `monitoring/provider-rates.toml`, the single source of truth for provider
-/// pricing — see TD-133 C5a/C5b) rather than a duplicate hand-rolled rate
+/// pricing) rather than a duplicate hand-rolled rate
 /// table. The former `anthropic_rate_per_token()` stored rates as INTEGER
 /// micro-USD/token (e.g. Haiku's $0.80/M input rate rounded UP to 1
 /// micro-USD/token, a ~20% overshoot); `ProviderRates::cost_usd` computes in
@@ -1301,8 +1283,8 @@ mod budget_helpers_tests {
     #[test]
     fn compute_cost_anthropic_haiku() {
         // haiku: input rate = $1.00/M = 1 micro_usd/token, output rate = $5.00/M =
-        // 5 micro_usd/token (TD-133 C5/R2 — SSOT-derived from LiteLLM via
-        // monitoring/refresh-provider-rates.py; verified 2026-07-21).
+        // 5 micro_usd/token (SSOT-derived from LiteLLM via
+        // monitoring/refresh-provider-rates.py).
         // 1000 input × 1 = 1000; 500 output × 5 = 2500; total 3500.
         assert_eq!(
             compute_dream_cost_micro(ComputeDreamCostMicroParams {
@@ -1332,8 +1314,8 @@ mod budget_helpers_tests {
     #[test]
     fn compute_cost_anthropic_opus() {
         // opus: input rate = $5.00/M = 5 micro_usd/token, output rate = $25.00/M =
-        // 25 micro_usd/token (TD-133 C5/R2 — SSOT-derived from LiteLLM via
-        // monitoring/refresh-provider-rates.py; verified 2026-07-21).
+        // 25 micro_usd/token (SSOT-derived from LiteLLM via
+        // monitoring/refresh-provider-rates.py).
         // 100 input × 5 + 50 output × 25 = 500 + 1250 = 1750.
         assert_eq!(
             compute_dream_cost_micro(ComputeDreamCostMicroParams {

@@ -1,7 +1,7 @@
 //! Extraction-prompt-window splitter (formerly `chunker`).
 //!
-//! **This is a kind-2 chunker only** — see `.ai-docs/research/proxy-pointer-rag-integration.md` §0
-//! and ADR-Phase-D.0:88 for the kind-1 vs kind-2 distinction.
+//! **This is a kind-2 chunker only** (prompt-window slicing, not retrieval-index
+//! chunking) — see the kind-1 vs kind-2 distinction described below.
 //!
 //! Slices an episode's text into LLM-extraction-prompt-sized windows so the extractor LLM
 //! can read oversized episode bodies within its context budget. The slices are **throwaway**:
@@ -10,7 +10,7 @@
 //!
 //! Kremory does NOT do kind-1 retrieval chunking (slicing for vector-index rows). Episodes
 //! are stored whole and embeddings are per-entity-name + per-fact, never per-window-slice.
-//! Caller-side retrieval chunking is App-layer concern per `feedback_rql_does_not_chunk_caller_owns`.
+//! Caller-side retrieval chunking is an App-layer concern — RQL does not chunk for the caller.
 //!
 //! The early-return at `min_words` (default 100) makes this splitter a no-op for normally-sized
 //! episodes — it only fires when the input exceeds the configured extraction-prompt budget.
@@ -180,8 +180,8 @@ impl ExtractionWindowSplitter {
 }
 
 // UTF-8 boundary snapping lives in `core::text_utils` — ONE implementation
-// for the whole crate. Four private copies of this idea is exactly how the
-// 2026-07-28 crash happened: `core/ingest/helpers.rs` already had a correct
+// for the whole crate. Four private copies of this idea is exactly how a
+// prior crash happened: `core/ingest/helpers.rs` already had a correct
 // floor/ceil pair and this module never inherited it.
 use crate::core::text_utils::floor_char_boundary;
 
@@ -245,9 +245,9 @@ mod tests {
         }
     }
 
-    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
-    // production fns, not `#[cfg(test)]` builders.
+    // Test helper: test helpers may carry a documented `too_many_arguments`
+    // allow per clippy.toml; the args-as-object pattern used elsewhere in
+    // this file targets `src/` production fns, not `#[cfg(test)]` builders.
     #[allow(clippy::too_many_arguments)]
     fn config_with_overlap(
         min: usize,
@@ -440,7 +440,7 @@ mod utf8_boundary_tests {
     use crate::core::config::ExtractionWindowConfig;
 
     /// Reproduces the panic that took kremory-http down mid-run against
-    /// LongMemEval on 2026-07-28:
+    /// LongMemEval:
     ///   `byte index 6809 is not a char boundary; it is inside 'è'`
     ///
     /// The split offsets are reconstructed by BYTE arithmetic (a sum of

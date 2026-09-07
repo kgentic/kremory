@@ -131,7 +131,7 @@ pub async fn canonicalize_surface_forms(
 }
 
 /// Bundled parameters for [`canonicalize_surface_forms_with_embedder`] —
-/// args-as-object per TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`).
+/// args-as-object (`clippy.toml` `too-many-arguments-threshold = 3`).
 /// `graph` stays a lead positional param (receiver-like dep, project
 /// convention — mirrors [`ApplyMergeWithAuditParams`]).
 pub struct CanonicalizeSurfaceFormsParams<'a> {
@@ -139,7 +139,7 @@ pub struct CanonicalizeSurfaceFormsParams<'a> {
     pub threshold: f32,
     /// When `Some`, every candidate merge is ADJUDICATED before it is applied:
     /// `names_lexically_compatible` is demoted from decider to NOMINATOR and the
-    /// shared ADR-063 `write_gate` makes the call (see [`adjudicate`]).
+    /// shared `write_gate` makes the call (see [`adjudicate`]).
     ///
     /// `None` preserves the pre-adjudication behavior EXACTLY — the deterministic
     /// cosine + lexical path, which is `write_gate` row 1's "clear case" by
@@ -151,17 +151,16 @@ pub struct CanonicalizeSurfaceFormsParams<'a> {
     /// The live facade path always supplies `Some` — `dream()` already resolves a
     /// chat provider and a model id.
     pub adjudicator: Option<L5Adjudicator<'a>>,
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
-    /// every merge this pass applies recomputes + persists the keeper's name
-    /// embedding post-commit (see [`EntityMergeParams::embedder`]). `None`
-    /// preserves [`canonicalize_surface_forms`]'s pre-TD-112 behavior (stored
-    /// embedding left stale after a merge).
+    /// When `Some`, every merge this pass applies recomputes + persists the
+    /// keeper's name embedding post-commit (see [`EntityMergeParams::embedder`]).
+    /// `None` preserves [`canonicalize_surface_forms`]'s previous behavior
+    /// (stored embedding left stale after a merge).
     pub embedder: Option<&'a dyn DynEmbeddingProvider>,
 }
 
-/// [`canonicalize_surface_forms`] extended with an embedder handle (TD-112,
-/// `.ai-docs/tech-debt/tech-debt-register.md:2547`) so L5's own pairwise-cosine
-/// merges re-embed the keeper instead of leaving its stored embedding stale.
+/// [`canonicalize_surface_forms`] extended with an embedder handle so L5's
+/// own pairwise-cosine merges re-embed the keeper instead of leaving its
+/// stored embedding stale.
 /// Additive — the bare 3-arg [`canonicalize_surface_forms`] is this entry
 /// point's `embedder: None` degradation (same "extended with an optional
 /// param" shape as [`apply_merge_with_audit`]); all pre-existing call sites
@@ -198,8 +197,8 @@ pub async fn canonicalize_surface_forms_with_embedder(
     let raw_pairs = find_merge_pairs(graph, &slots, threshold).await?;
     let pairs_examined = (slots.len() * (slots.len().saturating_sub(1))) / 2;
 
-    // ADR-057: the L5 batch merge is the MORE dangerous destructive-merge site —
-    // its 0.80 threshold sits below the ~0.90 anisotropic-cosine floor of bare-name
+    // The L5 batch merge is the MORE dangerous destructive-merge site — its
+    // 0.80 threshold sits below the ~0.90 anisotropic-cosine floor of bare-name
     // embeddings, so a weak consumer embedder would merge nearly every entity in a
     // group (`tests/spike_td080_embedder_cosine.rs`). Apply the SAME deterministic
     // name-compatibility gate as L4: a cosine-high pair whose names are lexically
@@ -352,7 +351,7 @@ pub async fn canonicalize_surface_forms_with_embedder(
     }
 
     let merges_applied = match adjudicator {
-        // ── Adjudicated path (ADR-063) ────────────────────────────────────────
+        // ── Adjudicated path ───────────────────────────────────────────────────
         Some(adjudicator) => {
             apply_adjudicated_merges(
                 graph,
@@ -424,7 +423,7 @@ pub async fn canonicalize_surface_forms_with_embedder(
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
-/// Bundled params for [`apply_adjudicated_merges`] — args-as-object per TD-042
+/// Bundled params for [`apply_adjudicated_merges`] — args-as-object
 /// (`clippy.toml` `too-many-arguments-threshold = 3`). `graph` stays a lead
 /// positional param (receiver-like dep, project convention).
 struct AdjudicatedMergesParams<'a> {
@@ -442,10 +441,10 @@ struct AdjudicatedMergesParams<'a> {
 /// [`crate::core::identity_verdict::write_gate`] authorizes. Returns the number
 /// of merges actually applied.
 ///
-/// Decision handling (ADR-063 spec §2.2, §5.1):
+/// Decision handling:
 /// - `Merge` — destructive remap, with its `identity_verdict_audit` row written
-///   INSIDE the same `BEGIN IMMEDIATE` (RISK-003: the audit row and the remap are
-///   one logical event, so a rollback must undo both).
+///   INSIDE the same `BEGIN IMMEDIATE` — the audit row and the remap are
+///   one logical event, so a rollback must undo both.
 /// - `PotentialAlias` — audit row ONLY. Deliberately no `potential_alias` fact:
 ///   Site #5's alias facts are inert at L7 because its pairs share zero tokens by
 ///   construction, but L5's pairs are token-Jaccard ≥ 0.5 BY CONSTRUCTION, so they
@@ -554,7 +553,8 @@ async fn apply_adjudicated_merges(
                         site: MergeSite::Canonicalize,
                         // L5 has no STRUCTURAL corroboration signal — its
                         // deterministic signal is lexical. Unchanged from the
-                        // pre-adjudication path on purpose (Quinn L3 honesty).
+                        // pre-adjudication path on purpose: this is an honest
+                        // `false`, not a stub value.
                         structural_signal: false,
                         embedder,
                     },
@@ -697,7 +697,7 @@ async fn find_merge_pairs(
 ///
 /// Thin wrapper over [`apply_merge_with_audit`] with `audit = None` — L5's own
 /// pairwise cosine merges are not LLM-adjudicated, so no `identity_verdict_audit`
-/// row is written for them (ADR-063 spec §5.2: "audit only LLM-touched decisions").
+/// row is written for them — audit rows are written only for LLM-touched decisions.
 async fn apply_merge(graph: &TemporalGraph, params: ApplyMergeParams<'_>) -> Result<()> {
     let ApplyMergeParams {
         loser_id,
@@ -713,7 +713,7 @@ async fn apply_merge(graph: &TemporalGraph, params: ApplyMergeParams<'_>) -> Res
             group_id,
             site: MergeSite::Canonicalize,
             // L5 surface-form merges are pairwise-cosine + lexical-variant gated,
-            // NOT structural-corroboration driven (spec §2.3, Quinn L3).
+            // NOT structural-corroboration driven.
             structural_signal: false,
             embedder,
         },
@@ -721,33 +721,32 @@ async fn apply_merge(graph: &TemporalGraph, params: ApplyMergeParams<'_>) -> Res
     .await
 }
 
-/// Bundled parameters for [`apply_merge`] — args-as-object per TD-042
+/// Bundled parameters for [`apply_merge`] — args-as-object
 /// (`clippy.toml` `too-many-arguments-threshold = 3`). `graph` stays a lead
 /// positional param (receiver-like dep, project convention).
 struct ApplyMergeParams<'a> {
     loser_id: &'a str,
     keeper_id: &'a str,
-    /// ADR-029d: the namespace this merge is scoped to (L5's own group_id,
+    /// The namespace this merge is scoped to (L5's own group_id,
     /// already in scope at the call site). See [`EntityMergeParams::group_id`].
     group_id: &'a str,
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
-    /// the keeper's name embedding is recomputed + persisted post-commit so it
-    /// reflects the merged identity instead of going stale. `None` preserves
-    /// pre-TD-112 behavior (no re-embed).
+    /// When `Some`, the keeper's name embedding is recomputed + persisted
+    /// post-commit so it reflects the merged identity instead of going stale.
+    /// `None` preserves the default behavior (no re-embed).
     embedder: Option<&'a dyn DynEmbeddingProvider>,
 }
 
-/// The shared structural entity-merge executor (ADR-066 spec DoD-P0.3).
+/// The shared structural entity-merge executor.
 ///
 /// Remaps all edges `loser_id → keeper_id` (`facts.subject_id`/`object_id`,
 /// `episodic_edges.entity_id`), accumulates the loser's **`Entity.access_count`**
-/// into the keeper (DENT-001 — the LIVE search-tracking field `schema.rs:106`, NOT
+/// into the keeper (the LIVE search-tracking field `schema.rs:106`, NOT
 /// the deprecated `facts.access_count`; retained verbatim, test T9 asserts it),
 /// combines `ner_confidence` via noisy-OR, then deletes the loser from
 /// `entities_fts` + `entities`. All inside one `BEGIN IMMEDIATE`.
 ///
 /// Extracted so BOTH `canonicalize_surface_forms` (L5 reconciliation) AND the
-/// dream CONSOLIDATION `cross_episode_merges` op (ADR-066 §2.2 / spec P3) call ONE
+/// dream CONSOLIDATION `cross_episode_merges` op call ONE
 /// merge code path — no second, drift-prone executor (R-02). This is the
 /// `audit = None` (no `identity_verdict_audit` row) surface — the pairwise-cosine /
 /// structural-corroboration merges these two callers perform are not LLM-adjudicated.
@@ -778,14 +777,14 @@ pub(crate) async fn apply_entity_merge(
     .await
 }
 
-/// Bundled parameters for [`apply_entity_merge`] — args-as-object per TD-042
+/// Bundled parameters for [`apply_entity_merge`] — args-as-object
 /// (`clippy.toml` `too-many-arguments-threshold = 3`; `#[allow]` banned in src).
 /// Threads the merge `site` (reversible-graph-mutations spec §2.3) through the
 /// shared structural-merge entry without exceeding the arg-count bar.
 pub(crate) struct EntityMergeParams<'a> {
     pub(crate) loser_id: &'a str,
     pub(crate) keeper_id: &'a str,
-    /// ADR-029d: entity identity is per-namespace-open — the same `id` can now
+    /// Entity identity is per-namespace-open — the same `id` can now
     /// legitimately exist in TWO namespaces. Every read/write this executor
     /// performs MUST be scoped by this `group_id` (the namespace the caller is
     /// operating in), never a bare `id`-only predicate, or a merge in namespace
@@ -796,25 +795,24 @@ pub(crate) struct EntityMergeParams<'a> {
     /// Whether a deterministic STRUCTURAL corroboration signal drove this merge
     /// (reversible-graph-mutations spec §2.3 — recorded into
     /// `graph_mutation_log.inputs.structural_signal`, the SEE-surface honesty
-    /// the inspect view reports, Quinn L3). `true` for cross-episode structural
+    /// the inspect view reports). `true` for cross-episode structural
     /// merges (the corroboration gate); `false` for L5's pairwise-cosine surface
     /// merges (no structural signal). Threaded from the call-site rather than
     /// derived from `audit` (which is `None` on both non-LLM sites).
     pub(crate) structural_signal: bool,
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
-    /// the keeper's name embedding is recomputed from its canonical id and
-    /// persisted post-commit, so the surviving entity's stored embedding
-    /// reflects its post-merge identity instead of going stale. `None`
-    /// preserves pre-TD-112 behavior (embedding left untouched) — the shape
-    /// callers without embedder access (e.g. Site #5's embedder-independent
-    /// design) use today.
+    /// When `Some`, the keeper's name embedding is recomputed from its
+    /// canonical id and persisted post-commit, so the surviving entity's
+    /// stored embedding reflects its post-merge identity instead of going
+    /// stale. `None` preserves the default behavior (embedding left
+    /// untouched) — the shape callers without embedder access (e.g. Site #5's
+    /// embedder-independent design) use today.
     pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
 }
 
 /// One `identity_verdict_audit` row to write INSIDE the same `BEGIN IMMEDIATE`
-/// transaction as a destructive merge (ADR-063 spec §5.1 RISK-003 — "the audit
-/// row and the destructive remap are the same logical event; a rollback undoes
-/// the audit row along with the remap, which is correct"). Shared by Site #5
+/// transaction as a destructive merge — the audit row and the destructive
+/// remap are the same logical event, so a rollback undoes the audit row along
+/// with the remap, which is correct. Shared by Site #5
 /// (`core::dream::acronym_nickname_recall`) and any future LLM-adjudicated
 /// caller of [`apply_merge_with_audit`].
 pub(crate) struct IdentityVerdictAuditRow<'a> {
@@ -837,13 +835,13 @@ pub(crate) struct IdentityVerdictAuditRow<'a> {
     pub(crate) run_id: &'a str,
 }
 
-/// Bundled parameters for [`apply_merge_with_audit`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments, threshold 3). `graph` stays
+/// Bundled parameters for [`apply_merge_with_audit`] — args-as-object
+/// (rust-conventions §too_many_arguments, threshold 3). `graph` stays
 /// a lead positional param (receiver-like dep, project convention).
 pub(crate) struct ApplyMergeWithAuditParams<'a> {
     pub(crate) loser_id: &'a str,
     pub(crate) keeper_id: &'a str,
-    /// ADR-029d: the namespace this merge is scoped to. See
+    /// The namespace this merge is scoped to. See
     /// [`EntityMergeParams::group_id`] doc for the full rationale — every
     /// read/write below MUST filter on this value, never a bare `id`.
     pub(crate) group_id: &'a str,
@@ -853,12 +851,12 @@ pub(crate) struct ApplyMergeWithAuditParams<'a> {
     /// spec §2.3), the provenance the nogood + undo consume in later sub-phases.
     pub(crate) site: MergeSite,
     /// Whether a deterministic STRUCTURAL corroboration signal drove this merge
-    /// — recorded into `inputs.structural_signal` (spec §2.3, Quinn L3). `true`
+    /// — recorded into `inputs.structural_signal` (spec §2.3). `true`
     /// for the cross-episode structural gate and Site #5's structural pre-filter;
     /// `false` for L5 pairwise cosine. Threaded from the call-site (not derived
     /// from `audit`, which is `None` on the non-LLM sites).
     pub(crate) structural_signal: bool,
-    /// TD-112: when `Some`, the keeper's name embedding is recomputed +
+    /// When `Some`, the keeper's name embedding is recomputed +
     /// persisted (best-effort, post-commit) so it reflects the merged
     /// identity. See [`EntityMergeParams::embedder`] doc for the full rationale.
     pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
@@ -884,13 +882,13 @@ pub(crate) struct ApplyMergeWithAuditParams<'a> {
 /// **Never fails the merge.** A detector that can abort a write it does not
 /// understand is worse than no detector; every error path returns `None` after
 /// warning, so a schema drift or a malformed row degrades to "not detected"
-/// LOUDLY rather than to a spurious rollback. Scoped by `group_id` per ADR-029d —
+/// LOUDLY rather than to a spurious rollback. Scoped by `group_id` —
 /// under per-namespace-open the same `id` legitimately exists in two namespaces
 /// and an unscoped read would manufacture cross-namespace chains that do not exist.
 ///
 /// Takes the pair as a tuple rather than two params: `clippy.toml` sets
 /// `too-many-arguments-threshold = 3` and `#[allow]` is banned in `src`
-/// (TD-042 / rust-conventions).
+/// (rust-conventions).
 async fn detect_merge_chain_extension(
     graph: &TemporalGraph,
     group_id: &str,
@@ -898,7 +896,7 @@ async fn detect_merge_chain_extension(
 ) -> Option<(String, &'static str)> {
     let (loser_id, keeper_id) = pair;
 
-    // RED-proven in both directions 2026-08-19, levers removed after:
+    // RED-proven in both directions, levers removed after:
     //   - forced `return None`      -> both `chain_detector_fires_*` FAIL (it can see)
     //   - `group_id` filter dropped -> `chain_detector_is_namespace_scoped` FAILS
     //     (the scoping is load-bearing, not decorative)
@@ -974,7 +972,7 @@ async fn detect_merge_chain_extension(
 }
 
 /// [`apply_merge`] extended with an OPTIONAL `identity_verdict_audit` INSERT
-/// (ADR-063 spec §3.3/§5.1) inside the SAME `BEGIN IMMEDIATE` transaction as
+/// inside the SAME `BEGIN IMMEDIATE` transaction as
 /// the destructive remap. `audit = None` preserves `apply_merge`'s exact
 /// prior behavior (existing L5 callers); `audit = Some(..)` is the new Site #5
 /// path. This is the "extended `apply_merge` with an optional audit param"
@@ -998,10 +996,10 @@ pub(crate) async fn apply_merge_with_audit(
     // (spec §8.1: the snapshot counter fires only after the durable commit).
     let committed_here = guard.opened();
 
-    // Collect loser's access_count + ner_confidence before deletion. Site #6
-    // (ADR-063): the loser's confidence is combined into the keeper via noisy-OR,
+    // Collect loser's access_count + ner_confidence before deletion. Site #6:
+    // the loser's confidence is combined into the keeper via noisy-OR,
     // not discarded (SYNTHESIS §2 — merging the same entity must never lower it).
-    // ADR-029d: scoped by `group_id` — under per-namespace-open the same `id`
+    // Scoped by `group_id` — under per-namespace-open the same `id`
     // can exist in a DIFFERENT namespace; an unscoped read here could pick up
     // the wrong namespace's row.
     let mut rows = graph
@@ -1023,7 +1021,7 @@ pub(crate) async fn apply_merge_with_audit(
         Err(_) => (0, None),
     };
 
-    // ─── TD-223 write-time merge-chain DETECTOR (2026-08-19) ────────────────
+    // ─── Write-time merge-chain DETECTOR ────────────────
     //
     // Runs BEFORE `snapshot_merge_pre_state` so the log holds only PRIOR merges
     // — this merge's own row does not exist yet and cannot self-trigger.
@@ -1051,8 +1049,7 @@ pub(crate) async fn apply_merge_with_audit(
     // and is unrecoverable here. Refusing chains at this layer would therefore
     // block correct work while not being the check that catches the real defect.
     // That refusal belongs where the retarget happens, and it is already there
-    // (`dream/acronym_nickname_recall.rs:575` merge arm, and the alias arm as of
-    // 2026-08-19).
+    // (`dream/acronym_nickname_recall.rs:575` merge arm, and the alias arm).
     //
     // What this DOES close is the blind spot neither of those can see: Site #5's
     // `merged_into` map is per-INVOCATION, so a chain formed across two dream
@@ -1100,7 +1097,7 @@ pub(crate) async fn apply_merge_with_audit(
     // its facts' prior `corroboration_inert`, the keeper's pre-overwrite values,
     // and the episodic-edge collision flags only exist until the UPDATEs below
     // run (spec §2.3 / §2.4 DERIVATION deps).
-    // TD-203 D1 — `doomed_self_loops` is the set of facts this merge will
+    // `doomed_self_loops` is the set of facts this merge will
     // collapse to `keeper -> keeper`; expired after the endpoint re-points land.
     let (snapshot_group_id, doomed_self_loops) = match snapshot_merge_pre_state(
         graph,
@@ -1122,14 +1119,14 @@ pub(crate) async fn apply_merge_with_audit(
         }
     };
 
-    // Remap facts.subject_id — ADR-067 §C0 (V1): also stamp `corroboration_inert = 1`
+    // Remap facts.subject_id — also stamp `corroboration_inert = 1`
     // on every rewritten row. The endpoint remap makes the keeper INHERIT the
     // loser's fact-neighbours; without this stamp `cross_episode`'s corroboration
     // reads (`neighbours_of`/`assertions_of`, which filter `corroboration_inert = 0`)
     // would treat the inherited structure as directly-asserted on the NEXT pass,
     // re-opening a deferred bridge partner's eligibility (the V1 convergence bug).
     // The flag is monotone (set here, never cleared) — see impl-spec §6 fixpoint proof.
-    // ADR-029d: scoped by `subject_group_id` — the composite FK is
+    // Scoped by `subject_group_id` — the composite FK is
     // `(subject_id, subject_group_id) → entities(id, group_id)`; an unscoped
     // `WHERE subject_id = loser_id` remaps EVERY namespace's facts pointing at
     // that id, including a same-id row this merge has no business touching
@@ -1147,7 +1144,7 @@ pub(crate) async fn apply_merge_with_audit(
     // arms of `neighbours_of` (and `assertions_of`) filter `corroboration_inert = 0`,
     // so a neighbour reached via the loser's OBJECT-position fact must be equally
     // inerted (impl-spec §C0 DoD: "BOTH arms of neighbours_of's UNION").
-    // ADR-029d: scoped by `object_group_id` — same rationale as the subject-side
+    // Scoped by `object_group_id` — same rationale as the subject-side
     // remap above (`(object_id, object_group_id) → entities(id, group_id)` FK).
     let r2 = if r1.is_ok() {
         graph
@@ -1169,7 +1166,7 @@ pub(crate) async fn apply_merge_with_audit(
     // owns that presence edge — the loser's is the same presence fact about the
     // now-merged entity), then `DELETE` removes the now-orphaned loser rows so no
     // dangling entity_id survives the merge.
-    // ADR-029d: both statements scoped by `entity_group_id` — an unscoped
+    // Both statements scoped by `entity_group_id` — an unscoped
     // `WHERE entity_id = loser_id` would remap/delete another namespace's
     // presence edges for the same id (the same cross-namespace corruption
     // class as the facts remap above).
@@ -1197,7 +1194,7 @@ pub(crate) async fn apply_merge_with_audit(
             r2
         };
 
-    // TD-203 D1 — expire the facts the re-points above just collapsed onto the
+    // Expire the facts the re-points above just collapsed onto the
     // keeper on BOTH endpoints. `A pred B` is meaningful only while A and B are
     // distinct entities; once merged it reads `A pred A` and asserts nothing.
     //
@@ -1211,7 +1208,7 @@ pub(crate) async fn apply_merge_with_audit(
     // tombstone, and `pre_state.self_loops_expired` carries these ids so
     // `unmerge` (reversal.rs step (d2)) clears the stamp after un-pointing the
     // endpoints — at which point the fact is meaningful again. A hard DELETE
-    // would make the merge irreversible in violation of ADR-073.
+    // would make the merge irreversible.
     //
     // Placed AFTER r2 (the endpoint re-points) because the ids were predicted
     // pre-merge; running it earlier would expire facts that are still live and
@@ -1253,7 +1250,7 @@ pub(crate) async fn apply_merge_with_audit(
         r3
     };
 
-    // Accumulate access_count into keeper. ADR-029d: scoped by `group_id` — the
+    // Accumulate access_count into keeper. Scoped by `group_id` — the
     // keeper lives in THIS namespace (it's the survivor of a merge this caller
     // scoped to `group_id`); an unscoped write would hit whichever namespace's
     // row libSQL matches first if the same id also exists elsewhere.
@@ -1269,13 +1266,13 @@ pub(crate) async fn apply_merge_with_audit(
         r3b
     };
 
-    // Site #6 (ADR-063 §"six sites" #6 / SYNTHESIS §2): combine the loser's
+    // Site #6: combine the loser's
     // ner_confidence into the keeper via noisy-OR (a + b − a·b), null-safe — merging
     // the same real-world entity must never LOWER its confidence. This is the
     // deterministic merged-confidence FORMULA half; the reject-FLOOR gate is deferred
     // (S4-blocked — the floor value + null-prevalence are both unmeasured, R4 open
     // item; building it now would hardcode a guessed floor).
-    // ADR-029d: both the keeper read and the keeper write are scoped by
+    // Both the keeper read and the keeper write are scoped by
     // `group_id` — same rationale as the access_count accumulate above.
     let r4b =
         if r4.is_ok() {
@@ -1311,12 +1308,12 @@ pub(crate) async fn apply_merge_with_audit(
         };
 
     // Delete loser FTS entry.
-    // TODO(ADR-029d): entities_fts is NOT group-aware (FTS5 virtual table has no
+    // TODO: entities_fts is NOT group-aware (FTS5 virtual table has no
     // group_id column) — under per-namespace-open, two same-id entities in
     // different namespaces share one ambiguous FTS row. This delete is
     // unavoidably unscoped; it is a coarseness in cross-namespace full-text
     // search, NOT the FK-corruption bug (facts/episodic_edges are the FK'd
-    // surfaces and ARE scoped above). See TD-130.
+    // surfaces and ARE scoped above).
     let r5 = if r4b.is_ok() {
         graph
             .conn
@@ -1329,7 +1326,7 @@ pub(crate) async fn apply_merge_with_audit(
         r4b
     };
 
-    // Delete loser entity row. ADR-029d: scoped by `group_id` — without this,
+    // Delete loser entity row. Scoped by `group_id` — without this,
     // deleting `WHERE id = loser_id` alone would delete the loser row in EVERY
     // namespace it exists in, not just this merge's namespace (composite PK is
     // `(id, group_id)`).
@@ -1345,7 +1342,7 @@ pub(crate) async fn apply_merge_with_audit(
         r5
     };
 
-    // Optional identity_verdict_audit INSERT — spec §5.1 RISK-003: runs INSIDE
+    // Optional identity_verdict_audit INSERT — spec §5.1: runs INSIDE
     // this same BEGIN IMMEDIATE transaction, not as a separate best-effort
     // write. `r7` folds into the same all-must-succeed chain as r1-r6 so a
     // failed audit insert rolls back the merge too (same commit/rollback
@@ -1394,8 +1391,7 @@ pub(crate) async fn apply_merge_with_audit(
                 // Spec §8.2 canonical mutation-log counter (renamed from the
                 // sub-phase-1b `kremory.dream.provenance.snapshot_total`). Label set
                 // is `{kind, source}` ONLY — `group_id` is UNBOUNDED cardinality and
-                // MUST NOT be a metric label (ADR-071 Item 5 discipline; spec §8.2
-                // reconciled). It is carried as a `tracing::` event FIELD instead, so
+                // MUST NOT be a metric label. It is carried as a `tracing::` event FIELD instead, so
                 // per-namespace attribution stays observable without exploding the
                 // metric's label dimension.
                 counter!(
@@ -1411,7 +1407,7 @@ pub(crate) async fn apply_merge_with_audit(
                     source = "entity_merge_executor",
                     "kremory.graph.mutation_logged: reversible-mutation provenance row committed"
                 );
-                // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): recompute
+                // Recompute
                 // + persist the keeper's name embedding AFTER the durable commit —
                 // the merge itself already succeeded, so a re-embed failure here is
                 // best-effort (never rolls back a durable merge) and must not hold
@@ -1421,20 +1417,19 @@ pub(crate) async fn apply_merge_with_audit(
                 // re-persisted a recomputed embedding — `discover_types.rs:735` only
                 // recomputes for a similarity comparison, never persists).
                 if let Some(emb) = embedder {
-                    // TD-143 KNOWN GAP (documented, not silent): this re-embed writes
+                    // KNOWN GAP (documented, not silent): this re-embed writes
                     // into `entities.embedding` — the same index ingest-time writes
                     // document-prefix when `embed_task_prefix_enabled` is on — but this
                     // call site does NOT thread that knob (would require adding it to
                     // `EntityMergeParams`/`ApplyMergeWithAuditParams` and both callers,
                     // `canonicalize_surface_forms` L5 and
                     // `core::dream::consolidation::cross_episode`). Left unprefixed:
-                    // out of scope for TD-143 (best-effort, dream-phase-only, tracked
-                    // separately as TD-112) — but means a keeper re-embedded via THIS
-                    // path after the knob is flipped on stays in the unprefixed task
-                    // space until the next full re-ingest/backfill. Revisit if/when the
-                    // knob defaults on.
+                    // this path is best-effort and dream-phase-only — but means a
+                    // keeper re-embedded via THIS path after the knob is flipped on
+                    // stays in the unprefixed task space until the next full
+                    // re-ingest/backfill. Revisit if/when the knob defaults on.
                     //
-                    // Attribute the re-embed outcome per merge site (Quinn L3) so
+                    // Attribute the re-embed outcome per merge site so
                     // once multiple sites thread the embedder, their re-embed
                     // success/failure rates stay distinguishable. `site` is a
                     // BOUNDED enum tag (3 variants) — safe as a metric label.
@@ -1511,12 +1506,12 @@ pub(crate) async fn apply_merge_with_audit(
 /// A missing loser or keeper entity is a hard `Error` (parse-loudly, spec §2.1):
 /// a merge whose endpoints we cannot snapshot could not be reversed, so we fail
 /// loudly rather than persist an un-undoable log row.
-/// Bundled parameters for [`snapshot_merge_pre_state`] — args-as-object per
-/// TD-042 (`clippy.toml` `too-many-arguments-threshold = 3`).
+/// Bundled parameters for [`snapshot_merge_pre_state`] — args-as-object
+/// (`clippy.toml` `too-many-arguments-threshold = 3`).
 struct MergeSnapshotParams<'a> {
     loser_id: &'a str,
     keeper_id: &'a str,
-    /// ADR-029d: the namespace this merge is scoped to. See
+    /// The namespace this merge is scoped to. See
     /// [`EntityMergeParams::group_id`] doc — every read below MUST filter on
     /// this value so the captured pre-state matches EXACTLY what the caller's
     /// scoped merge statements go on to touch (an unscoped snapshot read would
@@ -1526,15 +1521,15 @@ struct MergeSnapshotParams<'a> {
     site: MergeSite,
     audit: Option<&'a IdentityVerdictAuditRow<'a>>,
     /// The authoritative structural-corroboration bool for `inputs.structural_signal`
-    /// (spec §2.3, Quinn L3) — threaded from the call-site, NOT derived from
+    /// (spec §2.3) — threaded from the call-site, NOT derived from
     /// `audit` (which is `None` on the non-LLM structural sites).
     structural_signal: bool,
 }
 
-/// TD-203 D1 — the facts a merge of `loser` into `keeper` would collapse into a
+/// The facts a merge of `loser` into `keeper` would collapse into a
 /// self-loop (`X pred X`), which asserts nothing.
 ///
-/// Three shapes qualify, all scoped to the merge's namespace (ADR-029d) and all
+/// Three shapes qualify, all scoped to the merge's namespace and all
 /// still live: `loser -> keeper`, `keeper -> loser`, and an already
 /// self-referential `loser -> loser`. After the endpoint re-points at
 /// `apply_merge_with_audit` every one of them reads `keeper -> keeper`.
@@ -1553,7 +1548,7 @@ const SELF_LOOP_FACT_IDS_SQL: &str = "SELECT id FROM facts \
          OR (subject_id = ?2 AND object_id = ?1) \
          OR (subject_id = ?1 AND object_id = ?1))";
 
-/// Bundled parameters for [`self_loop_fact_ids`] — args-as-object per TD-042
+/// Bundled parameters for [`self_loop_fact_ids`] — args-as-object
 /// (workspace clippy `too_many_arguments` threshold is 3, and
 /// `#[allow(clippy::*)]` is banned in `src/`). `graph` stays a lead positional
 /// param (receiver-like dep, project convention).
@@ -1563,7 +1558,7 @@ struct SelfLoopScanParams<'a> {
     loser_id: &'a str,
     /// The surviving entity both endpoints will point at.
     keeper_id: &'a str,
-    /// ADR-029d — the namespace this merge is scoped to.
+    /// The namespace this merge is scoped to.
     group_id: &'a str,
 }
 
@@ -1591,7 +1586,7 @@ async fn self_loop_fact_ids(
     Ok(ids)
 }
 
-/// Returns the snapshot's `group_id` and — TD-203 D1 — the fact ids this merge
+/// Returns the snapshot's `group_id` and the fact ids this merge
 /// must expire because re-pointing collapses both their endpoints onto the
 /// keeper. The ids are returned rather than re-derived by the caller so the
 /// value written into `pre_state.self_loops_expired` and the value the caller
@@ -1609,7 +1604,7 @@ async fn snapshot_merge_pre_state(
         structural_signal,
     } = params;
     // (1) loser entity row — all 11 live columns (spec §2.3(1); no `label`,
-    //     dropped Mig 009). ADR-029d: scoped by `group_id` so the snapshot
+    //     dropped Mig 009). Scoped by `group_id` so the snapshot
     //     matches the caller's scoped loser DELETE (`WHERE id = loser AND
     //     group_id = ?`) exactly — an unscoped SELECT could capture a
     //     DIFFERENT namespace's same-id row under per-namespace-open.
@@ -1656,7 +1651,7 @@ async fn snapshot_merge_pre_state(
     // (2) keeper's PRE-merge access_count + ner_confidence (spec §2.3(2)) —
     //     captured BEFORE the merge's accumulate + noisy-OR overwrite (both
     //     non-invertible), so undo restores these exact values, not a subtraction.
-    //     ADR-029d: scoped by `group_id` — the keeper lives in this namespace.
+    //     Scoped by `group_id` — the keeper lives in this namespace.
     let keeper_pre = {
         let mut rows = graph
             .conn
@@ -1681,8 +1676,8 @@ async fn snapshot_merge_pre_state(
     // (3) facts re-pointed loser→keeper (spec §2.3(3)). The merge stamps each
     //     `corroboration_inert = 1`; capture the PRIOR flag per (fact_id,
     //     endpoint) so undo restores it — a fact already inert from an EARLIER
-    //     merge must NOT be cleared (the monotone-undo trap, §12 CH-3). ADR-029d:
-    //     both SELECT predicates now filter on `subject_group_id`/`object_group_id`
+    //     merge must NOT be cleared (the monotone-undo trap, §12 CH-3).
+    //     Both SELECT predicates now filter on `subject_group_id`/`object_group_id`
     //     to match the merge's scoped endpoint UPDATEs exactly (subject then
     //     object). A self-referential fact (loser on BOTH endpoints) is captured
     //     twice, once per endpoint — correct, undo reverts both.
@@ -1730,8 +1725,8 @@ async fn snapshot_merge_pre_state(
     //     `UPDATE OR IGNORE` drops a colliding loser edge (undo re-INSERTs it
     //     under the loser) and re-points a non-colliding one (undo re-points it
     //     back) — §4.2 step 4. Cursors never overlap: the loser edges are drained
-    //     into a Vec before the per-edge collision sub-queries run. ADR-029d:
-    //     scoped by `entity_group_id` to match the merge's scoped
+    //     into a Vec before the per-edge collision sub-queries run.
+    //     Scoped by `entity_group_id` to match the merge's scoped
     //     `UPDATE OR IGNORE episodic_edges ... AND entity_group_id = ?` exactly.
     let loser_edges: Vec<(i64, String, String, String, String)> = {
         let mut rows = graph
@@ -1780,7 +1775,7 @@ async fn snapshot_merge_pre_state(
         });
     }
 
-    // (5) TD-203 D1 — facts this merge will collapse to `keeper -> keeper`.
+    // (5) Facts this merge will collapse to `keeper -> keeper`.
     //     Captured here, inside the same txn and BEFORE the destructive
     //     re-points, for the same reason as (1)-(4): the mutation-log row is
     //     written before the writes, so the pre-state must PREDICT the affected
@@ -1807,7 +1802,7 @@ async fn snapshot_merge_pre_state(
     // a keeper/loser role-flip between passes cannot evade the anti-re-merge ban.
     // `cosine` comes from the `audit` row when present (Site #5 passes it; the
     // structural/cosine sites pass `audit = None`). `structural_signal` is the
-    // AUTHORITATIVE bool threaded from the call-site (Quinn L3) — it is accurate
+    // AUTHORITATIVE bool threaded from the call-site — it is accurate
     // even on the `audit = None` cross-episode path, so the inspect SEE-surface
     // reports the merge's real provenance.
     let (pair_lo, pair_hi) = if loser_id <= keeper_id {
@@ -1879,7 +1874,7 @@ mod tests {
 
     /// Insert an entity with a given embedding and description into `group_id`.
     // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
+    // documented too_many_arguments allow); args-as-object targets `src/`
     // production fns, not `#[cfg(test)]` seeders.
     #[allow(clippy::too_many_arguments)]
     async fn insert_entity_with_embedding(
@@ -1921,7 +1916,7 @@ mod tests {
         v
     }
 
-    /// TD-112 test helper: cosine distance between an entity's PERSISTED
+    /// Test helper: cosine distance between an entity's PERSISTED
     /// embedding and an ad-hoc probe vector, via the same `vector_distance_cos`
     /// SQL function `find_merge_pairs` uses in production. Reading back through
     /// SQL (rather than raw bytes) sidesteps endianness/precision concerns —
@@ -1960,10 +1955,10 @@ mod tests {
             .map(|d| d as f32)
     }
 
-    // ── TD-223 write-time merge-chain detector ────────────────────────────────
+    // ── Write-time merge-chain detector ────────────────────────────────────────
     //
-    // Proven in BOTH directions, per the discipline that killed the two previous
-    // TD-222 remedies: a guard tested only on the cases it should catch is
+    // Proven in BOTH directions, per the discipline that killed two previous
+    // flawed remedies: a guard tested only on the cases it should catch is
     // untested. `chain_detector_silent_on_independent_merges` and
     // `chain_detector_is_namespace_scoped` are the over-block half — revert the
     // detector to an unscoped or unconditional form and they fail.
@@ -2057,7 +2052,7 @@ mod tests {
 
         merge(&graph, "ns_one", ("a", "b")).await;
 
-        // ADR-029d: the same `id` legitimately exists in two namespaces. An
+        // The same `id` legitimately exists in two namespaces. An
         // unscoped read would see ns_one's `b -> keeper` row and manufacture a
         // chain in ns_two that does not exist — a false positive that grows with
         // every namespace, which is exactly how an unscoped alias query
@@ -2180,7 +2175,7 @@ mod tests {
         assert_eq!(report.pairs_examined, 10); // C(5,2) = 10
     }
 
-    // ── T3b: noisy-OR ner_confidence combination on merge (ADR-063 Site #6) ────
+    // ── T3b: noisy-OR ner_confidence combination on merge (Site #6) ────
 
     #[tokio::test]
     async fn merge_combines_ner_confidence_via_noisy_or() {
@@ -2250,7 +2245,7 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
         // Two very similar embeddings: both unit vectors → cosine ≈ 1.0 (above 0.8).
-        // ADR-057: entity ids are SURFACE VARIANTS of the same name (Jaccard ≥ 0.5),
+        // Entity ids are SURFACE VARIANTS of the same name (Jaccard ≥ 0.5),
         // so the lexical merge gate permits the merge (this is what L5 is FOR — merging
         // variants of one entity, never unrelated names). "alice j" → "alice johnson".
         // e_short has the shorter description → it should become the loser.
@@ -2285,7 +2280,7 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
         // All three entities have the same unit vector → pairwise cosine = 1.0 (>0.8).
-        // ADR-057: surface variants of one name (shared {alice, johnson} significant
+        // Surface variants of one name (shared {alice, johnson} significant
         // tokens → Jaccard ≥ 0.5 pairwise) so the lexical gate permits all merges.
         // Longest description → "alice johnson engineer" is the keeper.
         insert_entity_with_embedding(&graph, "alice johnson", "g_tri", "Alice.", &unit_vec(384))
@@ -2325,7 +2320,7 @@ mod tests {
     #[tokio::test]
     async fn t6_idempotent_second_run_zero_merges() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
-        // ADR-057: surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
+        // Surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
         insert_entity_with_embedding(&graph, "sam carter", "g_idem", "Short.", &unit_vec(384))
             .await;
         insert_entity_with_embedding(
@@ -2354,7 +2349,7 @@ mod tests {
     async fn t7_threshold_boundary_strict_greater_than() {
         // Use a threshold of 0.99 and unit vectors (similarity ≈ 1.0) → should merge.
         let graph = TemporalGraph::open_in_memory().await.expect("open");
-        // ADR-057: surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
+        // Surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
         insert_entity_with_embedding(&graph, "omega corp", "g_bound", "Alpha.", &unit_vec(384))
             .await;
         insert_entity_with_embedding(
@@ -2397,7 +2392,7 @@ mod tests {
     async fn t8_cross_group_isolation() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
-        // group_a: two surface variants (Jaccard 2/3 ≥ 0.5) → merge within a (ADR-057).
+        // group_a: two surface variants (Jaccard 2/3 ≥ 0.5) → merge within a.
         insert_entity_with_embedding(&graph, "nova labs", "group_a", "Short.", &unit_vec(384))
             .await;
         insert_entity_with_embedding(
@@ -2441,7 +2436,7 @@ mod tests {
     async fn t9_access_count_accumulated_on_keeper() {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
 
-        // ADR-057: surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
+        // Surface variants (Jaccard 2/3 ≥ 0.5) so the lexical gate permits merge.
         insert_entity_with_embedding(&graph, "zeta group", "g_ac", "Short.", &unit_vec(384)).await;
         insert_entity_with_embedding(
             &graph,
@@ -2479,7 +2474,7 @@ mod tests {
         );
     }
 
-    // ── ADR-067 §C0: apply_entity_merge stamps corroboration_inert on remapped facts ──
+    // ── apply_entity_merge stamps corroboration_inert on remapped facts ──
 
     /// Insert a bare entity (no embedding needed — these tests exercise the merge
     /// executor directly via `apply_entity_merge`, not the cosine-gated
@@ -2658,9 +2653,9 @@ mod tests {
         );
     }
 
-    // ── TD-112: keeper re-embed on merge ──────────────────────────────────────
+    // ── keeper re-embed on merge ──────────────────────────────────────
 
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): a merge that
+    /// A merge that
     /// carries an embedder must recompute + persist the KEEPER's embedding from
     /// its canonical id, replacing whatever stale value it held before the
     /// merge. Before the fix, `apply_merge_with_audit` never touched
@@ -2714,7 +2709,7 @@ mod tests {
         );
     }
 
-    /// TD-112 counterpart: `embedder: None` (the pre-fix / degraded-mode shape)
+    /// `embedder: None` (the pre-fix / degraded-mode shape)
     /// must leave the keeper's embedding untouched — the fix is additive, never
     /// a mandatory re-embed.
     #[tokio::test]

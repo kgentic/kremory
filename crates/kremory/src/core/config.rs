@@ -21,8 +21,8 @@ pub enum ContentType {
 ///
 /// **This is kind-2 chunking only** — slices an oversized episode body into prompt-sized
 /// windows so the extractor LLM can read it within its context budget. Slices are throwaway
-/// and never enter storage/embedding. See `core/extraction_window.rs` module docstring and
-/// ADR-Phase-D.0:88 for the kind-1 vs kind-2 distinction.
+/// and never enter storage/embedding. See `core/extraction_window.rs` module docstring
+/// for the kind-1 vs kind-2 distinction.
 #[derive(Debug, Clone)]
 pub struct ExtractionWindowConfig {
     /// Default: 100 words. Shorter text rarely benefits from splitting; below
@@ -43,8 +43,8 @@ pub struct ExtractionWindowConfig {
     ///
     /// Increase it via `PipelineConfig::builder().max_words(n)` (verified against
     /// the setter at `config.rs:767`; siblings: `min_words`, `overlap_words`,
-    /// `density_threshold`). CFG-2
-    /// (V1-CANONICAL §6c): this previously said to set `LLM_CONTEXT_SIZE` +
+    /// `density_threshold`).
+    /// This previously said to set `LLM_CONTEXT_SIZE` +
     /// `CHUNK_MAX_WORDS` env vars. **Neither has any effect on the pipeline** —
     /// `PipelineConfig` builds this struct via `Default` (see its `Default` impl
     /// below), never via [`from_env`](Self::from_env), and `LLM_CONTEXT_SIZE`
@@ -60,7 +60,7 @@ pub struct ExtractionWindowConfig {
 impl ExtractionWindowConfig {
     /// Build from environment variables, falling back to sensible defaults.
     ///
-    /// ⚠️ **The kremory pipeline does NOT call this.** CFG-2 (V1-CANONICAL §6c):
+    /// ⚠️ **The kremory pipeline does NOT call this.**
     /// `PipelineConfig` constructs its `extraction_window` via `Default`
     /// (`config.rs:708`), so **setting the env vars below changes nothing** unless a
     /// consumer calls `from_env()` themselves and passes the result in. This method
@@ -201,10 +201,9 @@ pub struct SearchConfig {
     pub vector_weight: f64,
 
     /// Default: 1, flipped from 60 (Cormack et al.'s 2009 general-purpose
-    /// constant) on 2026-09-07 after a measured LoCoMo A/B: `k=1` beat `k=60`
+    /// constant) after a measured LoCoMo A/B: `k=1` beat `k=60`
     /// on every category and every metric (recall@10 +3.5, nDCG@10 +1.8, MRR
-    /// +1.6, hit-rate +3.2 — `.ai-docs/tech-debt/tech-debt-register.md`,
-    /// "steal-matrix-rescore item 7 RESULT"). Smaller `k` sharpens RRF's
+    /// +1.6, hit-rate +3.2). Smaller `k` sharpens RRF's
     /// `1/(k+rank+1)` weighting, so a confident top candidate from either the
     /// entity-graph or content stream dominates the fused ranking more; `k=60`
     /// spreads influence toward parity across ranks. kremory's two streams
@@ -218,71 +217,67 @@ pub struct SearchConfig {
     /// without commensurate quality gain.
     pub top_k: usize,
 
-    // ── recall-v2 post-RRF scoring axes (recall-v2-architecture-2026-07-03) ──
+    // ── Post-RRF scoring axes ────────────────────────────────────────────────
     //
     // All fields below feed the staged post-RRF boost pipeline in
     // `core::context::Engine::contextualize`. Every default preserves TODAY's
     // behaviour: only `graph_degree_weight` is a live tested axis (its default
     // is its already-shipped constant, NOT 0.0); all NEW axes default to their
     // no-op value so recall output is byte-identical to pre-change at defaults.
-    /// Weight of the additive graph-degree bonus (recall-v2 Phase 2a; formerly
+    /// Weight of the additive graph-degree bonus (formerly
     /// the `search::GRAPH_DEGREE_WEIGHT` const). **Default 0.05, NOT 0.0** —
-    /// graph-degree is the one already-live boost axis (TD-066 Change 2), so
+    /// graph-degree is the one already-live boost axis, so
     /// `0.0` would silently disable a shipped, tested feature. "Today's
     /// behaviour" for this axis *is* the 0.05 bonus. Bounded contribution:
     /// `weight * min(degree/saturation, 1)`.
     pub graph_degree_weight: f32,
 
-    /// Weight of the additive temporal-recency boost (recall-v2 Phase 2b).
+    /// Weight of the additive temporal-recency boost.
     /// **Default 0.0 = off** — new axis, behaviourally neutral until an
     /// eval-calibrated value is set. Additive + bounded `[0, weight]`, matching
     /// graph-degree so a single `.min(1.0)` clamp covers both (no second
     /// normalization pass).
     pub temporal_weight: f32,
 
-    /// Decay rate `lambda` for the temporal boost's `exp(-lambda * age_days)`
-    /// (recall-v2 Phase 2b). Inert while `temporal_weight == 0.0`. Default 0.01
-    /// ≈ a ~69-day half-life; a placeholder pending Phase-7 eval calibration.
+    /// Decay rate `lambda` for the temporal boost's `exp(-lambda * age_days)`.
+    /// Inert while `temporal_weight == 0.0`. Default 0.01
+    /// ≈ a ~69-day half-life; a placeholder pending eval calibration.
     pub temporal_decay_lambda: f64,
 
-    /// Minimum post-boost score a seed must reach to survive to output
-    /// (recall-v2 Phase 5, Decision 6). **Default 0.0 = no-op** (nothing is
+    /// Minimum post-boost score a seed must reach to survive to output.
+    /// **Default 0.0 = no-op** (nothing is
     /// floored out). Applied AFTER all boosts, BEFORE the access-count
     /// increment, so dropped entities are never counted as recalled.
     pub floor_threshold: f32,
 
-    /// Max BFS hop depth for the 1-hop expansion (recall-v2 Phase 4, TD-056).
+    /// Max BFS hop depth for the 1-hop expansion.
     /// **Default 1 = today's behaviour.** Widening this without an in-BFS
-    /// visited cap (`expansion_fan_out_cap`) reintroduces hub-explosion (spec
-    /// R1), so the two ship together.
+    /// visited cap (`expansion_fan_out_cap`) reintroduces hub-explosion, so
+    /// the two ship together.
     pub expansion_hop_bound: u32,
 
-    /// Cap on entities visited during a seed's BFS expansion (recall-v2 Phase 4,
-    /// TD-056). **Default 8 = the former `context::MAX_NEIGHBOURS_PER_SEED`
+    /// Cap on entities visited during a seed's BFS expansion.
+    /// **Default 8 = the former `context::MAX_NEIGHBOURS_PER_SEED`
     /// const.** Threaded into the BFS itself (not just the caller-side trim) so
     /// it bounds hop≥2 traversal, not only the final result set.
     pub expansion_fan_out_cap: usize,
 
     /// Score-decay factor applied to a 1-hop neighbour relative to the seed
-    /// that surfaced it (recall-v2 Phase 4; formerly the
+    /// that surfaced it (formerly the
     /// `context::NEIGHBOUR_SCORE_DECAY` const). **Default 0.5** — mid-range of
     /// the literature's `[0.3, 0.7]` weighted-expansion band (HippoRAG PPR
     /// damping is also 0.5).
     pub neighbour_score_decay: f32,
 
-    /// Weight of the additive graph-**proximity** boost — ADR-062 (axis C),
-    /// build-entry spec `axis-c-read-time-relevance-spec-2026-07-01.md`,
-    /// ADR-082 Phase 3. **Default 0.0 = off** — new axis, behaviourally
+    /// Weight of the additive graph-**proximity** boost (axis C).
+    /// **Default 0.0 = off** — new axis, behaviourally
     /// neutral until an eval-calibrated value is set (same shape as
     /// `temporal_weight`).
     ///
-    /// ADR-082 **Amendment 1** (2026-07-20) supersedes ADR-062's literal
-    /// "post-RRF multiplicative boost" text: this axis ships **additive +
+    /// This axis ships **additive +
     /// bounded `[0, weight]`**, composed into the SAME single `.min(1.0)`
-    /// clamp as `graph_degree_weight`/`temporal_weight` — the amendment's own
-    /// migration trigger ("axis-C proximity lands and would coexist with the
-    /// additive axes") is this axis landing, and the amendment already
-    /// decided the outcome: stay additive, migrate all axes to a normalized
+    /// clamp as `graph_degree_weight`/`temporal_weight` — stay additive,
+    /// migrate all axes to a normalized
     /// multiplicative chain later ONLY if a future eval shows additive
     /// underperforms. No dead multiplicative plumbing ships.
     ///
@@ -295,54 +290,53 @@ pub struct SearchConfig {
     /// cost when off, not just a no-op score).
     pub proximity_weight: f32,
 
-    /// Bounded-hop distance for the graph-proximity walk (ADR-062 §5 Q2/Q3).
-    /// **Default 2** — the spec's own starting recommendation: `hop_bound=1`
+    /// Bounded-hop distance for the graph-proximity walk.
+    /// **Default 2** — the starting recommendation: `hop_bound=1`
     /// collapses to a near-duplicate of `graph_degree_weight`'s own 1-hop
     /// signal; `hop_bound=3+` widens cost without a calibrated benefit yet.
     /// Inert while `proximity_weight <= 0.0` (the second graph query is
     /// skipped entirely, not just discounted).
     pub proximity_hop_bound: u32,
 
-    /// In-BFS visited-entity cap for the proximity walk (ADR-062 §8/ASMP-001,
-    /// spike criterion 2a). **Default 8** — matches `expansion_fan_out_cap`'s
-    /// default. `get_neighbours_at`'s `max_visited` (ADR-082 Amendment 2)
+    /// In-BFS visited-entity cap for the proximity walk. **Default 8** —
+    /// matches `expansion_fan_out_cap`'s
+    /// default. `get_neighbours_at`'s `max_visited`
     /// early-exits the BFS once the cap is hit, bounding a high-degree hub
     /// seed's worst-case cost at `proximity_hop_bound >= 2` — the same
-    /// mechanism TD-056's multi-hop expansion cap already uses, reused here
+    /// mechanism the multi-hop expansion cap already uses, reused here
     /// rather than adding a new capped traversal primitive.
     pub proximity_fan_out_cap: usize,
 
-    /// Per-stream weight applied to the ADR-072 `content_search` BM25 stream's
-    /// RRF contribution in `search::rrf_fuse_with_content` (TD-066 Increment
-    /// 2, `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
-    /// §3 Increment 2). **Default 1.0 = today's equal-weight RRF fusion**
-    /// (Increment 1's behaviour, byte-identical) — this is a config-only
-    /// calibration knob, not a new algorithm. `content`-alone beats
-    /// equal-weight `hybrid` on 3 of 4 LoCoMo categories (spec §1.1), so a
+    /// Per-stream weight applied to the `content_search` BM25 stream's
+    /// RRF contribution in `search::rrf_fuse_with_content`.
+    /// **Default 1.0 = today's equal-weight RRF fusion**
+    /// (the unweighted fusion's behaviour, byte-identical) — this is a
+    /// config-only calibration knob, not a new algorithm. `content`-alone
+    /// beats equal-weight `hybrid` on 3 of 4 LoCoMo categories, so a
     /// value `> 1.0` favours the content stream over the entity-graph stream
     /// in the fused ranking; `<= 0.0` degrades content's contribution to
     /// (effectively) zero, without removing the stream's dedup/id-space
-    /// participation. The calibrated value is a Phase-7-style bench-sweep
+    /// participation. The calibrated value is a bench-sweep
     /// output, not a value guessed at design time — ship the knob, measure
     /// the value.
     pub content_stream_weight: f32,
 
-    /// TD-136 (dense episode retrieval): when `true`, recall runs a dense
+    /// The dense episode retrieval knob: when `true`, recall runs a dense
     /// (embedding) vector arm over `episodes.embedding` and RRF-fuses it with
-    /// the ADR-072 BM25 `content_search` episode arm BEFORE the fused content
+    /// the BM25 `content_search` episode arm BEFORE the fused content
     /// stream enters `search::rrf_fuse_with_content`. Also gates ingest-time
     /// episode embedding (`core/ingest/pipeline`). **Default `false` = today's
     /// BM25-only behaviour, byte-identical** — the whole dense arm (read +
     /// write) is inert until enabled, so `content-search` builds keep the exact
-    /// pre-TD-136 recall + ingest surface at defaults. Wired from the
+    /// pre-dense-arm recall + ingest surface at defaults. Wired from the
     /// `KREMORY_EPISODE_DENSE` boot override
     /// (`facade::providers::search_env_overrides`), mirroring
     /// `content_stream_weight`'s `KREMORY_CONTENT_WEIGHT` A/B knob, so the
     /// dense-vs-BM25 comparison costs a server restart, not a rebuild.
     pub episode_dense_enabled: bool,
 
-    /// TD-139 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-139 DoD item
-    /// 2): when `true`, recall runs a THIRD dense (embedding) arm —
+    /// The dense fact retrieval knob: when `true`, recall runs a THIRD dense
+    /// (embedding) arm —
     /// `TemporalGraph::vector_search_facts` over `facts.embedding` — and
     /// RRF-fuses it into the entity+content stream `fuse_content_stream`
     /// already produces. Mirrors `episode_dense_enabled`'s rollout shape
@@ -353,23 +347,23 @@ pub struct SearchConfig {
     /// — see that fn's doc comment for why a fact cannot be represented as a
     /// `ContentPassage`). **Default `false` = today's behaviour, byte-
     /// identical** — facts remain reachable ONLY via 1-hop expansion from an
-    /// already-matched entity (TD-139's "why it matters" section) until this
+    /// already-matched entity until this
     /// is enabled. Ingest-time fact embedding (`ingest_with.rs:~1774`,
     /// `deferred.rs:~411`) is UNCHANGED by this knob — that write path
-    /// already runs unconditionally (TD-139 discovery: "we already do all of
+    /// already runs unconditionally ("we already do all of
     /// that except the recall wiring"). Wired from the `KREMORY_FACT_DENSE`
     /// boot override (`facade::providers::search_env_overrides`), mirroring
     /// `episode_dense_enabled`'s `KREMORY_EPISODE_DENSE`, so the fact-dense
     /// A/B costs a server restart, not a rebuild.
     ///
-    /// ⚠️ TD-137 risk (fact/predicate quality): noisy predicates
+    /// ⚠️ Risk (fact/predicate quality): noisy predicates
     /// (`greeting`, `session_timestamp`) embed as junk and may surface as
     /// dense-arm noise, potentially making the fact stream's already-net-
     /// negative shape WORSE — precisely why this ships default-OFF behind a
     /// measured gate, never defaulted on without an A/B.
     pub fact_dense_enabled: bool,
 
-    /// TD-143 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-143): when
+    /// The nomic task-prefix knob: when
     /// `true`, every embed call on the recall/ingest search surface is
     /// prefixed with nomic-embed-text's REQUIRED asymmetric task prefix —
     /// `search_document: ` for text that gets STORED into
@@ -381,9 +375,8 @@ pub struct SearchConfig {
     /// inventory. **Default `false` = today's bare-text embedding,
     /// byte-identical** — nomic-embed-text is an ASYMMETRIC model; without
     /// the prefix, queries and passages collapse into the same task space,
-    /// which TD-143 identifies as the prime suspect for the measured
-    /// vocabulary/abstraction breadth gap (`.ai-docs/research/
-    /// first-stage-retrieval-landscape-2026-07-27.md`).
+    /// which is the prime suspect for the measured
+    /// vocabulary/abstraction breadth gap.
     ///
     /// ⚠️ Nomic-specific, NOT a generic embedder feature: a consumer using a
     /// different (non-nomic) BYOM embedder must never flip this on — the
@@ -408,8 +401,8 @@ pub struct SearchConfig {
     /// `episode_dense_enabled`'s `KREMORY_EPISODE_DENSE`.
     pub embed_task_prefix_enabled: bool,
 
-    /// Reranker latency lever 1 (`.ai-docs/tech-debt/` cross-encoder latency
-    /// spike, 2026-07-28): caps the SUMMARY portion of each rerank candidate's
+    /// Reranker latency lever 1 (cross-encoder latency
+    /// spike): caps the SUMMARY portion of each rerank candidate's
     /// text (`entity_name + " " + summary`, `facade::recall::apply_rerank_with`)
     /// at this many `char`s before it is handed to the cross-encoder.
     /// `entity_name` is never truncated. **Default `0` = unlimited (today's
@@ -444,16 +437,16 @@ impl Default for SearchConfig {
             expansion_hop_bound: 1,
             expansion_fan_out_cap: 8,
             neighbour_score_decay: 0.5,
-            // ADR-062 / ADR-082 Phase 3 — proximity OFF by default: the
+            // Proximity OFF by default: the
             // second bounded-hop graph query never fires until
             // KREMORY_PROXIMITY_WEIGHT / with_proximity_weight flips it on.
             proximity_weight: 0.0,
             proximity_hop_bound: 2,
             proximity_fan_out_cap: 8,
-            // TD-066 Increment 2 — 1.0 = neutral/no-op, today's equal-weight
-            // RRF fusion (Increment 1's behaviour, byte-identical).
+            // 1.0 = neutral/no-op, today's equal-weight
+            // RRF fusion (the unweighted fusion's behaviour, byte-identical).
             content_stream_weight: 1.0,
-            // TD-136 dense episode arm. **DEFAULT-ON since 2026-07-28 (ADR-078).**
+            // The dense episode arm. **DEFAULT-ON.**
             //
             // It shipped OFF and stayed OFF while every published benchmark set
             // `KREMORY_EPISODE_DENSE=1` — so the measured numbers described a
@@ -470,13 +463,14 @@ impl Default for SearchConfig {
             // flip have no episode vectors until `backfill-episode-embeddings`
             // runs; the arm degrades to BM25-only until then rather than failing.
             episode_dense_enabled: true,
-            // TD-139 DoD item 2 — dense fact arm OFF by default: facts stay
+            // Dense fact arm OFF by default: facts stay
             // reachable only via 1-hop entity expansion until KREMORY_FACT_DENSE
             // flips it on.
             fact_dense_enabled: false,
-            // TD-143 — nomic task-prefix OFF by default: every embed call sends
-            // bare text, byte-identical to pre-TD-143, until KREMORY_EMBED_TASK_PREFIX
-            // flips it on (and the corpus has been re-embedded to match).
+            // Nomic task-prefix OFF by default: every embed call sends
+            // bare text, byte-identical to before this knob shipped, until
+            // KREMORY_EMBED_TASK_PREFIX flips it on (and the corpus has been
+            // re-embedded to match).
             embed_task_prefix_enabled: false,
             // Reranker latency lever 1 — 0 = unlimited (today's behaviour,
             // byte-identical) until KREMORY_RERANK_CANDIDATE_MAX_CHARS /
@@ -487,19 +481,18 @@ impl Default for SearchConfig {
 }
 
 /// Explicit, per-knob overrides for [`SearchConfig`] set programmatically via
-/// [`MemoryBuilder`](crate::facade::MemoryBuilder) (TD-141:
-/// `.ai-docs/tech-debt/tech-debt-register.md` §TD-141). Each field is `None`
+/// [`MemoryBuilder`](crate::facade::MemoryBuilder). Each field is `None`
 /// unless the consumer called the matching `MemoryBuilder::with_*` setter —
 /// `None` means "not set programmatically", NOT "use this field's shipped
 /// default".
 ///
 /// # Why a sparse overlay, not `Option<SearchConfig>`
 ///
-/// TD-141's design decision (b) sketches threading `search: Option<SearchConfig>`
+/// An earlier design sketched threading `search: Option<SearchConfig>`
 /// through the `open_graph*` params. This type deviates from that literal shape:
-/// TD-141 decision (a) requires PER-FIELD precedence (explicit programmatic
-/// config > env override > default — see [`apply`](Self::apply)), and decision
-/// (d) requires per-knob setters, not one `with_search_config(SearchConfig)`.
+/// it requires PER-FIELD precedence (explicit programmatic
+/// config > env override > default — see [`apply`](Self::apply)), and it
+/// requires per-knob setters, not one `with_search_config(SearchConfig)`.
 /// A consumer who calls only `.with_content_stream_weight(v)` must NOT
 /// silently clobber a `KREMORY_RRF_K` / `KREMORY_EPISODE_DENSE` env override
 /// for the other two fields. A monolithic `SearchConfig` cannot express
@@ -513,9 +506,9 @@ impl Default for SearchConfig {
 pub(crate) struct PipelineConfigOverrides {
     /// Explicit override for [`SearchConfig::content_stream_weight`].
     pub content_stream_weight: Option<f32>,
-    /// Explicit override for [`SearchConfig::graph_degree_weight`] (public-docs-
-    /// and-api-surface-audit Phase 2, finding F17). `graph_degree_weight` is
-    /// the one recall-v2 scoring axis that shipped LIVE (default `0.05`, not a
+    /// Explicit override for [`SearchConfig::graph_degree_weight`].
+    /// `graph_degree_weight` is
+    /// the one scoring axis that shipped LIVE (default `0.05`, not a
     /// no-op) but, unlike every sibling axis on this struct, had no builder
     /// setter and no env override — reachable only for *reading* (via
     /// `Memory::search_config()`), never for *writing*. `None` leaves the
@@ -525,19 +518,19 @@ pub(crate) struct PipelineConfigOverrides {
     pub rrf_k: Option<usize>,
     /// Explicit override for [`SearchConfig::episode_dense_enabled`].
     pub episode_dense_enabled: Option<bool>,
-    /// Explicit override for [`SearchConfig::fact_dense_enabled`] (TD-139).
+    /// Explicit override for [`SearchConfig::fact_dense_enabled`].
     pub fact_dense_enabled: Option<bool>,
-    /// Explicit override for [`SearchConfig::embed_task_prefix_enabled`] (TD-143).
+    /// Explicit override for [`SearchConfig::embed_task_prefix_enabled`].
     pub embed_task_prefix_enabled: Option<bool>,
-    /// Explicit override for [`SearchConfig::proximity_weight`] (ADR-062 /
-    /// ADR-082 Phase 3). `proximity_hop_bound` / `proximity_fan_out_cap` are
+    /// Explicit override for [`SearchConfig::proximity_weight`].
+    /// `proximity_hop_bound` / `proximity_fan_out_cap` are
     /// deliberately NOT exposed here — config-default-only, mirroring
     /// `expansion_hop_bound`/`expansion_fan_out_cap`'s own precedent (only
     /// the weight is the A/B lever that needs a restart-not-rebuild seam).
     pub proximity_weight: Option<f32>,
-    /// Explicit override for [`SearchConfig::temporal_weight`] (TD-157).
+    /// Explicit override for [`SearchConfig::temporal_weight`].
     ///
-    /// Added 2026-07-28. This axis has had working compute behind it all along
+    /// This axis has had working compute behind it all along
     /// (`core/context.rs`, `core/scoring/temporal.rs`) and was **unreachable**:
     /// unlike its sibling `proximity_weight` it had no builder method, no env
     /// override and no config-file path, so its `0.0` default could not be
@@ -549,7 +542,7 @@ pub(crate) struct PipelineConfigOverrides {
     pub rerank_candidate_max_chars: Option<usize>,
     /// Explicit override for [`PipelineConfig::extraction_arm_budget_ms`].
     ///
-    /// Added per the aidocs-trial fit check (2026-08-24/09-02): the config
+    /// Added per a fit check against a real consumer: the config
     /// field's own doc comment says to raise this to 180_000-300_000 for slow
     /// local LLMs "via `.extraction_arm_budget_ms(value)` on the builder" —
     /// but that referred to the *internal* `PipelineConfigBuilder`, which no
@@ -559,23 +552,21 @@ pub(crate) struct PipelineConfigOverrides {
     /// the ladder outright on ordinary documents under the 30s default. This
     /// field closes that gap the same way `rerank_candidate_max_chars` does.
     pub extraction_arm_budget_ms: Option<u64>,
-    /// Explicit override for [`PipelineConfig::prior_turn_replay_depth`]
-    /// (ADR-080). `None` leaves the default of 10.
+    /// Explicit override for [`PipelineConfig::prior_turn_replay_depth`].
+    /// `None` leaves the default of 10.
     pub prior_turn_replay_depth: Option<usize>,
-    /// Explicit override for [`PipelineConfig::contradiction_detection_enabled`]
-    /// (TD-172 / TD-167 / ADR-079 rev.2).
+    /// Explicit override for [`PipelineConfig::contradiction_detection_enabled`].
     ///
     /// The first NON-`SearchConfig` member of this overlay, and the reason the
     /// type is named for `PipelineConfig` rather than `SearchConfig`: the
     /// overlay's job is "sparse programmatic overrides applied onto a
     /// [`PipelineConfigBuilder`] AFTER the env layer", which was always wider
     /// than search. Adding a second parallel overrides mechanism for one field
-    /// would have been the redundancy that `contract-first-before-new-public-
-    /// surface` forbids.
+    /// would have been an avoidable redundancy.
     ///
-    /// Why it needed a seam at all: since ADR-079 rev.2 this knob defaults to
+    /// Why it needed a seam at all: this knob defaults to
     /// **ON**, and it gates a DESTRUCTIVE path (supersession soft-deletes
-    /// prior facts). Before TD-172 the only way to opt out was the process-wide
+    /// prior facts). Before this seam existed, the only way to opt out was the process-wide
     /// `KREMORY_CONTRADICTION_DETECTION` env var — which cannot express two
     /// `Memory` instances with different settings, and which a library consumer
     /// should not have to reach for. Its nine sibling knobs all have builder
@@ -586,13 +577,13 @@ pub(crate) struct PipelineConfigOverrides {
 impl PipelineConfigOverrides {
     /// Apply only the `Some` fields onto `builder`, each WINNING over
     /// whatever env override (`facade::providers::search_env_overrides`) was
-    /// already applied earlier in the same chain — TD-141 precedence:
+    /// already applied earlier in the same chain — the precedence is:
     /// explicit programmatic config > env override > default. Fields left
     /// `None` here pass `builder` through unchanged, so an env override for a
     /// knob the consumer never touched programmatically still applies. An
     /// all-`None` (default-constructed) `PipelineConfigOverrides` is a strict
     /// no-op, so unset-by-default callers get byte-identical behaviour to
-    /// pre-TD-141 (env-only / default).
+    /// env-only / default.
     pub(crate) fn apply(&self, mut builder: PipelineConfigBuilder) -> PipelineConfigBuilder {
         if let Some(v) = self.content_stream_weight {
             builder = builder.content_stream_weight(v);
@@ -649,24 +640,24 @@ impl Default for EmbeddingDim {
     }
 }
 
-/// Entity-resolution call-shape strategy (ADR-076 / TD-127).
+/// Entity-resolution call-shape strategy.
 ///
 /// Selects how the ambiguous remainder of ingest-time entity resolution (the
-/// entities that survive ADR-075 candidate blocking but are NOT resolved by
+/// entities that survive candidate blocking but are NOT resolved by
 /// the cheap deterministic tiers — exact-normalize + MinHash) reaches the LLM:
 ///
 /// - `Batched` (default): one structured-output call per window resolves ALL
 ///   ambiguous entities against a shared candidate pool at once, collapsing
 ///   the O(ambiguous × candidates) pairwise fan-out to O(windows). See
 ///   `resolver_batched.rs`.
-/// - `Pairwise`: the pre-ADR-076 behaviour — one LLM `ResolutionVerdict` call
+/// - `Pairwise`: the earlier behaviour — one LLM `ResolutionVerdict` call
 ///   per (entity, candidate) pair via `CascadeResolver::resolve`. Retained for
 ///   A/B comparison and as an instant rollback (config flip, no code revert).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ResolutionStrategy {
-    /// Pre-ADR-076 pairwise `resolve()` fan-out.
+    /// The earlier pairwise `resolve()` fan-out.
     Pairwise,
-    /// ADR-076 batched structured-output resolution (default).
+    /// Batched structured-output resolution (default).
     #[default]
     Batched,
 }
@@ -707,7 +698,7 @@ pub struct PipelineConfig {
     /// `.extraction_arm_budget_ms(value)` on the builder. The benchmark
     /// suite sets this to 300_000 to accommodate qwen2.5:14b warm-up latency.
     pub extraction_arm_budget_ms: u64,
-    /// ADR-080 — how many preceding episodes of the SAME conversation thread
+    /// How many preceding episodes of the SAME conversation thread
     /// are replayed into the extraction prompt so that references resolve.
     ///
     /// Default **10**, the value mem0 (`mem0/memory/main.py:920`) and Graphiti
@@ -722,28 +713,28 @@ pub struct PipelineConfig {
     /// this is inert for callers who never tag a source — they receive a
     /// random uuid per episode and nothing can match it.
     pub prior_turn_replay_depth: usize,
-    /// TD-NEW-A (Lane C): how many per-chunk extraction LLM calls to run
+    /// How many per-chunk extraction LLM calls to run
     /// concurrently within a single `ingest_with` call (`futures::buffered`,
     /// order-preserving for determinism). `1` = the pre-change sequential
     /// behaviour. Extraction is read-only (no persisted-graph dependency
     /// between chunks — `known_entities` becomes window-local when >1, the
     /// staleness the dream L5 backstop absorbs), so overlapping the calls
-    /// cuts ingest wall-time once resolution is no longer the bottleneck
-    /// (ADR-076). Default: 5 (conservative vs provider concurrent-rate limits;
+    /// cuts ingest wall-time once resolution is no longer the bottleneck.
+    /// Default: 5 (conservative vs provider concurrent-rate limits;
     /// raise via `KREMORY_EXTRACTION_CONCURRENCY` on a higher-limit provider).
     pub extraction_concurrency: usize,
-    /// ADR-075 (TD-124): entity-resolution candidate-blocking width. When a
+    /// Entity-resolution candidate-blocking width. When a
     /// group has MORE than this many existing entities, ingest resolution
     /// compares each newly-extracted entity only against a bounded candidate
     /// set — exact normalized-name matches UNION the embedding-ANN top-`k`
     /// nearest existing entities — instead of every existing entity. This
     /// collapses the LLM `ResolutionVerdict` fan-out from O(new × existing) to
-    /// O(k). Groups with ≤ this many entities keep the exhaustive (pre-ADR-075)
+    /// O(k). Groups with ≤ this many entities keep the exhaustive (earlier)
     /// comparison, so the change is a no-op on small graphs. Dream-phase L5
     /// canonicalization is the completeness backstop for any match blocking
     /// misses. Default: 10.
     pub resolution_block_k: usize,
-    /// ADR-075 P1 (TD-124): auto-different cosine floor for the embedding-ANN
+    /// Auto-different cosine floor for the embedding-ANN
     /// resolution arm. When a blocked ANN candidate's cosine similarity to the
     /// newly-extracted entity is **below** this floor, it is dropped from the
     /// candidate set (treated as `Different`) WITHOUT an LLM `ResolutionVerdict`
@@ -751,27 +742,27 @@ pub struct PipelineConfig {
     /// pair anyway, so the call is pure cost. This can only ever REDUCE merges
     /// (never create a false one), and dream-phase L5 canonicalization is the
     /// completeness backstop. Exact normalized-name matches are unaffected (they
-    /// bypass the floor). Range `[0.0, 1.0]`. Default: `0.0` — OFF, i.e. pure
-    /// P0 behaviour (every blocked candidate still reaches `resolve()`); raise
+    /// bypass the floor). Range `[0.0, 1.0]`. Default: `0.0` — OFF (every
+    /// blocked candidate still reaches `resolve()`); raise
     /// (e.g. `0.5`) to trade a little recall for far fewer resolution LLM calls.
     pub resolution_min_cosine: f32,
-    /// ADR-076 (TD-127): entity-resolution call-shape. `Batched` (default)
+    /// Entity-resolution call-shape. `Batched` (default)
     /// collapses the ambiguous-remainder pairwise LLM fan-out into one
-    /// structured call per window; `Pairwise` retains the pre-ADR-076
+    /// structured call per window; `Pairwise` retains the earlier
     /// per-(entity, candidate) `ResolutionVerdict` call for A/B + rollback.
     pub resolution_strategy: ResolutionStrategy,
-    /// ADR-076 (TD-127): maximum number of ambiguous entities packed into a
+    /// Maximum number of ambiguous entities packed into a
     /// single batched-resolution window. Mirrors the `resolution_block_k`
     /// pattern — a safe-default overflow-cap knob, not a token-budget
-    /// estimator (YAGNI per ADR-076 §Decision). Default: 32 — conservative
+    /// estimator (YAGNI). Default: 32 — conservative
     /// on any 4k-or-larger-context model (32 short name+type lines, plus
     /// pooled candidates and system prompt, totals roughly 2-3k tokens).
     /// Raise on a large-context model to shrink call count further.
     pub resolution_batch_max_entities: usize,
-    /// TD-167 / ADR-079 rev.2: run LLM contradiction detection during ingest.
+    /// Run LLM contradiction detection during ingest.
     /// **Default: `true`.**
     ///
-    /// ## History — this default moved TWICE on 2026-07-29, and both moves were right
+    /// ## History — this default moved TWICE in one day, and both moves were right
     ///
     /// **OFF (rev.1)** — the mechanism DESTROYED SET-VALUED FACTS. It treated every
     /// predicate as functional (one value per subject), so ingesting a list
@@ -799,11 +790,11 @@ pub struct PipelineConfig {
     /// `KREMORY_CONTRADICTION_DETECTION=0` (or the builder setter). Off is safe
     /// and loses only auto-correction of stale facts: supersession is a SOFT
     /// delete (`invalid_at` is set, the row stays) and
-    /// `core::dream::provenance::reversal::unsupersede` (ADR-073) reverses
+    /// `core::dream::provenance::reversal::unsupersede` reverses
     /// individual false positives, so nothing written under either default is
     /// unrecoverable.
     ///
-    /// **Note on the deeper fix (TD-167, still open):** derived predicate
+    /// **Note on the deeper fix (still open):** derived predicate
     /// cardinality — the approach an earlier version of this comment pointed at —
     /// was investigated and **REFUTED**: 67% of predicates appear exactly once in
     /// a real corpus and only 6% ever show multi-valuedness, so there is nothing
@@ -813,14 +804,14 @@ pub struct PipelineConfig {
     pub contradiction_detection_enabled: bool,
 }
 
-/// The compiled-in default for [`PipelineConfig::contradiction_detection_enabled`]
-/// (ADR-079 rev.2), as a `const` so it has exactly ONE definition.
+/// The compiled-in default for [`PipelineConfig::contradiction_detection_enabled`],
+/// as a `const` so it has exactly ONE definition.
 ///
-/// TD-172 needed this value in a second place — the [`GraphHandle`](crate::memory::graph::GraphHandle)
+/// This value is needed in a second place — the [`GraphHandle`](crate::memory::graph::GraphHandle)
 /// trait default, so stub/test handles that carry no `Engine` report what a real
 /// one would. Restating `true` there would have created a second source of truth
-/// for a flag whose default **has already moved twice in one day** (OFF for ~4h
-/// on 2026-07-29, then back ON), and the copy that drifts is the one reporting a
+/// for a flag whose default **has already moved twice in one day** (OFF for a
+/// few hours, then back ON), and the copy that drifts is the one reporting a
 /// DESTRUCTIVE setting as disabled.
 pub(crate) const DEFAULT_CONTRADICTION_DETECTION_ENABLED: bool = true;
 
@@ -846,8 +837,8 @@ impl PipelineConfig {
                 resolution_min_cosine: 0.0,
                 resolution_strategy: ResolutionStrategy::default(),
                 resolution_batch_max_entities: 32,
-                // TD-167 / ADR-079 rev.2: ON. Was default-OFF for ~4h on
-                // 2026-07-29 while the destruction bug was open; the prompt fix
+                // ON. Was default-OFF for ~4h
+                // while the destruction bug was open; the prompt fix
                 // (coexistence + temporal ordering) measured 0/8 set-valued
                 // destroyed and a corpus run confirmed it (contradiction rate
                 // 38.8% -> 11.3%, no multi-valued predicate destroyed). Scope
@@ -957,8 +948,8 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// TD-066 Increment 2 / S0-infra sweep knob: per-stream weight applied to
-    /// the ADR-072 `content_search` BM25 stream's RRF contribution. Default
+    /// Per-stream weight applied to
+    /// the `content_search` BM25 stream's RRF contribution. Default
     /// `1.0` (equal-weight fusion, byte-identical). Wired from the
     /// `KREMORY_CONTENT_WEIGHT` env override at server boot
     /// (`facade::providers::search_env_overrides`) so weight sweeps cost a
@@ -968,18 +959,18 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// public-docs-and-api-surface-audit Phase 2 (F17): weight of the additive
-    /// graph-degree bonus (`SearchConfig::graph_degree_weight`). Default `0.05`
-    /// (the already-live TD-066 Change 2 boost, byte-identical) — unlike every
-    /// sibling axis on `SearchConfig`, this field previously had NO builder
-    /// method and no env override, so it was reachable for reading (via
-    /// `Memory::search_config()`) but never for writing.
+    /// Weight of the additive
+    /// graph-degree bonus (`SearchConfig::graph_degree_weight`). Default `0.05` — matches the
+    /// value already live in the scoring path. Unlike every sibling axis on
+    /// `SearchConfig`, this field has no builder method and no env override,
+    /// so it is reachable for reading (via `Memory::search_config()`) but not
+    /// for writing.
     pub fn graph_degree_weight(mut self, v: f32) -> Self {
         self.inner.search.graph_degree_weight = v;
         self
     }
 
-    /// TD-136 dense-episode A/B knob: enable the dense (embedding) episode
+    /// The dense-episode A/B knob: enable the dense (embedding) episode
     /// retrieval arm + ingest-time episode embedding. Default `false`
     /// (BM25-only, byte-identical). Wired from the `KREMORY_EPISODE_DENSE` env
     /// override at server boot (`facade::providers::search_env_overrides`) so
@@ -989,7 +980,7 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// TD-139 DoD item 2 dense-fact A/B knob: enable the dense (embedding)
+    /// The dense-fact A/B knob: enable the dense (embedding)
     /// fact retrieval arm (`TemporalGraph::vector_search_facts`, RRF-fused
     /// via `core::search::rrf_fuse_with_facts`). Default `false` (facts
     /// reachable only via 1-hop entity expansion, byte-identical). Wired
@@ -1001,7 +992,7 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// TD-143 nomic task-prefix A/B knob: enable `search_document:` /
+    /// The nomic task-prefix A/B knob: enable `search_document:` /
     /// `search_query:` prefixing on every embed call site (see
     /// `core::embed_prefix`). Default `false` (bare text, byte-identical).
     /// Wired from the `KREMORY_EMBED_TASK_PREFIX` env override at server boot
@@ -1013,7 +1004,7 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// ADR-062 / ADR-082 Phase 3 axis-C A/B knob: weight of the additive
+    /// The axis-C A/B knob: weight of the additive
     /// graph-proximity boost. Default `0.0` (off, byte-identical — the second
     /// bounded-hop query never fires). Wired from the
     /// `KREMORY_PROXIMITY_WEIGHT` env override at server boot
@@ -1024,10 +1015,10 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// ADR-082 temporal-recency axis weight (`SearchConfig::temporal_weight`),
-    /// default `0.0` = axis off (byte-identical to pre-TD-157 behaviour).
+    /// The temporal-recency axis weight (`SearchConfig::temporal_weight`),
+    /// default `0.0` = axis off (byte-identical to earlier behaviour).
     ///
-    /// TD-157 (2026-07-28): this axis shipped with working compute
+    /// This axis shipped with working compute
     /// (`core/context.rs`, `core/scoring/temporal.rs`) and **no way to enable
     /// it** — no builder method, no env override, and `SearchConfig` derives no
     /// `Deserialize`, so there was no config-file path either. Its sibling
@@ -1042,16 +1033,16 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// ADR-062 axis-C hop bound — the parameter that controls the proximity
+    /// The axis-C hop bound — the parameter that controls the proximity
     /// signal's SELECTIVITY, and therefore the one that actually needed to be
-    /// sweepable. Added 2026-07-27 after the first axis-C A/B measured flat at
+    /// sweepable. Added after the first axis-C A/B measured flat at
     /// three weights: the per-recall trace showed `seed_count=50
     /// boosted_count=48` at the default `hop_bound = 2`, i.e. the walk reaches
     /// neighbours for ~96% of seeds, making the boost a near-uniform additive
     /// offset that cannot discriminate at ANY weight. Wired from
     /// `KREMORY_PROXIMITY_HOP_BOUND` (`facade::providers::search_env_overrides`)
-    /// so the selectivity sweep costs a restart, not a rebuild — the TD-141
-    /// lesson (a knob you cannot set is a knob you cannot evaluate) applied to
+    /// so the selectivity sweep costs a restart, not a rebuild — a
+    /// knob you cannot set is a knob you cannot evaluate, applied to
     /// axis-C's own tuning surface.
     pub fn proximity_hop_bound(mut self, v: u32) -> Self {
         self.inner.search.proximity_hop_bound = v;
@@ -1104,7 +1095,7 @@ impl PipelineConfigBuilder {
     /// Default: 30_000 (30s — production fail-fast).
     /// Override for slow local LLMs: e.g. `300_000` for qwen2.5:14b on Apple
     /// silicon (~80-130s per call at 32k context).
-    /// ADR-080 — depth of prior-turn replay into the extraction prompt.
+    /// Depth of prior-turn replay into the extraction prompt.
     /// `0` disables it. See [`PipelineConfig::prior_turn_replay_depth`].
     #[must_use]
     pub fn prior_turn_replay_depth(mut self, depth: usize) -> Self {
@@ -1117,19 +1108,20 @@ impl PipelineConfigBuilder {
         self
     }
 
-    /// TD-NEW-A Lane C: concurrent per-chunk extraction calls per ingest
+    /// Concurrent per-chunk extraction calls per ingest
     /// (`futures::buffered`, order-preserving). `1` = sequential. Default 5.
     pub fn extraction_concurrency(mut self, n: usize) -> Self {
         self.inner.extraction_concurrency = n;
         self
     }
 
-    /// TD-167: enable LLM contradiction detection during ingest. **Default ON**
-    /// (`DEFAULT_CONTRADICTION_DETECTION_ENABLED`, ADR-079 **rev.2**, accepted).
+    /// Enable LLM contradiction detection during ingest. **Default ON**
+    /// (`DEFAULT_CONTRADICTION_DETECTION_ENABLED`, accepted).
     ///
-    /// ⚠️ This doc said **"Default OFF"** until 2026-08-12 and was WRONG — it
-    /// described ADR-079 rev.1, which rev.2 superseded THE SAME DAY. It is a
-    /// public builder method, so a consumer reading it would have left a
+    /// ⚠️ This doc said **"Default OFF"** for a time and was WRONG — it
+    /// described an earlier revision, which the current one superseded THE
+    /// SAME DAY. It is a public builder method, so a consumer reading it
+    /// would have left a
     /// destructive feature enabled believing it disabled. Correcting rather than
     /// deleting, because the reason it was off is still the reason to be careful.
     ///
@@ -1153,32 +1145,32 @@ impl PipelineConfigBuilder {
         self
     }
 
-    // ── Resolution candidate blocking (ADR-075 / TD-124) ──────────────────────
+    // ── Resolution candidate blocking ───────────────────────────────────────────
 
     /// Set the entity-resolution candidate-blocking width `k`. Groups with more
     /// than `k` existing entities compare each new entity against only the
     /// exact-name matches + embedding-ANN top-`k`; groups with ≤`k` keep the
     /// exhaustive comparison. Default: 10. Set to `usize::MAX` to disable
-    /// blocking entirely (restore pre-ADR-075 behaviour).
+    /// blocking entirely (restore the earlier behaviour).
     pub fn resolution_block_k(mut self, k: usize) -> Self {
         self.inner.resolution_block_k = k;
         self
     }
 
-    /// Set the auto-different cosine floor for the embedding-ANN resolution arm
-    /// (ADR-075 P1). Blocked ANN candidates below this cosine similarity are
-    /// dropped without an LLM verdict. `0.0` (default) = off / pure P0. Clamped
+    /// Set the auto-different cosine floor for the embedding-ANN resolution arm.
+    /// Blocked ANN candidates below this cosine similarity are
+    /// dropped without an LLM verdict. `0.0` (default) = off. Clamped
     /// to `[0.0, 1.0]`.
     pub fn resolution_min_cosine(mut self, floor: f32) -> Self {
         self.inner.resolution_min_cosine = floor.clamp(0.0, 1.0);
         self
     }
 
-    // ── Batched resolution (ADR-076 / TD-127) ──────────────────────────────────
+    // ── Batched resolution ───────────────────────────────────────────────────
 
     /// Select the entity-resolution call-shape strategy. `Batched` (default)
     /// collapses the ambiguous-remainder LLM fan-out into one structured call
-    /// per window; `Pairwise` restores the pre-ADR-076 per-pair behaviour.
+    /// per window; `Pairwise` restores the earlier per-pair behaviour.
     pub fn resolution_strategy(mut self, v: ResolutionStrategy) -> Self {
         self.inner.resolution_strategy = v;
         self
@@ -1255,18 +1247,17 @@ mod tests {
         assert!(result.is_ok(), "default config should build without error");
     }
 
-    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (R4c): the S0-infra
-    /// sweep knobs' defaults must match whatever the CURRENT deliberate
-    /// default is (not "byte-identical to pre-TD-141" — that framing died
-    /// with the 2026-09-07 `rrf_k` flip; see the field's own doc comment for
-    /// the measured justification). `rrf_k=1` (flipped 2026-09-07, measured
+    /// The sweep knobs' defaults must match whatever the CURRENT deliberate
+    /// default is (not "byte-identical to the earlier default" — that framing
+    /// died with the `rrf_k` flip; see the field's own doc comment for
+    /// the measured justification). `rrf_k=1` (measured
     /// win over Cormack et al.'s general-purpose 60), `content_stream_weight
     /// =1.0` (equal-weight fusion, unchanged). Guards against a default drift
     /// silently changing the baseline sweep point.
     #[test]
     fn search_sweep_knob_defaults_unchanged() {
         let search = SearchConfig::default();
-        assert_eq!(search.rrf_k, 1, "default RRF k must stay 1 (flipped 2026-09-07)");
+        assert_eq!(search.rrf_k, 1, "default RRF k must stay 1");
         assert_eq!(
             search.content_stream_weight, 1.0,
             "default content_stream_weight must stay 1.0 (equal-weight fusion)"
@@ -1306,7 +1297,7 @@ mod tests {
         assert_eq!(tuned.rerank_candidate_max_chars, 512);
     }
 
-    /// ADR-062 / ADR-082 Phase 3 — proximity ships OFF by default (byte-
+    /// Proximity ships OFF by default (byte-
     /// identical): `proximity_weight <= 0.0` skips the second graph query
     /// entirely (see `core::context::Engine::contextualize`).
     #[test]
@@ -1314,7 +1305,7 @@ mod tests {
         assert_eq!(
             SearchConfig::default().proximity_weight,
             0.0,
-            "default proximity_weight must stay 0.0 (axis OFF, byte-identical pre-ADR-062)"
+            "default proximity_weight must stay 0.0 (axis OFF, byte-identical to earlier)"
         );
         assert_eq!(
             SearchConfig::default().proximity_hop_bound,

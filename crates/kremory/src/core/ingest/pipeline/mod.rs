@@ -1,7 +1,7 @@
 //! Ingest pipeline — entity extraction, resolution, contradiction, persistence.
 //!
-//! Split from a single 2141-LoC `pipeline.rs` (TD-045 Wave 2) into per-method
-//! `impl Engine` continuation files. Originally split from `ingest.rs` (TD-001 E0-C).
+//! Split from a single 2141-LoC `pipeline.rs` into per-method `impl Engine`
+//! continuation files. Originally split from `ingest.rs`.
 
 mod deferred;
 mod ingest_with;

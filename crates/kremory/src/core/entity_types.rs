@@ -1,6 +1,6 @@
 //! `EntityTypeSpec` + `EntityTypeRegistry` — per-namespace entity type registry.
 //!
-//! Implements L1 of the unified extraction architecture (TD-013):
+//! Implements L1 of the unified extraction architecture:
 //! - `EntityTypeSpec`: a single registered entity type (id, name, description).
 //! - `EntityTypeRegistry`: per-namespace store loaded from the `entity_types` DB table.
 //!
@@ -30,7 +30,7 @@ use metrics::counter;
 /// pre-knowing domain-specific types. Override (`SourceParams.entity_types_override`)
 /// augments for domain-specific vocabulary on top of these defaults.
 ///
-/// id=0 is reserved for the "Entity" catch-all per spec §1.
+/// id=0 is reserved for the "Entity" catch-all.
 /// All other ids start at 1 and correspond to the standard NER labels
 /// carried by Graphiti, Cognee, and LightRAG.
 pub const DEFAULT_ENTITY_TYPES: &[(u32, &str, &str)] = &[
@@ -147,7 +147,7 @@ pub struct EntityTypeSpec {
 /// Canonical id=0 "Entity" catch-all spec (description matches the
 /// `DEFAULT_ENTITY_TYPES[0]` row). Injected unconditionally by
 /// [`NamespaceSeed::ensure_catch_all`] before any seed write so id=0 is always
-/// a valid `validate_or_fallback` target (spec §5.8 invariant; structural, not
+/// a valid `validate_or_fallback` target (structural invariant, not
 /// prompt-based).
 fn catch_all_spec() -> EntityTypeSpec {
     let (id, name, description) = DEFAULT_ENTITY_TYPES[0];
@@ -158,7 +158,7 @@ fn catch_all_spec() -> EntityTypeSpec {
     }
 }
 
-/// Outcome of a successful namespace seed application (spec §5.2.2).
+/// Outcome of a successful namespace seed application.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeedOutcome {
     /// Seed was applied (namespace was fresh — zero rows before the call).
@@ -169,21 +169,21 @@ pub enum SeedOutcome {
     },
     /// Namespace already had rows; no DB write occurred. Returned for
     /// `Default`/`Augment` on a populated namespace, and for `Replace` on a
-    /// populated namespace whose rows EQUAL the seed (D9a match-aware idempotency).
+    /// populated namespace whose rows EQUAL the seed (match-aware idempotency).
     AlreadySeeded,
 }
 
-/// Typed error for namespace seeding (spec §5.2.2; folds ASMP-004 — no raw
-/// libsql leakage at the registration boundary).
+/// Typed error for namespace seeding — no raw
+/// libsql leakage at the registration boundary.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum NamespaceRegistrationError {
     /// A `Replace` seed was requested on a namespace that already has
     /// `entity_types` rows whose taxonomy DIFFERS from the seed. `Replace` is
-    /// greenfield-only (D9): use `Augment` / `assert_entity_type`, open a fresh
+    /// greenfield-only: use `Augment` / `assert_entity_type`, open a fresh
     /// namespace, or await the deferred `migrate_namespace_taxonomy` op (§5.11).
     #[error(
-        "namespace '{group_id}' already populated — Replace is greenfield-only (D9); \
+        "namespace '{group_id}' already populated — Replace is greenfield-only; \
          use Augment / assert_entity_type, a fresh namespace, or migrate_namespace_taxonomy"
     )]
     AlreadyPopulated {
@@ -213,7 +213,7 @@ pub enum NamespaceRegistrationError {
     Store(#[from] crate::core::error::Error),
 }
 
-/// Seed instruction for a namespace's entity-type registry (spec §5.2.1).
+/// Seed instruction for a namespace's entity-type registry.
 ///
 /// Applied at registration time (`register_namespace_with_seed`) or build time
 /// (`with_seed_registry`, default namespace). The id=0 "Entity" catch-all is
@@ -244,16 +244,16 @@ pub enum NamespaceSeed {
     /// Seed with ONLY `specs` — replaces the defaults entirely. id=0 "Entity"
     /// is injected by the engine if absent.
     ///
-    /// GREENFIELD-ONLY (D9): on a populated namespace whose rows DIFFER, this
+    /// GREENFIELD-ONLY: on a populated namespace whose rows DIFFER, this
     /// fails loud (`NamespaceRegistrationError::AlreadyPopulated`) with NO DB
     /// write. On a populated namespace whose rows EQUAL the seed, it is
-    /// idempotent (D9a). On a fresh namespace it seeds exactly `specs`.
+    /// idempotent (match-aware). On a fresh namespace it seeds exactly `specs`.
     Replace(Vec<EntityTypeSpec>),
 }
 
 impl NamespaceSeed {
-    /// Ensure the id=0 "Entity" catch-all is present, prepending it when absent
-    /// (spec §5.2.1 / §5.8). Idempotent: a no-op when a spec with id=0 already
+    /// Ensure the id=0 "Entity" catch-all is present, prepending it when absent.
+    /// Idempotent: a no-op when a spec with id=0 already
     /// exists. Called unconditionally inside the seed-application path before
     /// any DB write.
     pub fn ensure_catch_all(specs: &mut Vec<EntityTypeSpec>) {
@@ -263,7 +263,7 @@ impl NamespaceSeed {
         specs.insert(0, catch_all_spec());
     }
 
-    /// Pre-validate a seed's specs for id and name collisions (spec §5.4),
+    /// Pre-validate a seed's specs for id and name collisions,
     /// BEFORE any DB write. Returns `Err` on the first collision — fail loud,
     /// no partial apply. Name comparison is case-insensitive to mirror the
     /// `label_to_id_or_register` near-duplicate convergence.
@@ -544,10 +544,10 @@ impl EntityTypeRegistry {
     }
 }
 
-/// TD-021: Resolve a label to its registered integer id, registering a NEW
+/// Resolve a label to its registered integer id, registering a NEW
 /// row in `entity_types` if the label is novel.
 ///
-/// ## Semantics (open-vocabulary per TD-021 §2-B)
+/// ## Semantics (open-vocabulary)
 ///
 /// - Trim + placeholder labels ("Entity"/"UNKNOWN"/empty) → return 0 (catch-all).
 /// - If `registry` already contains the label (case-insensitive) → return cached id.
@@ -570,8 +570,8 @@ impl EntityTypeRegistry {
 /// - `rql.entity_types.label_cache_hit_total` — labels found in existing registry.
 ///
 /// `group_id` is deliberately NOT a label — unbounded cardinality.
-/// Bundled parameters for [`label_to_id_or_register`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`label_to_id_or_register`] — args-as-object to
+/// keep the function under clippy's `too_many_arguments` threshold.
 #[derive(Debug, Clone, Copy)]
 pub struct LabelToIdOrRegisterParams<'a> {
     /// DB connection for the slow-path case-insensitive lookup + registration.
@@ -679,7 +679,7 @@ pub async fn label_to_id_or_register(
     };
 
     let description = format!(
-        "LLM-discovered type (TD-021 open vocabulary). Surface form: '{}'.",
+        "LLM-discovered type (open vocabulary). Surface form: '{}'.",
         trimmed
     );
 
@@ -742,7 +742,7 @@ pub async fn label_to_id_or_register(
 }
 
 /// First-call persistence helper for the per-call `EntityTypeSpec` override
-/// (spec §1 "Hybrid per-namespace persistent + caller override").
+/// ("Hybrid per-namespace persistent + caller override").
 ///
 /// ## Semantics
 ///
@@ -752,7 +752,7 @@ pub async fn label_to_id_or_register(
 /// - If `entity_types` is empty for `group_id` → INSERT OR IGNORE each spec,
 ///   return count of rows inserted.
 ///
-/// Idempotent. Per spec §1: persistence is first-call only.
+/// Idempotent: persistence is first-call only.
 pub async fn upsert_entity_types(
     conn: &libsql::Connection,
     group_id: &str,
@@ -815,7 +815,7 @@ pub async fn upsert_entity_types(
     Ok(inserted)
 }
 
-/// Apply a [`NamespaceSeed`] to `group_id` (spec §5.2.2 — D9 / D9a logic).
+/// Apply a [`NamespaceSeed`] to `group_id`.
 ///
 /// **The caller MUST hold an open `BEGIN IMMEDIATE` transaction** on `conn`
 /// (the facade wraps this with the namespace-policy write in ONE txn so there is
@@ -825,12 +825,12 @@ pub async fn upsert_entity_types(
 /// - Fresh namespace (zero rows): seed exactly the resolved specs → `Seeded`.
 /// - Populated + `Default`/`Augment`: no write → `AlreadySeeded`.
 /// - Populated + `Replace` whose rows EQUAL the seed (id/name/description set,
-///   catch-all-aware): no write → `AlreadySeeded` (D9a).
+///   catch-all-aware): no write → `AlreadySeeded`.
 /// - Populated + `Replace` whose rows DIFFER: `Err(AlreadyPopulated)`, NO write
-///   (D9 — existing `entity_type_id`s can never be orphaned; ASMP-003).
+///   (existing `entity_type_id`s can never be orphaned).
 ///
-/// id=0 "Entity" catch-all is always present in the resolved specs (§5.8).
-/// Emits the §5.10 seed observability counters.
+/// id=0 "Entity" catch-all is always present in the resolved specs.
+/// Emits the seed observability counters.
 pub async fn apply_namespace_seed(
     conn: &libsql::Connection,
     group_id: &str,
@@ -855,7 +855,7 @@ pub async fn apply_namespace_seed(
         match seed {
             NamespaceSeed::Replace(_) => {
                 if specs_equal(&existing, &resolved) {
-                    // D9a — match-aware idempotency: identical taxonomy → quiet.
+                    // Match-aware idempotency: identical taxonomy → quiet.
                     counter!(
                         "kremory.namespace.seed_skipped_already_seeded_total",
                         "group_id" => group_id.to_string()
@@ -863,7 +863,7 @@ pub async fn apply_namespace_seed(
                     .increment(1);
                     return Ok(SeedOutcome::AlreadySeeded);
                 }
-                // D9 — divergent Replace on a populated namespace fails loud, NO write.
+                // Divergent Replace on a populated namespace fails loud, NO write.
                 return Err(NamespaceRegistrationError::AlreadyPopulated {
                     group_id: group_id.to_string(),
                 });
@@ -925,7 +925,7 @@ fn seed_has_catch_all(seed: &NamespaceSeed) -> bool {
 }
 
 /// Load the full `entity_types` slice for `group_id` as owned specs, used for
-/// the D9a match-aware compare. Runs on the caller's (possibly in-txn) `conn`.
+/// the match-aware compare. Runs on the caller's (possibly in-txn) `conn`.
 async fn load_specs_in_txn(
     conn: &libsql::Connection,
     group_id: &str,
@@ -974,7 +974,7 @@ async fn load_specs_in_txn(
     Ok(specs)
 }
 
-/// Compare two spec sets for D9a match-aware idempotency: same id/name/description
+/// Compare two spec sets for match-aware idempotency: same id/name/description
 /// set, order-independent. Both inputs come from id-ascending sources.
 fn specs_equal(a: &[EntityTypeSpec], b: &[EntityTypeSpec]) -> bool {
     if a.len() != b.len() {
@@ -996,7 +996,7 @@ fn specs_equal(a: &[EntityTypeSpec], b: &[EntityTypeSpec]) -> bool {
 mod tests {
     use super::*;
 
-    // ── upsert_entity_types DB tests (TD-013 per-call override) ──────────────
+    // ── upsert_entity_types DB tests (per-call override) ──────────────
     //
     // Tests #1-#3 call `upsert_entity_types` which does not yet exist.
     // Expected failure: E0425 (cannot find fn `upsert_entity_types` in module `super`).
@@ -1086,7 +1086,7 @@ mod tests {
 
     /// #2 — upsert_entity_types is a no-op (returns 0) when the group already has rows.
     ///
-    /// Persistence is "first-call" only per spec §1: once the group has any rows,
+    /// Persistence is "first-call" only: once the group has any rows,
     /// the override is applied ephemerally for the current call only — DB is not
     /// clobbered. This test verifies that invariant at the upsert_entity_types level.
     ///
@@ -1552,7 +1552,7 @@ mod tests {
         assert_eq!(reg.specs()[2].id, 2);
     }
 
-    // ─── TD-021: label_to_id_or_register acceptance tests ────────────────────
+    // ─── label_to_id_or_register acceptance tests ────────────────────
 
     /// #L1 — novel label registers a new row + returns id > 0.
     ///
@@ -1775,7 +1775,7 @@ mod tests {
         );
     }
 
-    // ── Custom entity-type seed registry (spec §5.13 T1–T9, T11) ────────────
+    // ── Custom entity-type seed registry ──────────────────────────────────────
     //
     // Deterministic, no live LLM. Covers ensure_catch_all / ensure_no_id_collision
     // (unit) and apply_namespace_seed (in-process integration over a migrated
@@ -1895,7 +1895,7 @@ mod tests {
         );
     }
 
-    /// T6 (load-bearing, D9 / ASMP-003 regression) — `Replace` on a POPULATED
+    /// T6 (load-bearing regression test) — `Replace` on a POPULATED
     /// namespace with a DIFFERENT taxonomy → `Err(AlreadyPopulated)`, and the
     /// table is BYTE-IDENTICAL before/after (no DB write, no orphaning).
     #[tokio::test]
@@ -1929,7 +1929,7 @@ mod tests {
         let snapshot_after = load_rows(&conn, "legal").await;
         assert_eq!(
             snapshot_before, snapshot_after,
-            "table must be byte-identical after a refused Replace (ASMP-003 no orphaning)"
+            "table must be byte-identical after a refused Replace (no orphaning)"
         );
     }
 
@@ -1999,7 +1999,7 @@ mod tests {
     }
 
     /// T9 — `apply_namespace_seed` makes no partial write when the apply path
-    /// refuses. A divergent Replace on a populated namespace (D9) writes zero
+    /// refuses. A divergent Replace on a populated namespace writes zero
     /// rows — the all-or-nothing boundary. The atomic policy+seed rollback is
     /// covered at the facade layer (tests/seed_registry.rs).
     #[tokio::test]
@@ -2026,7 +2026,7 @@ mod tests {
         );
     }
 
-    /// T11 (load-bearing, D9a match-aware idempotency) — `Replace(seed)` on a
+    /// T11 (load-bearing, match-aware idempotency) — `Replace(seed)` on a
     /// populated namespace whose rows EQUAL `seed` → `AlreadySeeded` (no write);
     /// whose rows DIFFER → `Err(AlreadyPopulated)`. Proves the idempotent-boot
     /// pattern is safe yet a genuine taxonomy change fails loud.
@@ -2042,14 +2042,14 @@ mod tests {
         assert!(matches!(first, SeedOutcome::Seeded { .. }));
         let snapshot = load_rows(&conn, "legal").await;
 
-        // Second boot, IDENTICAL seed → AlreadySeeded, no write (D9a).
+        // Second boot, IDENTICAL seed → AlreadySeeded, no write.
         let second = apply_namespace_seed(&conn, "legal", &seed)
             .await
             .expect("identical re-seed is idempotent");
         assert_eq!(
             second,
             SeedOutcome::AlreadySeeded,
-            "identical Replace on every boot must be safe (D9a)"
+            "identical Replace on every boot must be safe"
         );
         assert_eq!(
             load_rows(&conn, "legal").await,
@@ -2057,7 +2057,7 @@ mod tests {
             "identical re-seed must not mutate the table"
         );
 
-        // Divergent seed → loud failure (D9).
+        // Divergent seed → loud failure.
         let divergent = NamespaceSeed::Replace(vec![spec(11, "Court"), spec(12, "Magistrate")]);
         let err = apply_namespace_seed(&conn, "legal", &divergent)
             .await
@@ -2068,7 +2068,7 @@ mod tests {
         ));
     }
 
-    /// T11b — D9a equality is catch-all-aware: a Replace that omits id=0 but is
+    /// T11b — match-aware equality is catch-all-aware: a Replace that omits id=0 but is
     /// otherwise identical to existing rows (which include the injected catch-all)
     /// still matches → `AlreadySeeded`.
     #[tokio::test]

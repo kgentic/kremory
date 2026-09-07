@@ -5,9 +5,8 @@ use tracing;
 
 use crate::core::error::Result;
 use crate::core::schema::{Entity, Fact, TemporalGraph};
-// ADR-072 seq1 impl-spec §2 ("Recall arm — content_search"): the content-RAG
-// projection type + episode source-attribution kind. Both are themselves
-// `#[cfg(feature = "content-search")]`-gated in `memory::types`.
+// The content-RAG projection type + episode source-attribution kind. Both
+// are themselves `#[cfg(feature = "content-search")]`-gated in `memory::types`.
 #[cfg(feature = "content-search")]
 use crate::memory::types::{ContentPassage, Namespace, RetrievedContext, SourceKind, SourceRef};
 
@@ -67,7 +66,7 @@ fn sanitise_fts5_query(raw: &str) -> Option<String> {
 }
 
 /// Bundled parameters for [`TemporalGraph::fts_search_entities`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments).
+/// to keep the function under clippy's too_many_arguments threshold.
 pub struct FtsSearchEntitiesParams<'a> {
     pub query: &'a str,
     pub limit: usize,
@@ -75,7 +74,7 @@ pub struct FtsSearchEntitiesParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::fts_search_entities_no_count`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 pub(crate) struct FtsSearchEntitiesNoCountParams<'a> {
     pub query: &'a str,
     pub limit: usize,
@@ -83,7 +82,7 @@ pub(crate) struct FtsSearchEntitiesNoCountParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::fts_search_facts`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments).
+/// to keep the function under clippy's too_many_arguments threshold.
 pub struct FtsSearchFactsParams<'a> {
     pub query: &'a str,
     pub limit: usize,
@@ -91,22 +90,22 @@ pub struct FtsSearchFactsParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::content_search`] — args-as-object
-/// per TD-042 (rust-conventions §too_many_arguments). ADR-072 seq1 impl-spec
-/// §2. Feature-gated behind `content-search` (mirrors the type it returns).
+/// to keep the function under clippy's too_many_arguments threshold.
+/// Feature-gated behind `content-search` (mirrors the type it returns).
 #[cfg(feature = "content-search")]
 pub(crate) struct ContentSearchParams<'a> {
     pub query: &'a str,
     pub limit: usize,
     pub filters: &'a SearchFilters,
-    /// Point-in-time (valid-time) filter (ADR-068 semantics, extended to episode
-    /// content — see the fix note on `build_as_of_clause`). `None` returns
+    /// Point-in-time (valid-time) filter, extended to episode
+    /// content — see the fix note on `build_as_of_clause`. `None` returns
     /// present-day results, unaffected.
     pub as_of: Option<DateTime<Utc>>,
 }
 
 /// Bundled parameters for [`TemporalGraph::run_content_match_query`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
-/// `content_search`'s AND/OR fallback ladder (ADR-072 substrate fix) calls
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
+/// `content_search`'s AND/OR fallback ladder calls
 /// this twice with different `match_query` values, so the shared shape
 /// avoids duplicating the sql/limit/group_params plumbing per rung.
 #[cfg(feature = "content-search")]
@@ -117,21 +116,22 @@ struct ContentMatchQueryParams<'a> {
     group_params: &'a [libsql::Value],
 }
 
-/// Bundled parameters for [`TemporalGraph::vector_search_episodes`] — TD-136
-/// dense episode retrieval arm. Args-as-object per TD-042. Feature-gated behind
+/// Bundled parameters for [`TemporalGraph::vector_search_episodes`] — the
+/// dense episode retrieval arm. Args-as-object to keep the function under
+/// clippy's too_many_arguments threshold. Feature-gated behind
 /// `content-search` (mirrors the `ContentPassage` it returns).
 #[cfg(feature = "content-search")]
 pub(crate) struct VectorSearchEpisodesParams<'a> {
     pub query_embedding: &'a [f32],
     pub limit: usize,
     pub filters: &'a SearchFilters,
-    /// See [`ContentSearchParams::as_of`] — same ADR-068 semantics, same episode
+    /// See [`ContentSearchParams::as_of`] — same semantics, same episode
     /// timestamp column, applied to the dense arm instead of the lexical one.
     pub as_of: Option<DateTime<Utc>>,
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_entities`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 pub struct VectorSearchEntitiesParams<'a> {
     pub query_embedding: &'a [f32],
     pub limit: usize,
@@ -139,7 +139,7 @@ pub struct VectorSearchEntitiesParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_entities_no_count`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 pub(crate) struct VectorSearchEntitiesNoCountParams<'a> {
     pub query_embedding: &'a [f32],
     pub limit: usize,
@@ -147,7 +147,7 @@ pub(crate) struct VectorSearchEntitiesNoCountParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_with_index`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 struct VectorSearchWithIndexParams<'a> {
     vec_str: &'a str,
     limit: usize,
@@ -155,7 +155,7 @@ struct VectorSearchWithIndexParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_brute_force`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 struct VectorSearchBruteForceParams<'a> {
     vec_str: &'a str,
     limit: usize,
@@ -163,7 +163,7 @@ struct VectorSearchBruteForceParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::hybrid_search_entities`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 pub struct HybridSearchEntitiesParams<'a> {
     pub query_text: &'a str,
     pub query_embedding: &'a [f32],
@@ -172,7 +172,7 @@ pub struct HybridSearchEntitiesParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_facts`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 pub struct VectorSearchFactsParams<'a> {
     pub query_embedding: &'a [f32],
     pub limit: usize,
@@ -180,7 +180,7 @@ pub struct VectorSearchFactsParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_facts_with_index`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 struct VectorSearchFactsWithIndexParams<'a> {
     vec_str: &'a str,
     limit: usize,
@@ -188,7 +188,7 @@ struct VectorSearchFactsWithIndexParams<'a> {
 }
 
 /// Bundled parameters for [`TemporalGraph::vector_search_facts_brute_force`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments).
+/// args-as-object to keep the function under clippy's too_many_arguments threshold.
 struct VectorSearchFactsBruteForceParams<'a> {
     vec_str: &'a str,
     limit: usize,
@@ -196,7 +196,8 @@ struct VectorSearchFactsBruteForceParams<'a> {
 }
 
 /// Bundled parameters for `TemporalGraph::vector_search_episodes_with_index`
-/// (TD-136 dense episode arm) — args-as-object per TD-042. Feature-gated behind
+/// (dense episode arm) — args-as-object to keep the function under clippy's
+/// too_many_arguments threshold. Feature-gated behind
 /// `content-search`.
 #[cfg(feature = "content-search")]
 struct VectorSearchEpisodesWithIndexParams<'a> {
@@ -207,7 +208,8 @@ struct VectorSearchEpisodesWithIndexParams<'a> {
 }
 
 /// Bundled parameters for `TemporalGraph::vector_search_episodes_brute_force`
-/// (TD-136 dense episode arm) — args-as-object per TD-042. Feature-gated behind
+/// (dense episode arm) — args-as-object to keep the function under clippy's
+/// too_many_arguments threshold. Feature-gated behind
 /// `content-search`.
 #[cfg(feature = "content-search")]
 struct VectorSearchEpisodesBruteForceParams<'a> {
@@ -217,7 +219,7 @@ struct VectorSearchEpisodesBruteForceParams<'a> {
     as_of: Option<DateTime<Utc>>,
 }
 
-/// TD-114: over-fetch plan for a filtered-ANN (`vector_top_k`) query.
+/// Over-fetch plan for a filtered-ANN (`vector_top_k`) query.
 ///
 /// `vector_top_k` exposes no predicate argument, so `group_id`/namespace
 /// filtering is a POST-filter applied AFTER the index fetch. Fetching exactly
@@ -235,8 +237,8 @@ struct IndexFetchPlan {
     namespace_rows: Option<i64>,
 }
 
-/// TD-114: args-as-object for [`TemporalGraph::plan_index_fetch`]
-/// (rust-conventions §too_many_arguments; clippy.toml threshold 3).
+/// Args-as-object for [`TemporalGraph::plan_index_fetch`] to keep the
+/// function under clippy's too_many_arguments threshold (clippy.toml threshold 3).
 struct IndexFetchQuery<'a> {
     /// Table to size the over-fetch against (`"entities"` | `"facts"`).
     table: &'a str,
@@ -245,8 +247,8 @@ struct IndexFetchQuery<'a> {
     filters: &'a SearchFilters,
 }
 
-/// TD-114: args-as-object for [`TemporalGraph::emit_index_shortfall`]
-/// (rust-conventions §too_many_arguments).
+/// Args-as-object for [`TemporalGraph::emit_index_shortfall`] to keep the
+/// function under clippy's too_many_arguments threshold.
 struct IndexShortfall<'a> {
     /// Arm label for the metric (`"entities"` | `"facts"`).
     arm: &'a str,
@@ -258,7 +260,7 @@ struct IndexShortfall<'a> {
 }
 
 impl TemporalGraph {
-    /// Increment `access_count` for a batch of entity IDs (Story #247).
+    /// Increment `access_count` for a batch of entity IDs.
     ///
     /// Called by all entity-returning search paths immediately after the
     /// result set is collected. Each entity in the result gets `access_count
@@ -289,14 +291,14 @@ impl TemporalGraph {
         }
     }
 
-    /// TD-114: compute the filtered-ANN over-fetch plan for `vector_top_k`.
+    /// Compute the filtered-ANN over-fetch plan for `vector_top_k`.
     ///
     /// When a `group_id`/namespace filter is present, estimate the namespace
     /// selectivity from indexed row counts and scale the index fetch so ~`limit`
     /// rows survive the post-filter: `k ≈ limit × total / namespace_rows`, capped
     /// at `total`. Unfiltered or whole-table namespaces short-circuit to `k =
-    /// limit` — the "one DB per project" common case (see TD-114 escape hatch)
-    /// pays nothing. Count-query failures degrade gracefully to `k = limit`
+    /// limit` — the "one DB per project" common case pays nothing.
+    /// Count-query failures degrade gracefully to `k = limit`
     /// (prior behaviour), never an error.
     async fn plan_index_fetch(&self, q: IndexFetchQuery<'_>) -> IndexFetchPlan {
         let IndexFetchQuery {
@@ -350,7 +352,7 @@ impl TemporalGraph {
         row.get::<i64>(0).ok()
     }
 
-    /// TD-114: emit the per-namespace recall-shortfall signal for a filtered-ANN
+    /// Emit the per-namespace recall-shortfall signal for a filtered-ANN
     /// query. Fires only when the namespace held ENOUGH rows to satisfy the
     /// request (`namespace_rows ≥ limit`) yet the post-filtered index delivered
     /// fewer than `limit` — a true ANN-horizon loss, distinct from a genuinely
@@ -400,7 +402,7 @@ impl TemporalGraph {
                 filters,
             })
             .await?;
-        // Story #247: increment access_count for every returned entity.
+        // Increment access_count for every returned entity.
         let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
         self.increment_entity_access_counts(&returned_ids).await;
         Ok(hits)
@@ -408,7 +410,7 @@ impl TemporalGraph {
 
     /// Like [`fts_search_entities`] but does NOT increment `access_count`.
     /// Used by `contextualize()` which manages access-count increments itself
-    /// after RRF composition (RISK-002: avoid double-increment when both FTS
+    /// after RRF composition (avoiding double-increment when both FTS
     /// and vector paths surface the same entity).
     pub(crate) async fn fts_search_entities_no_count(
         &self,
@@ -426,7 +428,7 @@ impl TemporalGraph {
                 let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
                 histogram!("rql.search.fts_entities_hits").record(0.0);
                 histogram!("rql.search.fts_entities_ms").record(_ms);
-                // R2.2 §spec-td-085: empty-result counter + paired info (ADR D1).
+                // Empty-result counter + paired info.
                 // arm label per pre-R2 enumeration table §4.
                 metrics::counter!(
                     "kremory.search.empty_result_total",
@@ -500,7 +502,7 @@ impl TemporalGraph {
                 let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
                 histogram!("rql.search.fts_facts_hits").record(0.0);
                 histogram!("rql.search.fts_facts_ms").record(_ms);
-                // R2.2 §spec-td-085: empty-result counter + paired info (ADR D1).
+                // Empty-result counter + paired info.
                 // arm label per pre-R2 enumeration table §4.
                 metrics::counter!(
                     "kremory.search.empty_result_total",
@@ -562,7 +564,7 @@ impl TemporalGraph {
     /// observability since it may call this twice, see the AND/OR ladder
     /// below).
     ///
-    /// FTS5 MATCH syntax errors surface here (Rule 19 — never swallowed):
+    /// FTS5 MATCH syntax errors surface here — never swallowed:
     /// `fts5_tokens` quotes every token so this should be rare in practice,
     /// but a genuine parse failure must be loud, not silent.
     #[cfg(feature = "content-search")]
@@ -621,11 +623,11 @@ impl TemporalGraph {
         Ok(passages)
     }
 
-    /// ADR-072 seq1 impl-spec §2 — BM25-only full-text search over raw
+    /// BM25-only full-text search over raw
     /// `episodes.content` via the `episodes_fts` external-content shadow
     /// table (Migration 022). **Parallel arm, NOT fused** into
     /// `rrf_fuse_entities`/`rrf_fuse_facts` below — kremory's RRF is
-    /// pairwise per-result-type, not a generic N-list fuser (ADR-072 §6b);
+    /// pairwise per-result-type, not a generic N-list fuser;
     /// content passages are a third result *type*, returned as their own
     /// BM25-ranked stream via `.content()` (`facade::recall`).
     ///
@@ -668,7 +670,7 @@ impl TemporalGraph {
     ///
     /// `fts_search_entities`/`fts_search_facts` are UNCHANGED (still
     /// AND-only via `sanitise_fts5_query`) — this ladder is scoped to
-    /// `content_search` only, per the ADR-072 content-RAG substrate.
+    /// `content_search` only, per the content-RAG substrate.
     #[cfg(feature = "content-search")]
     pub(crate) async fn content_search(
         &self,
@@ -701,7 +703,7 @@ impl TemporalGraph {
 
         // Build group_id filter — params start at ?3 (after ?1=query, ?2=limit).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
-        // ADR-068 extension (see `build_as_of_clause`) — as_of params start
+        // Extension (see `build_as_of_clause`) — as_of params start
         // right after the group params.
         let (as_of_clause, as_of_params) =
             build_as_of_clause(as_of, "e", 3 + filters.group_ids.len());
@@ -711,7 +713,7 @@ impl TemporalGraph {
         // Return the FULL episode text (`e.content`), not an FTS5 `snippet()`
         // excerpt. The 32-token snippet window (FTS5 caps `snippet()` at 64
         // tokens) was severing two load-bearing things measured by the
-        // LoCoMo LLM-judge (Workstream A, 2026-07-20): (A) the answer itself
+        // LoCoMo LLM-judge: (A) the answer itself
         // when it sat outside the ±window around the matched term, and (B) the
         // episode's leading `[Session N] [<time> on <date>]` header — needed to
         // resolve relative-date facts ("yesterday") to an absolute date — which
@@ -761,16 +763,16 @@ impl TemporalGraph {
         let hits = passages.len();
         let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("kremory.recall.content_search_ms").record(_ms);
-        // Per-arm attribution (Rule 19 anti-pattern #9 — a plain success
+        // Per-arm attribution — a plain success
         // counter would lie: "and" and "or_fallback" both look like generic
         // success, but "or_fallback" firing at a high rate is a signal the
-        // AND-precise arm is systematically missing, worth watching).
+        // AND-precise arm is systematically missing, worth watching.
         metrics::counter!("kremory.recall.content_search_total", "arm" => arm).increment(1);
-        // Per-arm attribution (Rule 19 anti-pattern #3 — never a single
-        // aggregate): content's contribution is visible against entity/fact
-        // via the shared `arm` label, even though seq1 does not retrofit the
-        // entity/fact paths with this same counter (out of scope — see
-        // impl-spec DoD #3, entity/fact recall stays byte-identical).
+        // Per-arm attribution, never a single
+        // aggregate: content's contribution is visible against entity/fact
+        // via the shared `arm` label, even though this does not retrofit the
+        // entity/fact paths with this same counter (out of scope —
+        // entity/fact recall stays byte-identical).
         metrics::counter!("kremory.recall.results_total", "arm" => "content")
             .increment(hits as u64);
         if hits == 0 {
@@ -813,7 +815,7 @@ impl TemporalGraph {
                 filters,
             })
             .await?;
-        // Story #247: increment access_count for every returned entity.
+        // Increment access_count for every returned entity.
         let returned_ids: Vec<String> = hits.iter().map(|h| h.item.id.clone()).collect();
         self.increment_entity_access_counts(&returned_ids).await;
         Ok(hits)
@@ -821,7 +823,7 @@ impl TemporalGraph {
 
     /// Like [`vector_search_entities`] but does NOT increment `access_count`.
     /// Used by `contextualize()` which manages access-count increments itself
-    /// after RRF composition (RISK-002: avoid double-increment when both FTS
+    /// after RRF composition (avoiding double-increment when both FTS
     /// and vector paths surface the same entity).
     pub(crate) async fn vector_search_entities_no_count(
         &self,
@@ -854,8 +856,8 @@ impl TemporalGraph {
         let hits = match result {
             Ok(hits) => hits,
             Err(e) => {
-                // R2.2 §spec-td-085 FLAG-1: bind error before fallback — counter + paired warn (ADR D1).
-                // arm/reason labels per pre-R2 enumeration table §5.
+                // Bind error before fallback — counter + paired warn.
+                // arm/reason labels per the enumeration table.
                 metrics::counter!(
                     "kremory.search.error_total",
                     "arm" => "vector_entities",
@@ -868,7 +870,7 @@ impl TemporalGraph {
                     reason = "index_fallback",
                     "kremory.search.vector_entities index failed, falling back to brute-force"
                 );
-                // R2.2 FLAG-4: instrument brute-force failure path before propagation.
+                // Instrument brute-force failure path before propagation.
                 match self
                     .vector_search_brute_force(VectorSearchBruteForceParams {
                         vec_str: &vec_str,
@@ -913,7 +915,7 @@ impl TemporalGraph {
             limit,
             filters,
         } = params;
-        // TD-114: `vector_top_k` has no predicate arg, so `group_id` is a
+        // `vector_top_k` has no predicate arg, so `group_id` is a
         // POST-filter (WHERE below). Over-fetch by estimated namespace
         // selectivity so ~`limit` survive, then cap with a real LIMIT.
         let base = effective_k(limit, usize::MAX);
@@ -1107,8 +1109,8 @@ impl TemporalGraph {
         let hits = match result {
             Ok(hits) => hits,
             Err(e) => {
-                // R2.2 §spec-td-085 FLAG-1: bind error before fallback — counter + paired warn (ADR D1).
-                // arm/reason labels per pre-R2 enumeration table §5.
+                // Bind error before fallback — counter + paired warn.
+                // arm/reason labels per the enumeration table.
                 metrics::counter!(
                     "kremory.search.error_total",
                     "arm" => "vector_facts",
@@ -1121,7 +1123,7 @@ impl TemporalGraph {
                     reason = "index_fallback",
                     "kremory.search.vector_facts index failed, falling back to brute-force"
                 );
-                // R2.2 FLAG-4: instrument brute-force failure path before propagation.
+                // Instrument brute-force failure path before propagation.
                 match self
                     .vector_search_facts_brute_force(VectorSearchFactsBruteForceParams {
                         vec_str: &vec_str,
@@ -1166,7 +1168,7 @@ impl TemporalGraph {
             limit,
             filters,
         } = params;
-        // TD-114: `vector_top_k` post-filters `group_id` (no predicate arg), so
+        // `vector_top_k` post-filters `group_id` (no predicate arg), so
         // over-fetch by estimated namespace selectivity + cap with a real LIMIT.
         let base = effective_k(limit, usize::MAX);
         let plan = self
@@ -1275,12 +1277,12 @@ impl TemporalGraph {
         Ok(hits)
     }
 
-    /// TD-136 dense episode retrieval arm — cosine vector search over
+    /// The dense episode retrieval arm — cosine vector search over
     /// `episodes.embedding` (Migration 026), returning [`ContentPassage`]s so it
     /// composes with the BM25 `content_search` stream (see
     /// [`rrf_fuse_content_streams`]). Mirrors [`vector_search_facts`] exactly:
     /// DiskANN index (`vector_top_k('episodes_vec_idx', …)`) first, brute-force
-    /// fallback on index error (TD-115 resilience). Scoped by `filters.group_ids`.
+    /// fallback on index error (resilience). Scoped by `filters.group_ids`.
     ///
     /// The returned `ContentPassage.score` is the raw cosine distance
     /// (`lower = more relevant`, matching `ContentPassage`'s BM25-rank
@@ -1366,7 +1368,7 @@ impl TemporalGraph {
         let _ms = _search_start.elapsed().as_secs_f64() * 1000.0;
         histogram!("rql.search.vector_episodes_hits").record(hits_count as f64);
         histogram!("rql.search.vector_episodes_ms").record(_ms);
-        // Per-arm attribution (Rule 19 anti-pattern #3) — the dense episode arm's
+        // Per-arm attribution — the dense episode arm's
         // contribution is visible against the BM25 `content` arm via the shared
         // label on `kremory.recall.results_total`.
         metrics::counter!("kremory.recall.results_total", "arm" => "episode_dense")
@@ -1386,7 +1388,7 @@ impl TemporalGraph {
             filters,
             as_of,
         } = params;
-        // TD-114: `vector_top_k` post-filters group_id (no predicate arg), so
+        // `vector_top_k` post-filters group_id (no predicate arg), so
         // over-fetch by estimated namespace selectivity + cap with a real LIMIT.
         // NOTE: `plan_index_fetch`'s over-fetch estimate does not (yet) account
         // for `as_of` selectivity — a heavily-scoped as_of can legitimately
@@ -1402,7 +1404,7 @@ impl TemporalGraph {
             .await;
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=fetch_k).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
-        // ADR-068 extension (see `build_as_of_clause`) — as_of params start
+        // Extension (see `build_as_of_clause`) — as_of params start
         // right after the group params.
         let (as_of_clause, as_of_params) =
             build_as_of_clause(as_of, "e", 3 + filters.group_ids.len());
@@ -1452,7 +1454,7 @@ impl TemporalGraph {
         } = params;
         // Build group_id filter — params start at ?3 (after ?1=vec, ?2=limit).
         let (group_clause, group_params) = build_group_id_clause(&filters.group_ids, "e", 3);
-        // ADR-068 extension (see `build_as_of_clause`).
+        // Extension (see `build_as_of_clause`).
         let (as_of_clause, as_of_params) =
             build_as_of_clause(as_of, "e", 3 + filters.group_ids.len());
 
@@ -1529,7 +1531,7 @@ pub struct SearchFilters {
     pub group_ids: Vec<String>,
     /// Currently inert for fact search (the exclusion is hardcoded unconditionally
     /// at every fact-search call site, `expired_at IS NULL`) and unread by entity
-    /// search entirely — see TD-234. Kept (not removed) because one caller
+    /// search entirely. Kept (not removed) because one caller
     /// (`ingest_with.rs`) sets it to `false` expressing real intent that a future
     /// fix should honour, not erase.
     pub exclude_expired: bool,
@@ -1589,15 +1591,15 @@ fn build_group_id_clause(
 }
 
 /// Point-in-time (valid-time) filter for episode-anchored queries — extends
-/// ADR-068's `as_of` semantics from facts to episode content search.
+/// the `as_of` semantics from facts to episode content search.
 ///
-/// ADR-068 scoped `as_of` to the fact 1-hop expansion only, reasoning that
-/// entity search has no temporal column to filter on. That reasoning does not
-/// apply to episodes: `episodes.timestamp` already carries resolved world-time
-/// (TD-187) and is already selected by both `content_search` and
+/// `as_of` was originally scoped to the fact 1-hop expansion only, reasoning
+/// that entity search has no temporal column to filter on. That reasoning does
+/// not apply to episodes: `episodes.timestamp` already carries resolved
+/// world-time and is already selected by both `content_search` and
 /// `vector_search_episodes`'s queries — it was simply never filtered on,
-/// because content search was a minor arm when ADR-068 was written and became
-/// the default-on primary arm three weeks later (ADR-078), a gap nobody
+/// because content search was a minor arm when `as_of` was written and became
+/// the default-on primary arm three weeks later, a gap nobody
 /// revisited. Same "≤" (inclusive) semantics as the fact-side predicate:
 /// world-time state as of `ts`, not strictly-before.
 fn build_as_of_clause(
@@ -1618,15 +1620,15 @@ fn build_as_of_clause(
 /// k = 60 is the standard constant (controls how much rank position matters).
 /// Higher RRF score means more relevant.
 ///
-/// # Composite key (ADR-029c Decision 1)
+/// # Composite key
 ///
 /// The accumulator keys on `(entity_id, group_id)` rather than bare `entity_id`.
-/// After ADR-029b's composite-PK migration, entities in different namespaces share
+/// After the composite-PK migration, entities in different namespaces share
 /// no rows, so same-name entities from namespace-A and namespace-B map to distinct
 /// keys and are correctly preserved as separate results.
 ///
-/// `group_id: None` = legacy unkeyed entities that predate ADR-029b. They share
-/// the `(entity_id, None)` bucket — correct deduplication within that bucket.
+/// `group_id: None` = legacy unkeyed entities that predate that migration. They
+/// share the `(entity_id, None)` bucket — correct deduplication within that bucket.
 fn rrf_fuse_entities(
     vector_hits: Vec<SearchHit<Entity>>,
     fts_hits: Vec<SearchHit<Entity>>,
@@ -1688,7 +1690,7 @@ fn rrf_fuse_entities(
 /// k = 60 is the standard constant (controls how much rank position matters).
 /// Higher RRF score means more relevant.
 ///
-/// # Composite key (ADR-029c Decision 1)
+/// # Composite key
 ///
 /// The accumulator keys on `(fact_id, group_id)`. Fact ids are
 /// `INTEGER PRIMARY KEY AUTOINCREMENT` and are globally unique by construction,
@@ -1699,8 +1701,8 @@ fn rrf_fuse_entities(
 /// `group_id: None` = legacy unkeyed facts. Same None-bucket semantics as
 /// `rrf_fuse_entities`.
 ///
-/// **`cfg`-gated since TD-158 (2026-08-12).** Its production caller was
-/// `hybrid_search_facts`, deleted by TD-158 as dead in production. The ONLY
+/// **`cfg`-gated since the production caller was removed.** Its production
+/// caller was `hybrid_search_facts`, deleted as dead in production. The ONLY
 /// remaining caller is `rrf_fuse_facts_for_test` (below), which is
 /// `#[cfg(any(test, feature = "test-utils"))]` — so in a build without
 /// `test-utils` (e.g. `kremory-napi`) this became dead code and `deny(dead_code)`
@@ -1762,45 +1764,44 @@ fn rrf_fuse_facts(
     results
 }
 
-// ─── TD-066 Increment 1: content-fusion parity fix ──────────────────────────
+// ─── Content-fusion parity fix ──────────────────────────────────────────────
 //
-// `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md` §3.
 // Ports the REST layer's proven RRF hybrid-fusion
 // (`kremory-mcp/src/bin/kremory-http.rs::hybrid_mode_results`, measured
 // +30.2pts judged LoCoMo recall) down into `core::search` so the canonical
 // `Memory::recall()` + MCP `kremory_recall` surfaces reach it too.
 
-/// Bundled parameters for [`rrf_fuse_with_content`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`rrf_fuse_with_content`] — args-as-object to keep
+/// the function under clippy's too_many_arguments threshold.
 #[cfg(feature = "content-search")]
 pub(crate) struct RrfFuseWithContentParams<'a> {
     /// Entity/fact recall stream, already RRF-scored + assembled by
     /// `contextualize`/`memory::search` and sorted score-descending by the
-    /// caller (Phase 0, recall-v2-architecture-2026-07-03 Decision 8) — this
-    /// fn's rank-position RRF math depends on that ordering.
+    /// caller — this fn's rank-position RRF math depends on that ordering.
     pub entity_stream: Vec<RetrievedContext>,
-    /// ADR-072 `content_search` BM25 stream, already ranked by the FTS5
+    /// The `content_search` BM25 stream, already ranked by the FTS5
     /// `rank` column.
     pub content_stream: Vec<ContentPassage>,
     /// Stamped onto content-derived entries and used to derive the
-    /// composite-key `group_id` (spec §3 Increment 1 step 1). This fn is
+    /// composite-key `group_id`. This fn is
     /// single-namespace scoped (mirrors `.content()`'s own current scope) —
     /// every item across BOTH streams is assumed to share this one namespace.
     pub namespace: Option<&'a Namespace>,
     /// Caps the fused output. `None` degrades to
     /// `entity_stream.len().max(content_stream.len())` — the SAME
     /// flood-truncation fallback the REST layer's `hybrid_mode_results`
-    /// already validated (spec §3 Increment 1 step 2 / Risk #1).
+    /// already validated.
     pub limit: Option<usize>,
-    /// TD-066 Increment 2 (spec §3 Increment 2): per-stream weight applied to
+    /// Per-stream weight applied to
     /// the content stream's RRF contribution before it's summed into the
     /// fused score. `1.0` = neutral (today's equal-weight fusion, byte-
-    /// identical to Increment 1). `<= 0.0` degrades content's contribution to
-    /// (effectively) zero. Mirrors `SearchConfig::content_stream_weight`
+    /// identical to the unweighted fusion). `<= 0.0` degrades content's
+    /// contribution to (effectively) zero. Mirrors
+    /// `SearchConfig::content_stream_weight`
     /// (`core/config.rs`) — callers read the config value and pass it here;
     /// this fn stays a pure function over the weight, not a config reader.
     pub content_stream_weight: f32,
-    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): the RRF constant
+    /// The RRF constant
     /// `k` (default 60), threaded from the caller's live `SearchConfig` so the
     /// `KREMORY_RRF_K` boot override reaches THIS content-fusion sweep site.
     /// Formerly the hardcoded `const RRF_K: f64 = 60.0` inside the fn. Mirrors
@@ -1809,17 +1810,16 @@ pub(crate) struct RrfFuseWithContentParams<'a> {
     pub rrf_k: usize,
 }
 
-/// RRF-fuses the entity-graph recall stream with the ADR-072 `content_search`
+/// RRF-fuses the entity-graph recall stream with the `content_search`
 /// BM25 stream, so `Memory::recall()`'s canonical single-namespace terminals
 /// (`.raw()`, `execute()`) and the MCP `kremory_recall` tool reach the same
 /// fused surface the REST `/search?mode=hybrid` endpoint already proves
-/// (+30.2pts judged LoCoMo recall,
-/// `.ai-docs/research/bench-fix-investigation-2026-07-21.md`).
+/// (+30.2pts judged LoCoMo recall).
 ///
 /// NOT a new fusion algorithm: the SAME rank-position RRF math
 /// (`1/(k+rank+1)`, summed across streams when a result appears in more than
 /// one) and the SAME `(id, group_id)` composite-key dedup discipline
-/// `rrf_fuse_entities`/`rrf_fuse_facts` already use (ADR-029c Decision 1),
+/// `rrf_fuse_entities`/`rrf_fuse_facts` already use,
 /// extended to a third stream. Content passages are lifted into
 /// `RetrievedContext`-shaped entries via
 /// [`content_passage_into_retrieved_context`] so both streams share one
@@ -1839,22 +1839,22 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
         content_stream_weight,
         rrf_k,
     } = params;
-    // recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3): `k` now flows from
+    // `k` now flows from
     // the caller's live `SearchConfig` (KREMORY_RRF_K boot override), not a
     // hardcoded `const RRF_K = 60.0`.
     let rrf_k = rrf_k as f64;
 
     let entity_count = entity_stream.len();
     let content_count = content_stream.len();
-    // Rule 19 anti-pattern #9 — per-stream attribution, not one aggregate
+    // Per-stream attribution, not one aggregate
     // counter, so a stream silently returning zero candidates is visible
-    // (spec §6 Increment 1 observability plan).
+    // (observability plan).
     metrics::counter!("kremory.recall.canonical_fusion_total", "stream" => "entity_graph")
         .increment(entity_count as u64);
     metrics::counter!("kremory.recall.canonical_fusion_total", "stream" => "content")
         .increment(content_count as u64);
 
-    // TD-066 Increment 2 (spec §6): the currently-configured weight, mirroring
+    // The currently-configured weight, mirroring
     // the `graph_degree_weight_zero_total`-style "is this axis live" gauge
     // pattern (`context.rs:372-373`) — a gauge (not a counter) because the
     // weight is a single per-call configuration value, not a per-item event.
@@ -1866,8 +1866,8 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
     // Key: (id, group_id) — same composite discipline as rrf_fuse_entities /
     // rrf_fuse_facts. Entity ids are the entity's own id string; content ids
     // are the stringified `episode_id` (matches the REST layer's
-    // `content_mode_results` id convention exactly, for parity — spec Risk
-    // #1: port the EXACT same math, not a reimplementation).
+    // `content_mode_results` id convention exactly, for parity —
+    // port the EXACT same math, not a reimplementation).
     //
     // Value tuple = (weighted_score, baseline_score, item). `baseline_score`
     // is what this fn would produce at `content_stream_weight = 1.0` (today's
@@ -1913,7 +1913,7 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
             });
     }
 
-    // Reorder-detection (spec §6 Increment 2): order the full deduped set two
+    // Reorder-detection: order the full deduped set two
     // ways — by the real weighted score and by the weight=1.0 baseline —
     // BEFORE truncation, mirroring `axis_reorders`'s "order twice, compare"
     // pattern (`scoring/mod.rs:124`) and its scope note (the full candidate
@@ -1959,20 +1959,19 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
             .then_with(|| a.entity_id.cmp(&b.entity_id))
     });
 
-    // Flood-truncation (spec §3 Increment 1 step 2 / Risk #1's reference REST
-    // diff): honour the caller's explicit limit. Absent one, return the FULL
-    // deduped union of both arms — `entity_count + content_count` — so no
-    // distinct item is ever dropped.
+    // Flood-truncation: honour the caller's explicit limit. Absent one, return
+    // the FULL deduped union of both arms — `entity_count + content_count` —
+    // so no distinct item is ever dropped.
     //
-    // TD-138 regression fix: the previous no-limit bound `entity_count.max(
+    // Regression fix: the previous no-limit bound `entity_count.max(
     // content_count)` assumed the two arms OVERLAP (union ≈ max). For DISJOINT
     // arms it silently dropped `min(entity_count, content_count)` distinct
     // items — e.g. a 1-entity + 1-episode recall (`.raw()` with no limit under
     // `content-search`) capped to 1, and the score-tie tie-break (`entity_id`
     // asc, episode id "1") evicted the sole entity in favour of the episode.
     // That broke `td116_recall_returns_connected_facts_under_null_embedder` +
-    // the `facade_as_of_warn` positive suite (green at TD-116/TD-067 close,
-    // both `.raw()`-with-no-limit). The union is `entity_count + content_count`
+    // the `facade_as_of_warn` positive suite (both `.raw()`-with-no-limit).
+    // The union is `entity_count + content_count`
     // (post-dedup the map holds at most that many), so with no explicit limit
     // this never truncates; the bench's `--recall-limit N` path is unchanged.
     let cap = limit.unwrap_or(entity_count + content_count);
@@ -1994,7 +1993,7 @@ pub(crate) fn rrf_fuse_with_content(params: RrfFuseWithContentParams<'_>) -> Vec
 /// (`0.0`); the caller overwrites it with the fused RRF score immediately
 /// after construction.
 ///
-/// TD-198: `kremory-mcp` has its own wire-DTO-shaped twin of this fn
+/// `kremory-mcp` has its own wire-DTO-shaped twin of this fn
 /// (`content_passage_into_context_wire` in `kremory-http.rs`) that it
 /// cannot fold into the shared `RenderableContext` trait — this fn is
 /// private to this crate, and its `score: 0.0` placeholder is only valid at
@@ -2014,17 +2013,17 @@ fn content_passage_into_retrieved_context(
         source_refs: vec![passage.source_ref],
         incomplete: false,
         entity_type_id: 0,
-        // ONE literal, shared with `RetrievedContext::is_content_passage()`. Before
-        // 2026-08-05 this string was the sole discriminator and existed only here,
-        // so every consumer had to hardcode it — and the project's own E2E got it
-        // wrong instead (V1-CANONICAL §0b-sexies, E2E-2).
+        // ONE literal, shared with `RetrievedContext::is_content_passage()`.
+        // This string was previously the sole discriminator and existed only
+        // here, so every consumer had to hardcode it — and the project's own
+        // E2E got it wrong instead.
         entity_type_name: crate::memory::types::CONTENT_PASSAGE_TYPE_NAME.to_string(),
         namespace,
         facts: Vec::new(),
     }
 }
 
-/// TD-136: RRF-fuse the BM25 `content_search` episode stream with the dense
+/// RRF-fuse the BM25 `content_search` episode stream with the dense
 /// `vector_search_episodes` stream into ONE rank-ordered `Vec<ContentPassage>`,
 /// keyed by `episode_id`. The fused stream then enters
 /// [`rrf_fuse_with_content`] in place of the BM25-only stream, so the dense
@@ -2043,8 +2042,8 @@ fn content_passage_into_retrieved_context(
 /// downstream `rrf_fuse_with_content` re-ranks by position regardless.
 /// `limit` caps the fused output (`None` ⇒ the **union** of both arms, mirroring
 /// `rrf_fuse_with_content`'s flood-truncation fallback — so a no-limit fuse never
-/// truncates. Corrected 2026-08-03 with PAR-D3; this comment previously said "the
-/// larger single arm", which described the defect rather than the intent).
+/// truncates. This comment previously said "the
+/// larger single arm", which described a defect rather than the intent).
 #[cfg(feature = "content-search")]
 pub(crate) struct RrfFuseContentStreamsParams {
     /// BM25 `content_search` episode stream, ranked best-first (`rank` ASC).
@@ -2072,7 +2071,7 @@ pub(crate) fn rrf_fuse_content_streams(params: RrfFuseContentStreamsParams) -> V
     let bm25_count = bm25_stream.len();
     let dense_count = dense_stream.len();
 
-    // Rule 19 anti-pattern #3 — per-arm attribution so a silently-empty arm is
+    // Per-arm attribution so a silently-empty arm is
     // visible (e.g. dense returns 0 because embeddings were never backfilled).
     metrics::counter!("kremory.recall.episode_fusion_total", "arm" => "bm25")
         .increment(bm25_count as u64);
@@ -2115,9 +2114,9 @@ pub(crate) fn rrf_fuse_content_streams(params: RrfFuseContentStreamsParams) -> V
             .then_with(|| a.episode_id.cmp(&b.episode_id))
     });
 
-    // PAR-D3 (V1-CANONICAL §4.2): the no-limit fallback must be the UNION of the
+    // The no-limit fallback must be the UNION of the
     // two arms. This was `bm25_count.max(dense_count)` — the third copy of the
-    // TD-138 cap bug — which silently dropped `min(bm25_count, dense_count)`
+    // same cap bug — which silently dropped `min(bm25_count, dense_count)`
     // distinct episodes whenever the arms disagreed. Post-dedup the map holds at
     // most `bm25_count + dense_count`, so with no explicit limit this never
     // truncates; the explicit `--recall-limit N` path is unchanged. Mirrors the
@@ -2130,15 +2129,14 @@ pub(crate) fn rrf_fuse_content_streams(params: RrfFuseContentStreamsParams) -> V
     fused
 }
 
-// ─── TD-139 DoD item 2: dense fact retrieval arm ─────────────────────────────
+// ─── Dense fact retrieval arm ────────────────────────────────────────────────
 //
-// `.ai-docs/tech-debt/tech-debt-register.md` §TD-139. `TemporalGraph::
-// vector_search_facts` (this file, above) has been fully built, populated
-// (ingest already embeds every triple — `ingest_with.rs:~1774`,
-// `deferred.rs:~411`) and indexed since before TD-139 was filed, but had ZERO
+// `TemporalGraph::vector_search_facts` (this file, above) has been fully
+// built, populated (ingest already embeds every triple — `ingest_with.rs:~1774`,
+// `deferred.rs:~411`) and indexed for some time, but had ZERO
 // callers outside `tests/retrieval_benchmark.rs`. This section wires it into
-// the canonical recall fusion, feature-gated + default-OFF, mirroring TD-136's
-// dense-episode rollout shape (gate → degrade-on-failure → metrics → env →
+// the canonical recall fusion, feature-gated + default-OFF, mirroring the
+// dense-episode arm's rollout shape (gate → degrade-on-failure → metrics → env →
 // builder — see `facade/recall.rs::fuse_content_stream`'s `fact_dense_enabled`
 // arm for the call site).
 
@@ -2155,7 +2153,7 @@ pub(crate) fn rrf_fuse_content_streams(params: RrfFuseContentStreamsParams) -> V
 /// `ContentPassage` (whose `episode_id` field IS that fusion's dedup key,
 /// and one episode can source many DISTINCT facts). `entity_type_name =
 /// "Fact"` is the discriminator `kremory-http.rs::recall_mode_results` reads
-/// to emit `kind: "fact"` on the REST wire (TD-139's measurement
+/// to emit `kind: "fact"` on the REST wire (a measurement
 /// prerequisite, `a99cec02`) — mirrors `"ContentPassage"`'s discriminator
 /// role one function above.
 ///
@@ -2163,7 +2161,7 @@ pub(crate) fn rrf_fuse_content_streams(params: RrfFuseContentStreamsParams) -> V
 /// using the SAME `"{subject} {predicate} {object}"` shape `ingest_with.rs`
 /// embeds at write time (so what was embedded and what is displayed stay in
 /// sync) — mirrors `engine_handle.rs`'s connected-facts rendering, including
-/// its F2-deferred "prefer the literal value, fall back to the raw id"
+/// its deferred "prefer the literal value, fall back to the raw id"
 /// display-name-resolution gap (resolving `subject_id`/`object_id` to their
 /// entities' surface names would add a lookup per fact; out of scope here).
 ///
@@ -2207,8 +2205,8 @@ fn fact_hit_into_retrieved_context(
     }
 }
 
-/// Bundled parameters for [`rrf_fuse_with_facts`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments).
+/// Bundled parameters for [`rrf_fuse_with_facts`] — args-as-object to keep
+/// the function under clippy's too_many_arguments threshold.
 #[cfg(feature = "content-search")]
 pub(crate) struct RrfFuseWithFactsParams<'a> {
     /// The entity+content stream [`rrf_fuse_with_content`] already produced,
@@ -2216,7 +2214,7 @@ pub(crate) struct RrfFuseWithFactsParams<'a> {
     /// ordering, same precondition as `rrf_fuse_with_content`'s own
     /// `entity_stream` param.
     pub entity_stream: Vec<RetrievedContext>,
-    /// TD-139 dense fact arm: facts ranked by embedding-cosine similarity to
+    /// The dense fact arm: facts ranked by embedding-cosine similarity to
     /// the query, best-first (`TemporalGraph::vector_search_facts` orders by
     /// `distance ASC` — closest first, already mapped to `score = -distance`
     /// so higher `SearchHit::score` = more relevant, matching this fn's
@@ -2224,7 +2222,7 @@ pub(crate) struct RrfFuseWithFactsParams<'a> {
     pub fact_stream: Vec<SearchHit<Fact>>,
     pub namespace: Option<&'a Namespace>,
     /// Caps the fused output. `None` degrades to the full union
-    /// (`entity_stream.len() + fact_stream.len()`) — the SAME TD-138-fixed
+    /// (`entity_stream.len() + fact_stream.len()`) — the SAME
     /// no-limit discipline as `rrf_fuse_with_content` (never silently drops
     /// a distinct item).
     pub limit: Option<usize>,
@@ -2234,21 +2232,21 @@ pub(crate) struct RrfFuseWithFactsParams<'a> {
     pub rrf_k: usize,
 }
 
-/// TD-139 DoD item 2: RRF-fuses `entity_stream` (the entity+content fusion
+/// RRF-fuses `entity_stream` (the entity+content fusion
 /// [`rrf_fuse_with_content`] already produced) with a THIRD stream — facts
 /// retrieved by embedding-cosine similarity via
 /// `TemporalGraph::vector_search_facts` — into ONE rank-ordered
 /// `Vec<RetrievedContext>`.
 ///
 /// A SEPARATE fn from `rrf_fuse_with_content`, not a literal reuse of
-/// [`rrf_fuse_content_streams`] (the register DoD's original phrasing) —
+/// [`rrf_fuse_content_streams`] —
 /// see [`fact_hit_into_retrieved_context`]'s doc comment for why: a fact and
 /// its source episode are different rows with independent identities (one
 /// episode can source many facts), so a fact cannot be represented as a
 /// `ContentPassage` (whose `episode_id` field IS that fusion's dedup key).
 /// Each fact instead becomes its own `RetrievedContext` entry keyed by
 /// `"fact:{id}"`. Same documented-deviation precedent as
-/// `PipelineConfigOverrides` (`core/config.rs`) departing from TD-141's
+/// `PipelineConfigOverrides` (`core/config.rs`) departing from its
 /// literal design-decision sketch.
 ///
 /// Same rank-position RRF (`1/(k+rank+1)`) and `(id, group_id)` composite-key
@@ -2266,7 +2264,7 @@ pub(crate) fn rrf_fuse_with_facts(params: RrfFuseWithFactsParams<'_>) -> Vec<Ret
     } = params;
     let rrf_k = rrf_k as f64;
 
-    // TD-197: `vector_search_facts` embeds every fact row indiscriminately
+    // `vector_search_facts` embeds every fact row indiscriminately
     // (`ingest_with.rs` → `set_fact_embedding`), so a reserved meta-edge
     // predicate (e.g. `potential_alias` — internal disambiguation
     // bookkeeping, not a domain fact) is retrievable by this dense fact arm
@@ -2283,7 +2281,7 @@ pub(crate) fn rrf_fuse_with_facts(params: RrfFuseWithFactsParams<'_>) -> Vec<Ret
 
     let entity_count = entity_stream.len();
     let fact_count = fact_stream.len();
-    // Rule 19 anti-pattern #9 — per-stream attribution, so a silently-empty
+    // Per-stream attribution, so a silently-empty
     // fact arm (e.g. no facts embedded yet) is visible, mirroring
     // `rrf_fuse_with_content`'s `canonical_fusion_total` counters.
     metrics::counter!("kremory.recall.fact_dense_fusion_total", "stream" => "entity_content")
@@ -2341,14 +2339,13 @@ pub(crate) fn rrf_fuse_with_facts(params: RrfFuseWithFactsParams<'_>) -> Vec<Ret
     fused
 }
 
-// ─── TD-066 Change 2: graph-degree bonus (secondary/additive signal) ────────
+// ─── Graph-degree bonus (secondary/additive signal) ─────────────────────────
 //
-// Grounding: `.ai-docs/research/prior-art-graph-recall-scoring-multi-hop-
-// traversal--reranking-wave-1-substrate.md`. HippoRAG2 (arXiv 2502.14802)
+// HippoRAG2 (arXiv 2502.14802)
 // uses an additive pre-PPR fusion term at weight 0.05; GraphRAG/LightRAG use
 // node degree as a SECONDARY sort key, never primary. kremory already has an
 // UNSEEDED, GLOBAL `petgraph::algo::page_rank` in `speculative_cache.rs`
-// (TD-071, dead code) — deliberately NOT reused here, because HippoRAG's own
+// (dead code) — deliberately NOT reused here, because HippoRAG's own
 // ablation shows un-seeded degree/PPR signals inherit hub bias. This bonus
 // is instead scoped to QUERY-RELEVANT seed nodes only (HippoRAG's anti-hub
 // mitigation, §3.2) and computed from the 1-hop neighbour count `context::
@@ -2360,9 +2357,9 @@ pub(crate) fn rrf_fuse_with_facts(params: RrfFuseWithFactsParams<'_>) -> Vec<Ret
 /// degree grow unbounded.
 pub(crate) const GRAPH_DEGREE_SATURATION: f32 = 10.0;
 
-/// Small additive graph-degree bonus for a seed entity's own score (TD-066
-/// Change 2). `degree` = the entity's 1-hop neighbour count; `weight` is the
-/// axis weight (recall-v2 Phase 2a: the former `GRAPH_DEGREE_WEIGHT` const,
+/// Small additive graph-degree bonus for a seed entity's own score.
+/// `degree` = the entity's 1-hop neighbour count; `weight` is the
+/// axis weight (the former `GRAPH_DEGREE_WEIGHT` const,
 /// now `SearchConfig::graph_degree_weight`, default 0.05 — deliberately tiny
 /// relative to the `[0, 1]` RRF-normalised score range so degree can only ever
 /// nudge ranking among already-selected candidates, never dominate relevance).
@@ -2378,7 +2375,7 @@ pub(crate) fn graph_degree_bonus(degree: usize, weight: f32) -> f32 {
     weight * (degree as f32 / GRAPH_DEGREE_SATURATION).min(1.0)
 }
 
-// ── test-utils re-exports (ADR-029c 5-tier pyramid, Phase A) ─────────────────
+// ── test-utils re-exports (5-tier test pyramid) ──────────────────────────────
 //
 // Property tests in `tests/properties_029bc.rs` call these private functions
 // directly so they can assert composite-key dedup invariants without going
@@ -2404,7 +2401,7 @@ pub fn rrf_fuse_facts_for_test(
 
 /// Clamp a requested top-K to the actual number of available results.
 ///
-/// Story #166 / turbovec prior-art pattern: prevents `vector_top_k` from
+/// turbovec prior-art pattern: prevents `vector_top_k` from
 /// requesting more results than the index contains, which causes a runtime
 /// panic on sparse allowlist queries.
 ///
@@ -2520,7 +2517,7 @@ fn row_to_fact_from_row(row: &libsql::Row) -> anyhow::Result<Fact> {
         memory_type,
         content_hash,
         access_count,
-        // ADR-029b: composite FK fields — absent on pre-migration-004 rows.
+        // Composite FK fields — absent on pre-migration-004 rows.
         subject_group_id: None,
         object_group_id: None,
     })
@@ -2534,7 +2531,7 @@ mod tests {
     };
     use chrono::{Duration, Utc};
 
-    /// **E2E-2 regression pin** (V1-CANONICAL §0b-sexies).
+    /// **E2E regression pin.**
     ///
     /// Drives the REAL producer — `content_passage_into_retrieved_context`, the only
     /// thing that mints a content-derived `RetrievedContext` — and asserts the
@@ -2604,7 +2601,7 @@ mod tests {
         );
     }
 
-    // === TD-066 Change 2 / recall-v2 Phase 2a: graph_degree_bonus ===
+    // === graph_degree_bonus ===
     //
     // The weight is now a parameter (`SearchConfig::graph_degree_weight`), not
     // the removed `GRAPH_DEGREE_WEIGHT` const. `DEG_W` pins the shipped default
@@ -2618,7 +2615,7 @@ mod tests {
 
     #[test]
     fn graph_degree_bonus_zero_weight_is_no_op() {
-        // recall-v2 Phase 2a: weight <= 0.0 makes the axis a true no-op for any
+        // weight <= 0.0 makes the axis a true no-op for any
         // degree — the mechanism by which a config can disable the boost.
         for degree in [0, 1, 10, 1_000] {
             assert_eq!(graph_degree_bonus(degree, 0.0), 0.0);
@@ -2660,7 +2657,7 @@ mod tests {
         assert!(graph_degree_bonus(9, DEG_W) > graph_degree_bonus(5, DEG_W));
     }
 
-    // === effective_k clamp (Story #166) ===
+    // === effective_k clamp ===
 
     #[test]
     fn effective_k_clamps_to_n_available() {
@@ -2685,7 +2682,7 @@ mod tests {
         assert_eq!(effective_k(10, usize::MAX), 10);
     }
 
-    // === TD-114: filtered-ANN over-fetch plan ===
+    // === filtered-ANN over-fetch plan ===
 
     async fn seed_two_namespaces() -> TemporalGraph {
         let g = TemporalGraph::open_in_memory().await.unwrap();
@@ -2868,7 +2865,7 @@ mod tests {
         assert_eq!(f.group_ids, vec!["a", "b"]);
     }
 
-    // ── ADR-068 extension — `build_as_of_clause` + content-search as_of ────
+    // ── Extension — `build_as_of_clause` + content-search as_of ────────────
     //
     // Pure-function coverage of the new helper, plus direct calls to
     // `content_search` and BOTH `vector_search_episodes_with_index` /
@@ -3757,7 +3754,7 @@ mod tests {
 
     // ── group_id filtering tests ────────────────────────────────────────────
 
-    /// ADR-029b: group_id is NOT NULL post-migration-004. None → 'default'.
+    /// group_id is NOT NULL post-migration-004. None → 'default'.
     /// Scoped searches return only entities in the requested namespace.
     #[tokio::test]
     async fn test_fts_search_entities_filters_by_group_id() {
@@ -3791,7 +3788,7 @@ mod tests {
         })
         .await
         .unwrap();
-        // dave: None → 'default' post-ADR-029b (no longer NULL = workspace-wide).
+        // dave: None → 'default' (no longer NULL = workspace-wide).
         g.insert_entity_with_group(InsertEntityWithGroupParams {
             id: "dave",
             entity_type_id: 0,
@@ -3867,7 +3864,7 @@ mod tests {
         assert_eq!(hits_default.len(), 1, "'default' should return only dave");
         assert_eq!(hits_default[0].item.id, "dave");
 
-        // Filter to non-existent group: empty (no workspace-wide entities post-ADR-029b).
+        // Filter to non-existent group: empty (no workspace-wide entities).
         let group_x = SearchFilters::for_group("group-x");
         let hits_x = g
             .fts_search_entities(FtsSearchEntitiesParams {
@@ -3880,7 +3877,7 @@ mod tests {
         assert_eq!(
             hits_x.len(),
             0,
-            "non-existent group should return 0 entities post-ADR-029b"
+            "non-existent group should return 0 entities"
         );
     }
 
@@ -4123,15 +4120,15 @@ mod tests {
         );
     }
 
-    /// ADR-029b: Post-migration, entities.group_id is NOT NULL. The 'default' namespace
-    /// is the workspace-wide namespace (equivalent to pre-ADR-029b NULL group_id).
+    /// Post-migration, entities.group_id is NOT NULL. The 'default' namespace
+    /// is the workspace-wide namespace (equivalent to the pre-migration NULL group_id).
     /// Scoped searches return only entities in the requested namespace;
     /// 'default' namespace entities are only visible in searches scoped to 'default'.
     #[tokio::test]
     async fn test_null_group_id_included_when_scoped() {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
-        // Insert entity WITHOUT group_id — maps to 'default' post-ADR-029b.
+        // Insert entity WITHOUT group_id — maps to 'default'.
         g.insert_entity(InsertEntityParams {
             id: "kb_doc",
             entity_type_id: 0,
@@ -4202,7 +4199,7 @@ mod tests {
         );
     }
 
-    /// Story #247 gate: access_count increments on every entity-returning search.
+    /// Gate: access_count increments on every entity-returning search.
     ///
     /// AC: access_count starts at 0; after first search that returns the entity it
     /// must be 1; after second search it must be 2. Deterministic in-memory DB.
@@ -4436,10 +4433,9 @@ mod tests {
         );
     }
 
-    // ─── TD-066 Increment 1: rrf_fuse_with_content (content-fusion parity) ──
+    // ─── rrf_fuse_with_content (content-fusion parity) ───────────────────────
     //
-    // `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
-    // §3 Increment 1 DoD — fast/deterministic tier: pure-function tests on
+    // Fast/deterministic tier: pure-function tests on
     // synthetic entity/content streams, no LLM, no network, no DB.
 
     #[cfg(feature = "content-search")]
@@ -4686,10 +4682,10 @@ mod tests {
             rrf_k: 60,
         });
 
-        // TD-138 regression fix: with NO explicit limit, fusion returns the FULL
+        // Regression fix: with NO explicit limit, fusion returns the FULL
         // deduped union (1 entity + 3 disjoint content = 4). The prior behaviour
         // capped to max(1,3)=3, which — on a score tie — evicted the sole ENTITY
-        // in favour of content passages, silently breaking the ADR-074/TD-116
+        // in favour of content passages, silently breaking the
         // "recall MUST surface the entity's connected facts" invariant for every
         // `.raw()`/`.recall()` call (no explicit limit) under `content-search`.
         assert_eq!(
@@ -4697,7 +4693,7 @@ mod tests {
             4,
             "None limit must return the full deduped union (4), never drop a distinct arm's item: {fused:?}"
         );
-        // The load-bearing TD-138 invariant: the entity must NOT be evicted by
+        // The load-bearing invariant: the entity must NOT be evicted by
         // content passages when no limit is set.
         assert!(
             fused.iter().any(|r| r.entity_id == "e0"),
@@ -4705,7 +4701,7 @@ mod tests {
         );
     }
 
-    /// Rule 19 / observability-first-class: fast-tier test asserts the
+    /// Fast-tier test asserts the
     /// per-stream counter actually fires with the correct label + count —
     /// not just that the function returns the right value ("counters that
     /// lie" cardinal failure mode).
@@ -4762,10 +4758,7 @@ mod tests {
         );
     }
 
-    // ─── TD-066 Increment 2: content_stream_weight ──────────────────────────
-    //
-    // `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
-    // §3 Increment 2 DoD.
+    // ─── content_stream_weight ────────────────────────────────────────────────
 
     /// DoD (a): `content_stream_weight = 1.0` (`SearchConfig::default()`'s
     /// value) must be byte-identical to Increment 1's unweighted fusion — the
@@ -4873,7 +4866,6 @@ mod tests {
         );
     }
 
-    /// recall-improvement-e2e-spec-2026-07-22 §S0-infra (D3/R4a):
     /// `rrf_fuse_with_content` (fusion site 2 of 3) reads its RRF `k` from
     /// `RrfFuseWithContentParams.rrf_k` (threaded from the live `SearchConfig`,
     /// i.e. the `KREMORY_RRF_K` boot override), NOT the former hardcoded
@@ -4923,7 +4915,7 @@ mod tests {
         );
     }
 
-    /// Rule 19 / observability-first-class: fast-tier test asserts the
+    /// Fast-tier test asserts the
     /// `content_stream_weight_applied` gauge fires with the configured value —
     /// not just that the fusion math is correct ("counters that lie"
     /// cardinal failure mode).
@@ -5030,14 +5022,14 @@ mod tests {
         );
     }
 
-    // ─── TD-136: dense episode retrieval arm ─────────────────────────────────
+    // ─── Dense episode retrieval arm ──────────────────────────────────────────
 
-    /// The dense episode arm ships **ON** by default since 2026-07-28 (ADR-078).
+    /// The dense episode arm ships **ON** by default.
     ///
     /// This test previously asserted the opposite as a "byte-identical guard".
     /// The guard outlived its purpose: the arm sat OFF while every published
     /// benchmark set `KREMORY_EPISODE_DENSE=1`, so the numbers described a
-    /// configuration no consumer received — the same defect ADR-078 fixed for
+    /// configuration no consumer received — the same class of defect fixed for
     /// `content-search`. Measured worth **+5.1 recall@10 at full corpus**, and
     /// it adds no dependency (an embedder is already required for entities and
     /// facts). Pinned as a test so the default is a DECISION, not an accident.
@@ -5045,7 +5037,7 @@ mod tests {
     fn episode_dense_enabled_defaults_on() {
         assert!(
             crate::core::config::SearchConfig::default().episode_dense_enabled,
-            "ADR-078: the dense episode arm is a shipped default; turning it off \
+            "the dense episode arm is a shipped default; turning it off \
              is `.with_episode_dense_enabled(false)` / KREMORY_EPISODE_DENSE=0"
         );
     }
@@ -5102,10 +5094,10 @@ mod tests {
         assert_eq!(sorted.len(), ids.len(), "no duplicate episode_ids");
     }
 
-    /// PAR-D3 (V1-CANONICAL §4.2): with NO explicit limit, the no-limit fallback
+    /// With NO explicit limit, the no-limit fallback
     /// cap must be the **union** of the two arms, not the larger single arm.
     ///
-    /// This is the third copy of the TD-138 cap bug. Its two siblings —
+    /// This is the third copy of the same cap bug. Its two siblings —
     /// `rrf_fuse_with_content` and the fact-dense fuser — were fixed to
     /// `a_count + b_count`; this one kept `bm25_count.max(dense_count)`, which
     /// silently drops `min(bm25_count, dense_count)` distinct episodes whenever
@@ -5130,7 +5122,7 @@ mod tests {
         assert_eq!(
             fused.len(),
             2,
-            "PAR-D3: no-limit fallback must cap at the union (1 + 1 = 2), not at \
+            "no-limit fallback must cap at the union (1 + 1 = 2), not at \
              max(1, 1) = 1 — a distinct episode from one arm was dropped"
         );
         let mut ids: Vec<i64> = fused.iter().map(|p| p.episode_id).collect();
@@ -5297,7 +5289,7 @@ mod tests {
         assert_eq!(hits[0].episode_id, a);
     }
 
-    /// TD-143 companion to `episodes_missing_embedding_tracks_backfill_progress`:
+    /// Companion to `episodes_missing_embedding_tracks_backfill_progress`:
     /// `episodes_after_id` is the page source for
     /// `Memory::reembed_all_episode_embeddings`, and — unlike
     /// `episodes_missing_embedding` — must return EVERY episode row,
@@ -5379,7 +5371,7 @@ mod tests {
         );
     }
 
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-112) entity
+    /// Entity
     /// sibling of `episodes_after_id_pages_every_row_including_already_embedded`
     /// — same shape: `entities_after_id` must return EVERY entity row
     /// (including ones that already carry an embedding), and the id-cursor
@@ -5458,8 +5450,8 @@ mod tests {
         );
     }
 
-    /// TD-112 composite-PK cursor regression: `entities` has PRIMARY KEY
-    /// `(id, group_id)` (ADR-029d per-namespace-open), so the SAME `id` can
+    /// Composite-PK cursor regression: `entities` has PRIMARY KEY
+    /// `(id, group_id)` (per-namespace-open), so the SAME `id` can
     /// legitimately exist as two independent rows in two namespaces. A bare
     /// `id`-only cursor (`WHERE id > last_id`) would silently DROP one of
     /// them whenever a page boundary falls between the two tied rows — this
@@ -5473,8 +5465,8 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         // Same surface name ("alice") normalizes to the same id-slug in two
-        // different namespaces — a legitimate, permitted collision per
-        // ADR-029d (per-namespace-open), not an error.
+        // different namespaces — a legitimate, permitted collision
+        // (per-namespace-open), not an error.
         g.insert_entity_with_group(InsertEntityWithGroupParams {
             id: "alice",
             entity_type_id: 0,
@@ -5524,11 +5516,11 @@ mod tests {
         );
     }
 
-    /// TD-211 (`.ai-docs/tech-debt/tech-debt-register.md` §TD-211) entity
+    /// Entity
     /// sibling of `episodes_missing_embedding_tracks_backfill_progress` —
     /// `entities_missing_embeddings` must report exactly the NULL-embedding
     /// rows, and a row must drop out of that set once backfilled (proven via
-    /// `backfill_entity_embedding`, TD-211's new namespace-scoped setter —
+    /// `backfill_entity_embedding`, a namespace-scoped setter —
     /// NOT the unscoped `set_entity_embedding` used only to SEED the
     /// pre-existing embedding below, mirroring how the episode test uses
     /// `set_episode_embedding` for the same seeding role).
@@ -5571,7 +5563,7 @@ mod tests {
             "the remaining missing row is the un-embedded one"
         );
 
-        // Backfill the gap via TD-211's new namespace-scoped setter.
+        // Backfill the gap via the namespace-scoped setter.
         g.backfill_entity_embedding(crate::core::graph::SetEntityEmbeddingParams {
             id: "beta",
             group_id: "default",
@@ -5629,7 +5621,7 @@ mod tests {
         );
     }
 
-    /// TD-211: `backfill_entity_embedding` is namespace-scoped (TD-206) — it
+    /// `backfill_entity_embedding` is namespace-scoped — it
     /// must write ONLY the `(id, group_id)` row it was called with, never the
     /// same-named entity in a different namespace. Idempotent: a second call
     /// with the same arguments must not error.
@@ -5640,7 +5632,7 @@ mod tests {
         let g = TemporalGraph::open_in_memory().await.unwrap();
 
         // Same surface name ("alice") in two namespaces — a legitimate
-        // cross-namespace id collision per ADR-029d.
+        // cross-namespace id collision.
         g.insert_entity_with_group(InsertEntityWithGroupParams {
             id: "alice",
             entity_type_id: 0,
@@ -5685,7 +5677,7 @@ mod tests {
         assert_eq!(missing[0].group_id, "namespace-b");
     }
 
-    /// TD-112 fact sibling of
+    /// Fact sibling of
     /// `episodes_after_id_pages_every_row_including_already_embedded` —
     /// `facts_after_id` must return EVERY fact row (including ones that
     /// already carry an embedding), and the id-cursor loop must terminate
@@ -5790,7 +5782,7 @@ mod tests {
             .expect("migrate_026 must remain idempotent on a third run");
     }
 
-    // ─── TD-139 DoD item 2: dense fact retrieval arm ─────────────────────────
+    // ─── Dense fact retrieval arm ─────────────────────────────────────────────
 
     /// Byte-identical guard: the dense fact arm ships OFF by default, so a
     /// default `SearchConfig` never enables it (facts stay reachable only via
@@ -5800,17 +5792,17 @@ mod tests {
         assert!(!crate::core::config::SearchConfig::default().fact_dense_enabled);
     }
 
-    // ─── TD-143: nomic search_document:/search_query: task-prefix knob ──────
+    // ─── nomic search_document:/search_query: task-prefix knob ───────────────
 
     /// Byte-identical guard: the nomic task-prefix knob ships OFF by default,
     /// so a default `SearchConfig` never prefixes embed calls (bare-text
-    /// embedding, matching every kremory release before TD-143).
+    /// embedding, matching every kremory release before this knob shipped).
     #[test]
     fn embed_task_prefix_enabled_defaults_off() {
         assert!(!crate::core::config::SearchConfig::default().embed_task_prefix_enabled);
     }
 
-    /// Args-as-object per TD-042 (`clippy::too_many_arguments` threshold 3).
+    /// Args-as-object to keep the function under clippy's too_many_arguments threshold.
     #[cfg(feature = "content-search")]
     struct FactHitParams<'a> {
         id: i64,
@@ -5933,8 +5925,8 @@ mod tests {
 
     /// `rrf_fuse_with_facts` folds a dense-fact hit into the entity+content
     /// stream as its own ranked entry — proves the MECHANISM (fusion +
-    /// discriminator), not the wiring (that's the kremory-mcp e2e test,
-    /// TD-140 lesson: a hand-fed pure-function test alone cannot prove the
+    /// discriminator), not the wiring (that's the kremory-mcp e2e test —
+    /// a hand-fed pure-function test alone cannot prove the
     /// real path is reached).
     #[cfg(feature = "content-search")]
     #[test]
@@ -6006,7 +5998,7 @@ mod tests {
     }
 
     /// No-limit degrades to the full union (`entity_count + fact_count`) —
-    /// the TD-138-fixed discipline: no explicit limit must never silently
+    /// the discipline: no explicit limit must never silently
     /// drop a distinct item across two DISJOINT id-spaces.
     #[cfg(feature = "content-search")]
     #[test]
@@ -6034,13 +6026,13 @@ mod tests {
         );
     }
 
-    /// TD-197 review Finding 2: `rrf_fuse_with_facts` embeds EVERY fact row
+    /// `rrf_fuse_with_facts` embeds EVERY fact row
     /// via `vector_search_facts` (`ingest_with.rs` → `set_fact_embedding`),
     /// so a reserved meta-edge predicate (e.g. `potential_alias`) is
     /// retrievable by this dense fact arm and becomes its own synthetic
     /// `RetrievedContext` entry — a SEPARATE construction site from
-    /// `memory::engine_handle`'s connected-facts projection (TD-197's fix
-    /// commit: "filtering only the first would have left this live"). This
+    /// `memory::engine_handle`'s connected-facts projection (the fix
+    /// commit note: "filtering only the first would have left this live"). This
     /// drives the fn directly with a reserved-predicate hit and asserts it
     /// is dropped, plus a non-reserved control in the SAME stream that must
     /// survive — proving the filter isn't over-broad.

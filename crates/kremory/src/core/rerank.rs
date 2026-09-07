@@ -1,17 +1,15 @@
-//! TD-062 cross-encoder reranker.
+//! Cross-encoder reranker.
 //!
-//! `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md` §3
-//! Increment 3 / §4. A post-fusion precision re-scoring pass over the
-//! top-`rerank_k` fused candidates (Increment 1/2's output): a local BGE
-//! cross-encoder that models true query-passage relevance directly, rather
-//! than the BM25/vector-distance/RRF-rank PROXIES the fusion stage uses.
+//! A post-fusion precision re-scoring pass over the top-`rerank_k` fused
+//! candidates (the fusion stage's own output): a local BGE cross-encoder
+//! that models true query-passage relevance directly, rather than the
+//! BM25/vector-distance/RRF-rank PROXIES the fusion stage uses.
 //!
-//! Mechanism decision (spec §4): local cross-encoder via `fastembed`, NOT an
+//! Mechanism decision: local cross-encoder via `fastembed`, NOT an
 //! LLM-rerank pass — deterministic (no sampling variance), $0 marginal cost,
 //! keeps the recall (read) path LLM-free (kremory's own architecture already
 //! treats read as LLM-free except for the separate write-path extraction
-//! stage; `feedback_no_second_llm_pass_for_entity_extraction`'s underlying
-//! principle).
+//! stage).
 
 use std::sync::{Arc, OnceLock};
 
@@ -63,16 +61,10 @@ pub(crate) trait Reranker: Send + Sync {
 }
 
 /// Resolves which cross-encoder `FastEmbedReranker` loads, from the
-/// `KREMORY_RERANK_MODEL` boot override. Default `BGERerankerBase` (spec §4
-/// package-evaluation table) — byte-identical to pre-override behaviour when
-/// unset.
+/// `KREMORY_RERANK_MODEL` boot override. Default `BGERerankerBase` — byte-
+/// identical to pre-override behaviour when unset.
 ///
-/// Governing docs: `.ai-docs/specs/td-066-recall-scoring-foundation-spec-2026-07-21.md`
-/// §4 (TD-062 reranker, package-evaluation table that selected BGE base) and the
-/// TD-134 register entry (`.ai-docs/tech-debt/tech-debt-register.md`), whose
-/// VALIDATED + oracle-decomposition blocks are the measurement this knob serves.
-///
-/// Exists because the 2026-07-27 oracle decomposition showed the reranker
+/// Exists because an oracle decomposition showed the reranker
 /// captured only ~43% of the reordering gain available over its own candidate
 /// pool (nDCG@10 62.9 off → 75.6 on, versus a 91.9 perfect-reorder ceiling on
 /// the SAME 50 items). The residual is therefore a property of the MODEL, not
@@ -83,7 +75,7 @@ pub(crate) trait Reranker: Send + Sync {
 /// Fail-loud on an unrecognised value (WARN + default) rather than a silent
 /// substitution — a benchmark that quietly scored a different model than its
 /// provenance stamp claims is the exact class of measurement corruption
-/// CLAUDE.md Rule 36 exists to prevent. Pure fn (not inlined into the
+/// this guards against. Pure fn (not inlined into the
 /// `OnceCell` init) so it is unit-testable, per the `parse_rerank_k` precedent.
 pub(crate) fn parse_reranker_model(raw: Option<&str>) -> fastembed::RerankerModel {
     let Some(raw) = raw else {
@@ -110,8 +102,8 @@ pub(crate) fn parse_reranker_model(raw: Option<&str>) -> fastembed::RerankerMode
     }
 }
 
-/// Reranker latency lever 2 (cross-encoder execution-provider spike,
-/// 2026-07-28): which ONNX Runtime execution provider `FastEmbedReranker`
+/// Reranker latency lever 2 (cross-encoder execution-provider spike): which
+/// ONNX Runtime execution provider `FastEmbedReranker`
 /// requests via `fastembed::RerankInitOptions::with_execution_providers`.
 /// `Cpu` (the default) is a total no-op — an EMPTY `execution_providers`
 /// Vec, byte-identical to pre-lever behaviour (`ort` defaults to CPU-only
@@ -146,8 +138,8 @@ pub(crate) enum RerankExecutionProvider {
 /// byte-identical to pre-lever behaviour when unset. Fail-loud on an
 /// unrecognised value (WARN + default), mirroring [`parse_reranker_model`]'s
 /// own discipline — a benchmark that silently ran on a different EP than its
-/// provenance stamp claims is exactly the measurement corruption CLAUDE.md
-/// Rule 36 exists to prevent. Pure fn so it is unit-testable without a model
+/// provenance stamp claims is exactly the measurement corruption this
+/// guards against. Pure fn so it is unit-testable without a model
 /// load, per the `parse_reranker_model` precedent.
 pub(crate) fn parse_rerank_execution_provider(raw: Option<&str>) -> RerankExecutionProvider {
     let Some(raw) = raw else {
@@ -172,7 +164,7 @@ pub(crate) fn parse_rerank_execution_provider(raw: Option<&str>) -> RerankExecut
 /// `KREMORY_RERANK_MODEL` sweep override).
 ///
 /// Lazily initialises the ONNX session on first `rerank()` call (`OnceCell`),
-/// not per-call (Risk #5, spec §5.4) — the `fastembed_rerank_spike` example
+/// not per-call — the `fastembed_rerank_spike` example
 /// measured a ~2.5s warm-cache session load (and ~97s on a genuinely cold HF
 /// Hub cache, first-ever run), which would be an unacceptable per-call tax.
 /// Guarded by a `tokio::sync::Mutex` because `fastembed::TextRerank::rerank`
@@ -216,7 +208,7 @@ impl FastEmbedReranker {
                      (KREMORY_RERANK_EXECUTION_PROVIDER; default cpu)"
                 );
                 let init_result = tokio::task::spawn_blocking(move || {
-                    // Lever 2 (2026-07-28): `Cpu` passes an EMPTY Vec — `ort`'s
+                    // Lever 2: `Cpu` passes an EMPTY Vec — `ort`'s
                     // own default when `RerankInitOptions::new` isn't given
                     // `.with_execution_providers(..)` — so this branch is
                     // byte-identical to pre-lever behaviour. `CoreMl` requests
@@ -412,7 +404,7 @@ mod tests {
         );
     }
 
-    /// Fast tier (spec §3 Increment 3 test pyramid): a deterministic mock
+    /// Fast tier (test pyramid): a deterministic mock
     /// `Reranker` proving the trait's dyn-dispatch shape works end to end —
     /// zero model load, zero I/O.
     struct MockReranker {
@@ -466,7 +458,7 @@ mod tests {
         );
     }
 
-    /// Seam tier (spec §3 Increment 3 test pyramid): loads the ACTUAL BGE
+    /// Seam tier (test pyramid): loads the ACTUAL BGE
     /// model and asserts it orders a known relevant/irrelevant pair
     /// correctly. Gated `#[ignore]` — model download/session-load is
     /// network+disk-bound (see `fastembed_rerank_spike` example); run

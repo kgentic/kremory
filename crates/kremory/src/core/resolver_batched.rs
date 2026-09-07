@@ -1,15 +1,15 @@
-//! ADR-076 (TD-127) Pass 2: batched entity resolution.
+//! Pass 2: batched entity resolution.
 //!
 //! Collapses the O(ambiguous × candidates) pairwise `ResolutionVerdict` LLM
 //! fan-out (`resolver.rs` Tier 3, called once per `(extracted, candidate)`
 //! pair) into one structured-output call per window over the AMBIGUOUS
-//! remainder — entities that survived ADR-075 candidate blocking but were
+//! remainder — entities that survived candidate blocking but were
 //! NOT resolved by the cheap deterministic tiers (`CascadeResolver::
 //! resolve_deterministic`, Pass 1).
 //!
 //! Adapted from Graphiti's `nodes()` prompt (`graphiti_core/prompts/
 //! dedupe_nodes.py`) — NOT copied verbatim: no episode-context injection
-//! (ADR-076 RISK-005 — candidates carry name + type only, parity with the
+//! (candidates carry name + type only, parity with the
 //! pairwise `resolve()` Tier-3 prompt), and the map-back guards below are
 //! kremory-specific hardening the Graphiti reference does not need (its
 //! `NodeResolutions` response is trusted as-is; ours is not — see
@@ -17,8 +17,8 @@
 //!
 //! Every map-back guard rejects to conservative-NEW, never to a merge — a
 //! malformed/adversarial response can only ever UNDER-merge (which `dream()`
-//! fixes), never over-merge. See ADR-076 §Decision Pass 2 for the guard
-//! order (reject-before-accept) and rationale for each.
+//! fixes), never over-merge. Every guard below rejects before it accepts,
+//! in a fixed order, each with its own rationale documented at its call site.
 
 use std::collections::{HashMap, HashSet};
 
@@ -33,22 +33,22 @@ use crate::core::schema::Entity;
 
 /// One entity from the ambiguous worklist paired with its global index (the
 /// position in the ingest's full `all_entities` list — NOT the window-local
-/// `id` presented to the LLM) and its own ADR-075 candidate block.
+/// `id` presented to the LLM) and its own candidate block.
 ///
 /// `resolve_batched`'s caller (`ingest_with.rs` Pass 1) builds this list;
 /// `resolve_batched` windows it and assigns window-local `id`s 0..K-1 for
 /// the prompt. The own-block `Vec<&Entity>` is retained per-entity (not
 /// flattened into the shared pool) so the own-block map-back guard
-/// (ADR-076 RISK-002) can check candidate reachability per pairwise
+/// can check candidate reachability per pairwise
 /// semantics even though the prompt presents one flat shared pool.
 pub(crate) type AmbiguousEntity<'a> = (usize, &'a ExtractedEntity, Vec<&'a Entity>);
 
-/// ADR-076 Pass 2 entry point: resolve the ambiguous remainder in windows of
+/// Pass 2 entry point: resolve the ambiguous remainder in windows of
 /// at most `max_window` entities, one batched structured-output call per
 /// window. Returns `global_index -> existing_entity_id` for every entity
 /// that received a CONFIDENT merge; an absent entry means NEW (either the
 /// model said `-1`, or the response failed a map-back guard, or the call
-/// itself failed — all degrade to conservative-NEW per RISK-001).
+/// itself failed — all degrade to conservative-NEW).
 ///
 /// `llm` + `model` are threaded separately from a `CascadeResolver` (rather
 /// than taking `&CascadeResolver<L>`) because Pass 2 makes zero use of the
@@ -92,7 +92,7 @@ pub(crate) async fn resolve_batched<L: ChatProvider + ?Sized>(
 /// Resolve a single window: build the shared candidate pool, prompt the LLM
 /// once, and map the response back via [`map_back`]. Any call/parse failure
 /// degrades the WHOLE window to conservative-NEW (empty map) rather than
-/// propagating an error — see ADR-076 RISK-001.
+/// propagating an error.
 async fn resolve_window<L: ChatProvider + ?Sized>(
     llm: &L,
     model: Option<&str>,
@@ -102,8 +102,8 @@ async fn resolve_window<L: ChatProvider + ?Sized>(
     histogram!("kremory.resolution.window_size").record(window_len as f64);
 
     // Shared candidate pool: stable-sorted union (by existing-entity id) of
-    // every entity's own ADR-075 block. Determinism here is load-bearing
-    // (VCR key + A/B reproducibility, ADR-076 ASMP-002) — sorting by id
+    // every entity's own candidate block. Determinism here is load-bearing
+    // (VCR key + A/B reproducibility) — sorting by id
     // fixes the candidate_id assignment regardless of block-discovery order.
     let mut pool: Vec<&Entity> = Vec::new();
     let mut seen_pool: HashSet<&str> = HashSet::new();
@@ -138,7 +138,7 @@ async fn resolve_window<L: ChatProvider + ?Sized>(
     let value = match call_result {
         Ok(v) => v,
         Err(_) => {
-            // RISK-001: ladder-exhausted / transport error — NEVER propagate.
+            // Ladder-exhausted / transport error — NEVER propagate.
             // The whole window degrades to conservative-NEW.
             counter!(
                 "kremory.resolution.conservative_new_total",
@@ -169,7 +169,7 @@ async fn resolve_window<L: ChatProvider + ?Sized>(
 
 /// Build the batched-resolution prompt: the window's ambiguous entities
 /// (window-local `id` 0..K-1) + the shared candidate pool (`candidate_id`
-/// 0..M-1). Name + type ONLY — no context snippet (ADR-076 RISK-005). The
+/// 0..M-1). Name + type ONLY — no context snippet. The
 /// model is instructed to echo each entity's `name` verbatim (the
 /// reject-only misindex checksum consumed by [`map_back`]).
 fn build_prompt(window: &[AmbiguousEntity<'_>], pool: &[&Entity]) -> String {
@@ -242,8 +242,8 @@ Result: {{"id": 1, "name": "Java", "duplicate_candidate_id": -1}} (same name but
 }
 
 /// Map a batched LLM response back to `global_index -> existing_entity_id`,
-/// applying every guard in ADR-076 §Decision Pass 2's order (reject BEFORE
-/// accept). Pure + sync so it is directly unit-testable with canned input —
+/// applying every guard below in order (reject BEFORE accept). Pure + sync
+/// so it is directly unit-testable with canned input —
 /// see the `#[cfg(test)]` module below.
 ///
 /// `worklist` is the WINDOW (not the full ambiguous list) — `worklist[i].0`
@@ -261,7 +261,7 @@ fn map_back(
     let mut covered: HashSet<u32> = HashSet::new();
 
     for row in &resolutions.entity_resolutions {
-        // (1) Duplicate-id guard (RISK-003) — first row for a given `id`
+        // (1) Duplicate-id guard — first row for a given `id`
         // wins, regardless of whether it (or the later dupe) is in range.
         if !seen_ids.insert(row.id) {
             counter!(
@@ -302,7 +302,7 @@ fn map_back(
             continue;
         }
 
-        // (5) Name-echo checksum (RISK-004) — reject-only misindex signal.
+        // (5) Name-echo checksum — reject-only misindex signal.
         if normalize_name(&row.name) != normalize_name(&entity.name) {
             counter!(
                 "kremory.resolution.conservative_new_total",
@@ -312,9 +312,9 @@ fn map_back(
             continue;
         }
 
-        // (6) Own-block guard (RISK-002) — the primary over-merge defence.
+        // (6) Own-block guard — the primary over-merge defence.
         // An entity may only resolve to a candidate that was in ITS OWN
-        // ADR-075 block, never one that entered the shared pool only via a
+        // candidate block, never one that entered the shared pool only via a
         // sibling's ANN search.
         let cand = pool[row.duplicate_candidate_id as usize];
         if !own_block.iter().any(|c| c.id == cand.id) {
@@ -524,7 +524,7 @@ mod tests {
     }
 
     // Determinism: identical inputs must yield identical candidate_id
-    // assignment / output across repeated invocations (ADR-076 ASMP-002).
+    // assignment / output across repeated invocations.
     #[test]
     fn map_back_deterministic_across_runs() {
         let extracted_a = make_extracted("Person", "Alice");
