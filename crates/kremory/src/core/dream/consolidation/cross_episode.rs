@@ -1,4 +1,4 @@
-//! CONSOLIDATION op — cross-episode entity merge (ADR-066 §2.2, spec P3).
+//! CONSOLIDATION op — cross-episode entity merge (P3).
 //!
 //! Merge two entities in a `group_id` into one ONLY when ALL of:
 //!
@@ -16,19 +16,19 @@
 //!    `(predicate, object_id/object_value)` fact. Same-label-ALONE with NO shared
 //!    structure → probable homonym (two distinct real referents sharing a name, e.g.
 //!    "John Smith" the lawyer vs the athlete) → **DO NOT MERGE**. The corroboration
-//!    DECISION (ADR-067 F2) is a **rarity-weighted, fully-integer** score — a single
+//!    DECISION (F2) is a **rarity-weighted, fully-integer** score — a single
 //!    RARE shared corroborator merges, but hub-shared corroborators (common third
 //!    entities referenced by many others) are down-weighted and do NOT alone merge.
 //!    Deterministic, zero-LLM, zero-float-at-the-boundary.
 //!
-//! 4. **CLIQUE-ONLY clustering (ADR-067 F1):** entities merge only as a maximal
+//! 4. **CLIQUE-ONLY clustering (F1):** entities merge only as a maximal
 //!    CLIQUE of the eligible-pair graph — every pair in a merged set must be
 //!    DIRECTLY corroborated. A same-label triple `A~B`, `B~C`, `A≁C` (a "bridge
 //!    homonym") is NOT a clique — connected-component transitive closure would
 //!    wrongly fuse all three via the bridge `B`; clique-only merges only one of
 //!    `{A,B}`/`{B,C}` (deterministic disjoint-cover) and defers the other.
 //!
-//! 5. **Provenance-anchored corroboration (ADR-067 §C0, the convergence fix):** a
+//! 5. **Provenance-anchored corroboration (C0, the convergence fix):** a
 //!    merge's endpoint remap (`apply_entity_merge` → `apply_merge_with_audit`)
 //!    stamps every REWRITTEN fact `corroboration_inert = 1`. Corroboration reads
 //!    (`neighbours_of` / `assertions_of`) filter `corroboration_inert = 0` — so an
@@ -51,15 +51,9 @@
 //! `cosine_near_dup_lexically_distinct`). No double-count.
 //!
 //! `cross_episode_merges` counts merge DECISIONS this pass, split
-//! `{path=exact|fuzzy}` (DoD-P3.4). Under the ADR-070 shadow gate (`dry_run=true`)
+//! `{path=exact|fuzzy}` (DoD-P3.4). Under the shadow gate (`dry_run=true`)
 //! the count is identical but no entity is fused — the `decision_total` `mode` label
 //! (`shadow`/`applied`) distinguishes the two.
-//!
-//! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`
-//! §3 (P3.1–P3.4, incl. P3.1b) + §6 (cross_episode corpus) + ADR-066 §2.2 (REVISED),
-//! superseded/extended by ADR-067 (clique F1 + rarity-weighted F2 + provenance C0):
-//! `.ai-docs/adrs/adr-067-cross-episode-merge-safety-2026-07-03.md` +
-//! `.ai-docs/specs/adr-067-cross-episode-merge-safety-impl-spec-2026-07-03.md`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -79,7 +73,7 @@ use super::substrate::{
 /// on normalized labels) is the primary route.
 const FUZZY_JACCARD_THRESHOLD: f64 = 0.9;
 
-// ─── ADR-067 F1: clique-cover constants ──────────────────────────────────────────
+// ─── F1: clique-cover constants ──────────────────────────────────────────────
 
 /// Maximum size of a same-normalized-label connected component the op will attempt
 /// clique enumeration over (impl-spec §C1 step 3 / §2). Above this, the component is
@@ -87,12 +81,12 @@ const FUZZY_JACCARD_THRESHOLD: f64 = 0.9;
 /// enumeration — merge-safety over recall (R-03).
 const MAX_LABEL_GROUP: usize = 32;
 
-// ─── ADR-067 F2: rarity-weighted corroboration constants (V2 — fully integer) ────
+// ─── F2: rarity-weighted corroboration constants (V2 — fully integer) ────────
 
 /// Documentation-only, human-readable form of the corroboration threshold. The
 /// DECISION uses [`SCALED_THRESHOLD`] (`u64`), never this `f64`. Provisional —
-/// REQUIRES an ADR-063-style corpus spike before `include_cross_episode_merges`
-/// may be enabled (R-01).
+/// REQUIRES a corpus spike before `include_cross_episode_merges`
+/// may be enabled.
 #[allow(dead_code)] // documentation-only constant; not read by the decision path
 const CORROBORATION_THRESHOLD_NUM: f64 = 0.5;
 
@@ -212,17 +206,17 @@ fn select_keeper<'a>(id_a: &'a str, id_b: &'a str) -> (&'a str, &'a str) {
 /// it under `feature = "test-utils"` (external test binaries cannot import `pub(crate)`
 /// items — E0365). NOT part of the stable public API.
 ///
-/// `dry_run` (ADR-070 Stage 2 shadow gate): when `true`, every clique-cover + F2
+/// `dry_run` (shadow gate): when `true`, every clique-cover + F2
 /// corroboration decision is computed and emitted EXACTLY as it would live, but the
 /// `apply_entity_merge` write is SKIPPED — no entity is fused. `report.count`
 /// (would-merge) is incremented identically either way (it counts DECISIONS, not
 /// writes), so `DreamSummary.cross_episode_would_merge` under shadow mode tells an
-/// operator "the op WOULD have merged N pairs" (ADR-070 §2.3 DoD-2.3.1), while
+/// operator "the op WOULD have merged N pairs" (DoD-2.3.1), while
 /// `report.merged` / `DreamSummary.cross_episode_merged` (D5) counts the fusions
 /// that ACTUALLY committed (0 in shadow). The `mode` label on every
 /// `emit_decision` (`shadow`/`applied`) also distinguishes the two.
 ///
-/// Args count = 3 — plain args, no params struct needed (TD-042 threshold 3).
+/// Args count = 3 — plain args, no params struct needed (threshold 3).
 #[doc(hidden)]
 pub async fn cross_episode(
     graph: &TemporalGraph,
@@ -238,7 +232,7 @@ pub async fn cross_episode(
         return Ok(report);
     }
 
-    // Decision-record mode for THIS op's decisions (ADR-070 Fork 1): in shadow mode
+    // Decision-record mode for THIS op's decisions (Fork 1): in shadow mode
     // (`dry_run`) every decision is observed but no write commits, so ALL decisions
     // (merge + skips) carry `Shadow`; otherwise `Applied`. Filtering
     // decision_total{mode=shadow} gives an operator a shadow window's full decision
@@ -302,7 +296,7 @@ pub async fn cross_episode(
                 .increment(1);
                 // Uniform decision record carries the PRECISE reason so
                 // decision_total{outcome} is a true partition — never double-counting
-                // one rejected pair into two buckets (ADR-070 Fork 2/3, §3.3).
+                // one rejected pair into two buckets (Fork 2/3).
                 let outcome = match rejected {
                     StructureOutcome::NoSharedStructure => "homonym_skip",
                     StructureOutcome::WeakCorroboration => "hub_skip",
@@ -328,7 +322,7 @@ pub async fn cross_episode(
         }
     }
 
-    // ── Phase 3 (ADR-067 F1): CLIQUE-ONLY clustering, NOT connected-component
+    // ── Phase 3 (F1): CLIQUE-ONLY clustering, NOT connected-component
     // transitive closure. A same-label triple `A~B`, `B~C`, `A≁C` (a bridge homonym)
     // is NOT a clique — the A-C edge is missing — so connected-component union-find
     // would wrongly fuse all three via the bridge `B`. Clique-only requires every
@@ -426,7 +420,7 @@ pub async fn cross_episode(
         let mut losers: Vec<&String> = clique.iter().filter(|m| **m != keeper).collect();
         losers.sort();
         for loser in losers {
-            // Shadow gate (ADR-070 §2.3): in `dry_run` the merge decision is still
+            // Shadow gate: in `dry_run` the merge decision is still
             // counted (`report.count`) + emitted (`emit_decision`, mode=Shadow), but the
             // destructive `apply_entity_merge` fusion is SKIPPED — no entity is fused.
             if !dry_run {
@@ -438,11 +432,11 @@ pub async fn cross_episode(
                         group_id,
                         site: crate::core::dream::provenance::MergeSite::CrossEpisode,
                         // Cross-episode fusion only fires past the structural
-                        // rarity-weighted corroboration gate (ADR-067 F2), so the
-                        // merge is structurally corroborated (spec §2.3, Quinn L3).
+                        // rarity-weighted corroboration gate (F2), so the
+                        // merge is structurally corroborated.
                         structural_signal: true,
-                        // TD-112: LEFT `None` intentionally. Cross-episode (P3) is
-                        // DRY-RUN by default (ADR-070 §2.3 — `cross_episode_dry_run`
+                        // LEFT `None` intentionally. Cross-episode (P3) is
+                        // DRY-RUN by default (`cross_episode_dry_run`
                         // defaults true), so in production the `!dry_run` arm doesn't
                         // fire and no keeper embedding goes stale. The re-embed is
                         // legitimately deferred until P3 is enabled apply-mode; the
@@ -468,7 +462,7 @@ pub async fn cross_episode(
                 debug_context: None,
             });
             // Surface the merge decision for the orchestrator to fire `on_merge_proposed`
-            // (ADR-070 Fork 5, Risk #17 orchestrator-fires). One entry per merged
+            // (Fork 5, Risk #17 orchestrator-fires). One entry per merged
             // decision, whether shadowed or applied.
             report.merges.push(CrossEpisodeMerge {
                 keeper: keeper.clone(),
@@ -541,7 +535,7 @@ fn clique_weight(
 }
 
 /// A clique's path attribution: `Exact` if ANY intra-clique eligible edge was exact,
-/// else `Fuzzy` (mirrors the pre-ADR-067 `member_path` rule, now scoped per-clique).
+/// else `Fuzzy` (mirrors the prior `member_path` rule, now scoped per-clique).
 fn clique_path(
     clique: &BTreeSet<String>,
     edge_path: &BTreeMap<(String, String), MergePath>,
@@ -612,8 +606,8 @@ fn bron_kerbosch_maximal_cliques(
     cliques
 }
 
-/// Bundled recursion state for [`bron_kerbosch_recurse`] — args-as-object (TD-042
-/// threshold 3): `r` (current growing clique), `p` (candidates), `x` (excluded).
+/// Bundled recursion state for [`bron_kerbosch_recurse`] — args-as-object
+/// (threshold 3): `r` (current growing clique), `p` (candidates), `x` (excluded).
 /// `adjacency` stays a lead positional param (shared/receiver-like dep, project
 /// convention) and `out` stays a separate output-accumulator param.
 struct BronKerboschState {
@@ -735,13 +729,13 @@ fn spans_distinct_episodes(slots: &[EntitySlot], id_a: &str, id_b: &str) -> bool
     union.len() >= 2
 }
 
-// ─── Structural-corroboration gate (P3.1b / RISK-001, ADR-067 F2 rarity-weighted) ─
+// ─── Structural-corroboration gate (P3.1b, F2 rarity-weighted) ────────────────
 
 /// The three-way result of the structural-corroboration gate ([`shares_structure`]).
 /// Distinguishes the TWO rejection reasons so the caller can emit the precise
-/// consolidation decision outcome (ADR-070 §3.3, Fork 2/3) — a pure homonym vs a
+/// consolidation decision outcome (Fork 2/3) — a pure homonym vs a
 /// hub-weak pair — WITHOUT double-counting one rejected pair into two outcome
-/// buckets. (The pre-ADR-070 code returned a bare `bool`, collapsing both reasons.)
+/// buckets. (The prior code returned a bare `bool`, collapsing both reasons.)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StructureOutcome {
     /// Shared rare structure ≥ threshold → the pair is merge-eligible.
@@ -754,7 +748,7 @@ enum StructureOutcome {
 }
 
 /// Do `a` and `b` share STRUCTURE ABOVE THE RARITY-WEIGHTED THRESHOLD (DoD-P3.1b,
-/// MANDATORY homonym guard, ADR-067 F2)?
+/// MANDATORY homonym guard, F2)?
 ///
 /// Every shared corroborator (a common third entity OR an identical
 /// `(predicate, object)` assertion) contributes an INTEGER weight inversely
@@ -764,7 +758,7 @@ enum StructureOutcome {
 /// integer, no `f64` anywhere in the comparison (V2). `f64` appears ONLY in the
 /// optional `KREMORY_DEBUG` log below, never in the gate.
 ///
-/// `pair` = `(a, b)` bundled to keep the arg count at the TD-042 threshold-3.
+/// `pair` = `(a, b)` bundled to keep the arg count at the threshold-3.
 async fn shares_structure(
     graph: &TemporalGraph,
     group_id: &str,
@@ -860,7 +854,7 @@ fn scaled_weight(f: u32) -> u64 {
     }
 }
 
-/// In-group DEGREE of a shared neighbour `neighbour` within `group_id` (ADR-067 F2):
+/// In-group DEGREE of a shared neighbour `neighbour` within `group_id` (F2):
 /// the count of DISTINCT entities that reference `neighbour` via a live,
 /// corroboration-LIVE fact (`expired_at IS NULL AND invalid_at IS NULL AND
 /// corroboration_inert = 0`) — same live-fact filter as [`neighbours_of`], INCLUDING
@@ -892,7 +886,7 @@ async fn neighbour_degree(graph: &TemporalGraph, group_id: &str, neighbour: &str
 }
 
 /// In-group FREQUENCY of an identical `(predicate, object)` assertion key `key`
-/// within `group_id` (ADR-067 F2): the count of DISTINCT `subject_id`s that assert
+/// within `group_id` (F2): the count of DISTINCT `subject_id`s that assert
 /// this exact key via a live, corroboration-LIVE fact. `key` is the same stable
 /// string form produced by [`assertions_of`] (`"<predicate>\u{1F}<object>"`).
 /// Deterministic integer.
@@ -944,16 +938,16 @@ async fn neighbours_of(
     // `entity` is the subject, or `subject_id` when `entity` is the object. Only
     // relational facts (`object_id IS NOT NULL`) contribute a graph neighbour.
     //
-    // LIVE-FACTS ONLY (Quinn F3): a RETIRED (`expired_at`/`invalid_at` set) fact must
+    // LIVE-FACTS ONLY: a RETIRED (`expired_at`/`invalid_at` set) fact must
     // NOT corroborate an identity merge. On a bi-temporal substrate a superseded/
     // invalidated edge is no-longer-asserted structure; P1 supersession + P2 archive
-    // run BEFORE P3 in the consolidation order (ADR-066 §2.6), so by the time P3 reads
+    // run BEFORE P3 in the consolidation order, so by the time P3 reads
     // corroboration the retired edges are already closed. Filtering them here is the
     // cause-fix — corroboration reflects the CURRENT graph, not its history.
     //
-    // CORROBORATION-LIVE ONLY (ADR-067 §C0, the convergence fix): `corroboration_inert
+    // CORROBORATION-LIVE ONLY (C0, the convergence fix): `corroboration_inert
     // = 0` on BOTH UNION arms — a merge-inherited fact endpoint must NOT corroborate a
-    // NEW cross-episode eligibility (impl-spec §C0 DoD: "a neighbour inherited via the
+    // NEW cross-episode eligibility ("a neighbour inherited via the
     // loser's OBJECT-position fact is equally inert"). Without this, the keeper of a
     // deferred bridge would inherit the loser's neighbours and re-open eligibility
     // against the bridge partner on the NEXT pass.
@@ -989,13 +983,13 @@ async fn assertions_of(
     group_id: &str,
     entity: &str,
 ) -> Result<BTreeSet<String>> {
-    // LIVE-FACTS ONLY (Quinn F3): mirror `neighbours_of` — a retired
+    // LIVE-FACTS ONLY: mirror `neighbours_of` — a retired
     // (`expired_at`/`invalid_at` set) assertion is no-longer-asserted structure and
-    // must NOT corroborate an identity merge. Governing spec: ADR-066 §1.2 (bi-temporal
-    // columns) + §2.6 (P1/P2 close retired facts before P3 reads corroboration).
+    // must NOT corroborate an identity merge (P1/P2 close retired facts before
+    // P3 reads corroboration).
     //
-    // CORROBORATION-LIVE ONLY (ADR-067 §C0): `corroboration_inert = 0` — mirrors
-    // `neighbours_of`'s C0 filter (impl-spec §C0 step 3).
+    // CORROBORATION-LIVE ONLY (C0): `corroboration_inert = 0` — mirrors
+    // `neighbours_of`'s C0 filter.
     let mut rows = graph
         .conn
         .query(
@@ -1087,12 +1081,12 @@ fn emit_counters(exact_merges: usize, fuzzy_merges: usize) {
     .increment(fuzzy_merges as u64);
 }
 
-// ─── Correction-signal seam (ADR-070 Fork 4) ────────────────────────────────────
+// ─── Correction-signal seam (Fork 4) ───────────────────────────────────────
 
-/// Bundled params for [`correct_wrong_merge`] — args-as-object per TD-042
+/// Bundled params for [`correct_wrong_merge`] — args-as-object
 /// (`too_many_arguments` threshold 3). `graph` is the receiver-like lead dep.
-// planned consumer: a future consumer-facing entity-split API (ADR-070 Fork 4 defers
-// the safe wrapper to a follow-up TD).
+// planned consumer: a future consumer-facing entity-split API (Fork 4 defers
+// the safe wrapper to a follow-up).
 #[allow(dead_code)]
 pub(crate) struct CorrectWrongMergeParams<'a> {
     pub(crate) graph: &'a TemporalGraph,
@@ -1102,7 +1096,7 @@ pub(crate) struct CorrectWrongMergeParams<'a> {
     pub(crate) fact_ids_to_reassign: &'a [i64],
 }
 
-/// Reverse a prior cross-episode merge (ADR-070 Fork 4): re-materialize `split_id` as
+/// Reverse a prior cross-episode merge (Fork 4): re-materialize `split_id` as
 /// a distinct entity and re-point the caller-specified facts from `keeper_id` back
 /// onto it, firing the correction-signal telemetry.
 ///
@@ -1110,8 +1104,8 @@ pub(crate) struct CorrectWrongMergeParams<'a> {
 /// "what the graph looked like before the merge" automatically (the caller — a human
 /// or a consumer-side tool that noticed two distinct referents were fused — supplies
 /// `split_id` + `fact_ids_to_reassign` explicitly). A full entity-split UI/API (bulk
-/// correction, provenance-aware partial un-merge) is OUT OF SCOPE (ADR-070 §5.1
-/// DoD-5.1.1).
+/// correction, provenance-aware partial un-merge) is OUT OF SCOPE
+/// (DoD-5.1.1).
 ///
 /// Fires `kremory.dream.consolidation.cross_episode_wrong_merge_corrected_total`
 /// (counter, LOW-cardinality — no group_id label) + a `tracing::warn!` carrying the
@@ -1119,7 +1113,7 @@ pub(crate) struct CorrectWrongMergeParams<'a> {
 ///
 /// **Visibility `pub(crate)` + `#[allow(dead_code)]`:** there is no consumer-facing
 /// "split" API to wire this to yet — exposing a bare low-level primitive without a
-/// safe caller-facing wrapper risks incorrect use (ADR-070 §5.1 DoD-5.1.2, Risk #5).
+/// safe caller-facing wrapper risks incorrect use (DoD-5.1.2, Risk #5).
 /// Promoting to `pub` is a follow-up TD once a concrete consumer is validated. The
 /// counter existing with zero fires is itself meaningful telemetry ("no corrections
 /// recorded yet").
@@ -1134,8 +1128,8 @@ pub(crate) async fn correct_wrong_merge(params: CorrectWrongMergeParams<'_>) -> 
         fact_ids_to_reassign,
     } = params;
 
-    // Steps 1-2 run inside ONE transaction (project mutation-safety convention, Quinn
-    // D+E MED-2): a mid-correction failure rolls back the re-materialized entity AND
+    // Steps 1-2 run inside ONE transaction (project mutation-safety convention):
+    // a mid-correction failure rolls back the re-materialized entity AND
     // every fact re-point together. `begin_immediate_if_needed` no-ops when already in
     // a txn, and `insert_entity_with_group`'s own guard likewise nests, so the entity
     // insert joins THIS transaction rather than committing early.
@@ -1173,7 +1167,7 @@ pub(crate) async fn correct_wrong_merge(params: CorrectWrongMergeParams<'_>) -> 
 
         // 2. Re-point ONLY the caller-specified facts from keeper → split, on whichever
         //    endpoint references the keeper. Reset `corroboration_inert = 0` so the
-        //    re-split entity is a LIVE corroborator again (Quinn D+E MED-1):
+        //    re-split entity is a LIVE corroborator again:
         //    `apply_entity_merge` stamped these facts inert as merge-inherited, and
         //    `neighbours_of`/`assertions_of` filter `corroboration_inert = 0` — leaving
         //    it set would keep the split structurally invisible to the very
@@ -1198,7 +1192,7 @@ pub(crate) async fn correct_wrong_merge(params: CorrectWrongMergeParams<'_>) -> 
                 )
                 .await?;
             if subj == 0 && obj == 0 {
-                // Loud on a caller mistake (Quinn D+E LOW-3): a fact_id that references
+                // Loud on a caller mistake: a fact_id that references
                 // the keeper on NEITHER endpoint reassigned nothing.
                 tracing::warn!(
                     target: "kremory.dream.consolidation.cross_episode",
@@ -1239,7 +1233,7 @@ pub(crate) async fn correct_wrong_merge(params: CorrectWrongMergeParams<'_>) -> 
         facts_reassigned = reassigned,
         fact_ids_reassigned = ?fact_ids_to_reassign,
         "a prior cross-episode merge was manually corrected — consider adding this pair \
-         to the ADR-063 corpus as a new SHOULD_NOT_MERGE case"
+         as a new SHOULD_NOT_MERGE case in the test corpus"
     );
     Ok(())
 }
@@ -1344,7 +1338,7 @@ mod tests {
             .expect("episode")
     }
 
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn anchor(graph: &TemporalGraph, gid: &str, episode_id: i64, entity: &str) {
         graph
             .insert_episodic_edge(InsertEpisodicEdgeParams {
@@ -1358,7 +1352,7 @@ mod tests {
     }
 
     /// Plant a relational fact `subject --predicate--> object` in `gid`.
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn fact_rel(
         graph: &TemporalGraph,
         gid: &str,
@@ -1381,7 +1375,7 @@ mod tests {
     }
 
     /// Plant a literal fact `subject --predicate--> "value"` in `gid`.
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn fact_lit(
         graph: &TemporalGraph,
         gid: &str,
@@ -1455,7 +1449,7 @@ mod tests {
         assert!(ids.contains(&"acme".to_string()), "neighbour untouched");
     }
 
-    // ── ADR-070 C1: shadow-mode (dry_run) gate ──────────────────────────────────
+    // ── C1: shadow-mode (dry_run) gate ────────────────────────────────────────
 
     /// Plant the canonical exact-label corroborated mergeable pair (mirrors
     /// `exact_label_shared_neighbour_two_episodes_merges`): 3 entities, two of which
@@ -1503,7 +1497,7 @@ mod tests {
             .sum()
     }
 
-    /// ADR-070 §2.3 DoD-2.3.1: the SAME mergeable fixture yields an IDENTICAL
+    /// DoD-2.3.1: the SAME mergeable fixture yields an IDENTICAL
     /// `report.count` under dry_run true/false (count reflects DECISIONS), but the
     /// entity row count is reduced by 1 under `false` (real fusion) and UNCHANGED
     /// under `true` (shadow skips the write). The `mode` label differs accordingly.
@@ -1580,17 +1574,17 @@ mod tests {
         assert_eq!(merged_decision_count(&snap_s, "applied"), 0);
     }
 
-    /// ADR-070 §2.2 compound default: a first enablement of cross-episode merges lands
+    /// Compound default: a first enablement of cross-episode merges lands
     /// in shadow mode until the operator explicitly opts into Stage 5 (apply).
     #[test]
     fn dream_opts_cross_episode_dry_run_defaults_true() {
         assert!(
             crate::memory::types::DreamOpts::default().cross_episode_dry_run,
-            "DreamOpts::default().cross_episode_dry_run must be true (ADR-070 §2.2)"
+            "DreamOpts::default().cross_episode_dry_run must be true"
         );
     }
 
-    /// ADR-071 Item 1: the P3 corpus gate PASSED (Wilson-LB 0.971297) so
+    /// The P3 corpus gate PASSED (Wilson-LB 0.971297) so
     /// `include_cross_episode_merges` was flipped default-ON. Combined with
     /// `cross_episode_dry_run` defaulting `true` (asserted above), the op runs
     /// SHADOW-FIRST by construction — decisions computed, no fusion. This locks the
@@ -1600,7 +1594,7 @@ mod tests {
         let d = crate::memory::types::DreamOpts::default();
         assert!(
             d.include_cross_episode_merges,
-            "DreamOpts::default().include_cross_episode_merges must be true (ADR-071 Item 1)"
+            "DreamOpts::default().include_cross_episode_merges must be true"
         );
         assert!(
             d.cross_episode_dry_run,
@@ -1608,7 +1602,7 @@ mod tests {
         );
     }
 
-    /// ADR-070 §5.5.2: the orchestrator (`run_consolidation`) fires `on_merge_proposed`
+    /// The orchestrator (`run_consolidation`) fires `on_merge_proposed`
     /// once per cross_episode merge decision, carrying the correct `dry_run` flag —
     /// whether shadowed (true) or applied (false). Uses a minimal inline capturing sink
     /// (the shared `RecordingSink` lives in the integration-test tree, unreachable from
@@ -1707,9 +1701,9 @@ mod tests {
         );
     }
 
-    /// ADR-070 §5.2: `correct_wrong_merge` reverses a merge — re-materializes the
+    /// `correct_wrong_merge` reverses a merge — re-materializes the
     /// split-off entity, re-points the caller-specified facts on BOTH endpoints, resets
-    /// their `corroboration_inert` flag (Quinn D+E MED-1 — so the split is a live
+    /// their `corroboration_inert` flag (so the split is a live
     /// corroborator again), and fires the correction counter exactly once.
     #[tokio::test]
     async fn correct_wrong_merge_reverses_a_merge_and_fires_signal() {
@@ -1731,7 +1725,7 @@ mod tests {
                 r.get::<i64>(2).expect("corroboration_inert"),
             )
         }
-        #[allow(clippy::too_many_arguments)] // test helper; 4 legit params (test files exempt per CLAUDE.md)
+        #[allow(clippy::too_many_arguments)] // test helper; 4 legit params (test files are exempt from the arg-count lint)
         async fn fact_id_where(graph: &TemporalGraph, gid: &str, col: &str, val: &str) -> i64 {
             // `col` is a hard-coded test literal ("subject_id"/"object_id") — no injection.
             let sql = format!("SELECT id FROM facts WHERE group_id = ?1 AND {col} = ?2");
@@ -1906,7 +1900,7 @@ mod tests {
         );
     }
 
-    // ── ADR-067 F2: rarity-weighted corroboration (integer-decided) ─────────────
+    // ── F2: rarity-weighted corroboration (integer-decided) ───────────────────
 
     /// Plant `n` DISTINCT entities that all assert `subject --located_in--> object`
     /// (relational), raising `object`'s in-group degree to `n`. Used to construct a
@@ -1914,7 +1908,7 @@ mod tests {
     /// namespaced by `object` so planting hubs for TWO different objects in the same
     /// test (`two_hubs_shared_does_not_merge`) never collides on the `(id, group_id)`
     /// PK.
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn plant_hub_referencers(graph: &TemporalGraph, gid: &str, object: &str, n: u32) {
         for i in 0..n {
             let id = format!("hub_ref_{object}_{i}");
@@ -2213,8 +2207,8 @@ mod tests {
     }
 
     // ── DoD-P3.1b / transitivity: 3-entity cluster, all edges corroborated → fuse ─
-    // Deterministic 3-entity fixture (Quinn F4). The corpus harness Row is 2-entity
-    // only, so the transitive union-find path (spec impl-spec §3 P3.1b + ADR-066 §2.2:
+    // Deterministic 3-entity fixture. The corpus harness Row is 2-entity
+    // only, so the transitive union-find path (P3.1b:
     // "A~C + B~C collapses {A,B,C} to one keeper") has no corpus coverage — pinned here.
 
     #[tokio::test]
@@ -2222,7 +2216,7 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         let gid = "g1";
         // Three raw ids that all normalize to "john smith" → three exact-path candidate
-        // pairs (A~B, A~C, B~C). Distinct episodes each. ADR-067 F2 (rarity-weighted):
+        // pairs (A~B, A~C, B~C). Distinct episodes each. F2 (rarity-weighted):
         // a corroborator shared by ALL THREE has in-group degree 3 →
         // `WEIGHT_LUT_SCALED[3] = 405_645 < SCALED_THRESHOLD (524_288)` — below
         // threshold ALONE. So each pair gets its OWN additional distinct rare
@@ -2230,7 +2224,7 @@ mod tests {
         // pairwise edge independently clears F2, while "acme" (shared by all three,
         // the genuine transitivity signal) is ALSO present on every pair. This keeps
         // the test's intent — verify clique-transitivity fuses a genuine 3-clique —
-        // without weakening any assertion (Rule 8: the corroboration signal must be
+        // without weakening any assertion — the corroboration signal must be
         // strengthened to legitimately clear the ratified F2 arithmetic, not the
         // assertion loosened).
         insert_entity(&graph, gid, "John Smith").await; // 'J' 0x4A → lowest id (root)
@@ -2276,10 +2270,10 @@ mod tests {
         assert!(ids.contains(&"acme".to_string()), "neighbour untouched");
     }
 
-    // ── ADR-067 F1 fix (V5) — bridge-homonym does NOT fuse via bridge ────────────
+    // ── F1 fix (V5) — bridge-homonym does NOT fuse via bridge ─────────────────
     // Cause-fix, not test-loosen: the old test PINNED a bug (connected-component
-    // transitive closure fusing A,C via bridge B). Resolving it is the ADR-066
-    // P3-ENABLEMENT blocker per Rule 8 — the wrong-behaviour assertion is corrected,
+    // transitive closure fusing A,C via bridge B). Resolving it was the
+    // P3-ENABLEMENT blocker — the wrong-behaviour assertion is corrected,
     // not relaxed. Renamed per impl-spec §C1 DoD.
 
     #[tokio::test]
@@ -2290,7 +2284,7 @@ mod tests {
         // B~C share neighbour "y", but A and C have DISJOINT neighbours (A:{x}, C:{y},
         // B:{x,y}). So A~C is NOT directly corroborated — only B bridges them. Neither
         // "x" nor "y" is a hub here (in-group degree 2 each — the exact single-rare-
-        // neighbour accept case, ADR-067 F2), so both A~B and B~C DO clear the
+        // neighbour accept case, F2), so both A~B and B~C DO clear the
         // corroboration gate; the safety property under test is CLIQUE-ONLY clustering
         // (F1), not F2.
         insert_entity(&graph, gid, "John Smith").await; // A — lowest id (keeper)
@@ -2339,7 +2333,7 @@ mod tests {
         );
     }
 
-    /// The V1 run-to-fixpoint proof (ADR-067 §C0 / §6): repeatedly run `cross_episode`
+    /// The V1 run-to-fixpoint proof (C0): repeatedly run `cross_episode`
     /// over the bridge plant until it merges 0. WITHOUT the C0 `corroboration_inert`
     /// stamp, pass 2 would inherit B's `knows→y` fact onto A (the remap makes the
     /// keeper A own neighbour `y`), making `A~C` newly eligible (both A and C now
@@ -2446,7 +2440,7 @@ mod tests {
         // Same label + structure but in DIFFERENT namespaces → never merge across.
         // Each namespace holds only ONE john-smith slug, so no in-namespace pair exists.
         // Neighbour names differ per namespace — `insert_entity_with_group` refuses
-        // the SAME name-slug across namespaces (ADR-029b cross-namespace collision
+        // the SAME name-slug across namespaces (cross-namespace collision
         // guard), which is orthogonal to the property under test here.
         insert_entity(&graph, "gA", "John Smith").await;
         insert_entity(&graph, "gB", "john  smith").await;
@@ -2487,7 +2481,7 @@ mod tests {
         assert!(report.warnings.is_empty());
     }
 
-    // ── ADR-067 F1: label group > MAX_LABEL_GROUP is SKIPPED (safety over recall) ──
+    // ── F1: label group > MAX_LABEL_GROUP is SKIPPED (safety over recall) ──────
 
     #[tokio::test]
     async fn oversized_label_group_skipped() {
@@ -2671,7 +2665,7 @@ mod tests {
             .expect("count")
     }
 
-    /// In-group degree of a shared neighbour `n` among `population` (ADR-067 F2), computed
+    /// In-group degree of a shared neighbour `n` among `population` (F2), computed
     /// DIRECTLY from plant records — the count of DISTINCT planted entities in
     /// `population` whose `neighbours` set contains `n`. This mirrors the op's
     /// `neighbour_degree` but reasons on the IMMUTABLE plant data, so it NEVER counts a
@@ -2693,7 +2687,7 @@ mod tests {
             .count() as u32
     }
 
-    /// Independent rarity-weighted corroboration decision (ADR-067 F2), recomputed from
+    /// Independent rarity-weighted corroboration decision (F2), recomputed from
     /// plant records over DIRECTLY-asserted structure only — the oracle's model of C0.
     /// Uses the SAME `WEIGHT_LUT_SCALED`/`SCALED_THRESHOLD` integer decision as the op
     /// (impl-spec §3), so op and oracle agree bit-for-bit on eligibility.
@@ -2758,7 +2752,7 @@ mod tests {
         oracle_shares_structure(population, a, b)
     }
 
-    /// **Independent clique cover (ADR-067 §4, C3)** — genuinely independent of the
+    /// **Independent clique cover (C3)** — genuinely independent of the
     /// op's Bron–Kerbosch: brute-force enumeration over subsets (bounded population,
     /// `2^N` scan keeping maximal fully-connected subsets), NOT the op's BK algorithm.
     /// The op and oracle share ONLY the deterministic disjoint-cover sort/accept RULE

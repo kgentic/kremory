@@ -1,5 +1,4 @@
-//! Reversal core for the Stage-1 reversible-graph-mutations substrate (arch-spec
-//! `reversible-graph-mutations-arch-spec-2026-07-10.md` §4.2 / §4.4 / §4.5 / §6).
+//! Reversal core for the Stage-1 reversible-graph-mutations substrate.
 //!
 //! Sub-phase 1c. This module makes a merge REVERSIBLE:
 //!
@@ -104,7 +103,7 @@ pub async fn load_merge_nogoods(
 /// that fails to deserialize, is a hard `Error` (parse-loudly, §2.1) — an
 /// un-reversible log row must never silently no-op.
 ///
-/// **LIFO-only for chained merges (§4.2, Quinn M1).** When an entity is merged
+/// **LIFO-only for chained merges.** When an entity is merged
 /// more than once over a SHARED endpoint (e.g. `A→K1` then `K1→K2`), the merges
 /// MUST be unwound Last-In-First-Out. Attempting to unmerge an earlier merge
 /// while a later merge still chains on one of its endpoints returns
@@ -313,7 +312,7 @@ async fn unmerge_txn(graph: &TemporalGraph, mutation_id: i64) -> Result<UnmergeO
         }
     }
 
-    // (d2) TD-203 D1 — REVIVE the facts the merge expired because re-pointing
+    // (d2) D1 — REVIVE the facts the merge expired because re-pointing
     //      collapsed both endpoints onto the keeper. Ordered immediately after
     //      (d) and NOT before it: while the endpoints still both read `keeper`
     //      the fact is a meaningless self-loop, so un-expiring first would make
@@ -324,7 +323,7 @@ async fn unmerge_txn(graph: &TemporalGraph, mutation_id: i64) -> Result<UnmergeO
     //      WHICH mechanism expired the row — it clears the stamp on any expired
     //      row in the list, and merely no-ops on one that is already live. An
     //      earlier version of this comment claimed it protected against reviving
-    //      a fact expired by a later unrelated mechanism (Quinn MNT-001); it does
+    //      a fact expired by a later unrelated mechanism; it does
     //      not, and saying so would be a guarantee the code has not got.
     //
     //      What ACTUALLY closes that window is two facts, both external to this
@@ -460,7 +459,7 @@ async fn unmerge_txn(graph: &TemporalGraph, mutation_id: i64) -> Result<UnmergeO
     })
 }
 
-/// Bundled parameters for [`later_chained_merge`] — args-as-object per TD-042
+/// Bundled parameters for [`later_chained_merge`] — args-as-object
 /// (`clippy.toml` `too-many-arguments-threshold = 3`; `#[allow]` banned in src).
 /// `conn` stays a lead positional param (receiver-like, project convention).
 struct LaterChainedMergeParams<'a> {
@@ -632,7 +631,7 @@ async fn restore_archived_txn(
         rows.next().await?.is_some()
     };
     if !in_archive {
-        // No mid-txn counter here (ADR-070 / Rule-19 rollback-overcount): this runs
+        // No mid-txn counter here (rollback-overcount): this runs
         // INSIDE `restore_archived_txn`, and when nested under `undo_delete_*` the
         // OUTER txn rolls back on this `Err` while a fired increment could NOT — it
         // would overcount a "restore" that never durably happened. The `Err`

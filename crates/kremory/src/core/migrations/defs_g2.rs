@@ -14,7 +14,7 @@
 // is one less than the forward migration being reverted:
 //   012b downgrades 013; 014c downgrades 015a; 015b downgrades 016.
 
-/// Migration 015b (emergency downgrade for Migration 016): revert the ADR-050
+/// Migration 015b (emergency downgrade for Migration 016): revert the
 /// crash-safety schema cluster.
 ///
 /// # Emergency-only

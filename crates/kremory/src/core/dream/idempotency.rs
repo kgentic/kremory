@@ -1,11 +1,10 @@
 // ---------------------------------------------------------------------------
 // Dream-pass idempotency key — canonical entity view + content hash.
 //
-// COMPILE-SPIKE (v0.2.4 Phase 3, readiness-gate fix 2026-06-16): the readiness
-// gate flipped FAIL→READY contingent on `canonical_entity_view` being the first
-// compile-spike of the sprint (per CLAUDE.md Rule 23 — compile-spike beats paper
-// review). This module is that spike: it defines the canonical view + hash that
-// the idempotency-key tuple `(pass_name, entity_id, content_hash)` is built from.
+// COMPILE-SPIKE: `canonical_entity_view` was verified to compile before being
+// relied on elsewhere. This module is that spike: it defines the canonical
+// view + hash that the idempotency-key tuple
+// `(pass_name, entity_id, content_hash)` is built from.
 //
 // ## Why a content hash (R-10)
 //
@@ -16,11 +15,11 @@
 // pass re-processes every entity forever (R-10 stop condition: duplicate
 // processing > 0).
 //
-// ## Canonical field set — REAL `Entity` struct, not the spec's idealised list
+// ## Canonical field set — REAL `Entity` struct, not an idealised list
 //
-// The v0.2.4 impl-spec §3 named the field set `{id, name, entity_type_id,
-// group_id, source_tier, source_id}`. Verified against `core/schema.rs::Entity`
-// (Rule 10) THREE of those do not exist on the in-memory struct:
+// An earlier design named the field set `{id, name, entity_type_id,
+// group_id, source_tier, source_id}`. Verified against `core/schema.rs::Entity`,
+// THREE of those do not exist on the in-memory struct:
 //   - `name`        → the struct field is `label`
 //   - `source_tier` → a DB column (migrations 012/013) but NOT an `Entity` field;
 //                     unreachable from `&Entity` without a separate query
@@ -116,9 +115,9 @@ mod tests {
     use super::*;
     use chrono::{TimeZone as _, Utc};
 
-    // Test helper: Rule-5 exempt per clippy.toml (test helpers may carry a
-    // documented too_many_arguments allow); TD-042 args-as-object targets `src/`
-    // production fns, not `#[cfg(test)]` builders.
+    // Test helper: exempt per clippy.toml (test helpers may carry a
+    // documented too_many_arguments allow); the args-as-object convention targets
+    // `src/` production fns, not `#[cfg(test)]` builders.
     #[allow(clippy::too_many_arguments)]
     fn entity(id: &str, label: &str, type_id: u32, group: Option<&str>) -> Entity {
         Entity {

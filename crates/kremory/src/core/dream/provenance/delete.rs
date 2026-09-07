@@ -1,6 +1,5 @@
 //! Deterministic DELETE cascade (Tier-2b) for the reversible-graph-mutations
-//! substrate (arch-spec `reversible-graph-mutations-arch-spec-2026-07-10.md` §4.4
-//! `delete-entity` + §4.5 `delete-fact` + §2.3 `entity_delete` / `fact_delete`).
+//! substrate (`delete-entity` + `delete-fact` + `entity_delete` / `fact_delete`).
 //!
 //! A delete is **REVERSIBLE**, not a hard drop. Two ops, one provenance shape:
 //!
@@ -304,8 +303,8 @@ async fn archive_fact(conn: &libsql::Connection, fact_id: i64, group_id: &str) -
 /// Returns 1 if the freeze was re-opened (keys dropped), for the honest count.
 ///
 /// The `cascade_retracted_total` counter is NOT emitted here: this runs INSIDE the
-/// delete's open `BEGIN IMMEDIATE`, and a metric increment cannot be rolled back
-/// (ADR-070 rollback-overcount pattern). The forward `delete_entity` / `delete_fact`
+/// delete's open `BEGIN IMMEDIATE`, and a metric increment cannot be rolled back.
+/// The forward `delete_entity` / `delete_fact`
 /// paths emit it post-commit, labelled with THAT op's `MutationKind` (Q1/Q2) — so a
 /// fact-delete-triggered retraction is attributed to `fact_delete`, not `entity_delete`.
 async fn retract_neighbor(
@@ -431,7 +430,7 @@ pub async fn delete_entity(
             "source" => "delete",
         )
         .increment(1);
-        // Q2 (ADR-070 rollback-overcount): the retract-on-zero cascade retractions are
+        // Q2: the retract-on-zero cascade retractions are
         // durable in-txn writes; their counter fires ONLY post-commit, and Q1: labelled
         // with THIS op's kind (`entity_delete`) so it is never mis-attributed.
         if outcome.neighbors_retracted > 0 {
@@ -629,7 +628,7 @@ pub async fn delete_fact(graph: &TemporalGraph, fact_id: i64) -> Result<DeleteFa
             "source" => "delete",
         )
         .increment(1);
-        // Q2 (ADR-070 rollback-overcount): cascade retractions counted ONLY post-commit,
+        // Q2: cascade retractions counted ONLY post-commit,
         // Q1: labelled `fact_delete` (a fact-delete-triggered retraction, correctly
         // attributed — the same `retract_neighbor` helper serves both delete paths).
         if outcome.neighbors_retracted > 0 {

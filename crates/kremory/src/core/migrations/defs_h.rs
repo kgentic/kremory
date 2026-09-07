@@ -1,13 +1,12 @@
 // ─── Migration 006 ─────────────────────────────────────────────────────────
 
-/// Migration 006: install composite FK constraints on `facts` and `episodic_edges`
-/// (ADR-029b Decision 1).
+/// Migration 006: install composite FK constraints on `facts` and `episodic_edges`.
 ///
 /// Uses CREATE-COPY-DROP-RENAME to replace the placeholder ADD COLUMN stubs
 /// that migration 004 installed. After this migration both tables reference
 /// `entities(id, group_id)` rather than the now-invalid single-column `entities(id)`.
 ///
-/// Idempotency gates (DUR-5 2026-08-05: G4 is now evaluated BEFORE G1 — see below):
+/// Idempotency gates (G4 is now evaluated BEFORE G1 — see below):
 ///   G4 — `episodic_edges_new` exists → the edges half needs resuming.
 ///   G1 — facts already has composite FK shape **AND no edges scratch** → return Ok(()).
 ///        The `AND` is load-bearing: G1 asked only about the FIRST of the two tables this
@@ -17,7 +16,7 @@
 ///   G2 — entities does NOT have composite PK → migration 004 not yet applied, return Err.
 ///   G3 — `facts_new` exists → partial migration, resume from drop+rename.
 ///
-/// Resume is CONTENT-based, not existence-based (Quinn REL-001): a leftover scratch table
+/// Resume is CONTENT-based, not existence-based: a leftover scratch table
 /// proves a run started, never that it finished copying, so each resume compares the
 /// scratch against its immutable `_bak_006` snapshot and repopulates from that snapshot
 /// before the swap. Renaming an incomplete scratch over live data would destroy it
@@ -255,7 +254,7 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
         .await
         .map_err(step("rename_facts_new"))?;
 
-    // Rebuild facts_fts (Vera 2026-05-28 #3): standalone FTS5 table; DROP TABLE facts
+    // Rebuild facts_fts: standalone FTS5 table; DROP TABLE facts
     // does NOT cascade. Rebuild from live data to prevent phantom FTS results.
     let _ = conn
         .execute("DROP TABLE IF EXISTS facts_fts", ())
@@ -350,7 +349,7 @@ pub(crate) async fn migrate_006_composite_fk_facts_episodic_edges(
             "migrate_006: episodic_edges_new already exists — resuming partial migration"
         );
 
-        // ── CONTENT-BASED RESUME (Quinn REL-001) ─────────────────────────────
+        // ── CONTENT-BASED RESUME ─────────────────────────────────────────────
         //
         // A leftover scratch table proves only that a run STARTED, never that it
         // finished copying — `CREATE TABLE episodic_edges_new` and the `INSERT …
@@ -575,25 +574,25 @@ pub(crate) async fn migrate_017_episodic_edges_presence_unique(
 
 // ─── Migration 018 ─────────────────────────────────────────────────────────
 
-/// Migration 018 (ADR-063 spec §5.0 + §5.1): prerequisites for the shared
+/// Migration 018: prerequisites for the shared
 /// identity-verdict / write-gate machinery (Site #5 + Site #3).
 ///
-/// 1. **`idx_facts_subject`** (spec §5.0, resolves RISK-002) — a
+/// 1. **`idx_facts_subject`** — a
 ///    `(subject_id, expired_at)` index mirroring the existing `idx_facts_object`
 ///    `(object_id, expired_at)`. Site #5's `cooccurs_in_graph` 1-hop-neighbour
 ///    query filters `facts` on `subject_id = ? AND expired_at IS NULL`; the only
 ///    pre-existing subject-side index (`idx_facts_subject_group
 ///    (subject_id, subject_group_id)`) does NOT cover an `expired_at` filter, so
 ///    without this index that query risks a sequential scan on `facts` at real
-///    graph sizes (undermining the "cheaper than L5 O(N²)" cost bound). Spike S6
-///    empirically checks the query cost with this index present.
+///    graph sizes (undermining the "cheaper than L5 O(N²)" cost bound). Measured
+///    empirically to confirm the query cost with this index present.
 ///
-/// 2. **`identity_verdict_audit`** (spec §5.1) — audit trail for LLM-adjudicated
+/// 2. **`identity_verdict_audit`** — audit trail for LLM-adjudicated
 ///    identity decisions (Site #5 + Site #3), one row per adjudicated pair. The
 ///    INSERT runs INSIDE the same `BEGIN IMMEDIATE` transaction as the destructive
-///    write it documents (spec §5.1 RISK-003), so a crash between the merge and a
+///    write it documents, so a crash between the merge and a
 ///    separate audit write cannot leave a merge with no audit trail. Mirrors the
-///    `dream_pass4_audit` pattern (ADR-047).
+///    `dream_pass4_audit` pattern.
 ///
 /// Idempotent: both statements are `IF NOT EXISTS` and safe to re-run on an
 /// already-migrated db.
@@ -649,14 +648,14 @@ pub(crate) async fn migrate_018_identity_verdict_prereqs(
 
 // ─── Migration 019 ─────────────────────────────────────────────────────────
 
-/// Migration 019 (ADR-066 spec §2): dream CONSOLIDATION sub-phase substrate.
+/// Migration 019: dream CONSOLIDATION sub-phase substrate.
 ///
 /// Three new optional feature tables backing the four consolidation ops:
 ///
 /// 1. **`facts_archive`** (P2 archive) — append-only audit history decoupled from
-///    the live `facts` table (SYNTHESIS #23). Same column shape as `facts` plus an
+///    the live `facts` table. Same column shape as `facts` plus an
 ///    `archived_at` timestamp. A long-expired, unreferenced fact is MOVED here
-///    (INSERT + DELETE inside one transaction, P2.3) so the live `facts` table +
+///    (INSERT + DELETE inside one transaction) so the live `facts` table +
 ///    its temporal indexes stay bounded on the hot recall path. `id` carries the
 ///    original `facts.id`. Index on `group_id` for scoped audit queries.
 ///
@@ -667,9 +666,9 @@ pub(crate) async fn migrate_018_identity_verdict_prereqs(
 ///
 /// 3. **`community_summaries`** (P4 communities) — one row per community with a
 ///    deterministic aggregate (`member_count`, `top_labels_json`) and a
-///    `member_hash` (SHA-256 of the sorted member-id list, §F-2) so an unchanged
+///    `member_hash` (SHA-256 of the sorted member-id list) so an unchanged
 ///    community hashes identically and is not re-counted (`communities_updated`).
-///    NO LLM summary (ADR-066 §A6). Keyed on `(group_id, community_id)`.
+///    NO LLM summary. Keyed on `(group_id, community_id)`.
 ///
 /// These are OPTIONAL feature tables: `check_integrity` (`schema.rs`) does NOT list
 /// them in `CRITICAL_TABLES`. Their absence on an old db must degrade gracefully
@@ -755,7 +754,7 @@ pub(crate) async fn migrate_019_consolidation_substrate(
 
 // ─── Migration 020 ─────────────────────────────────────────────────────────────
 
-/// Migration 020 (ADR-067 V1): `facts.corroboration_inert` — provenance-anchored
+/// Migration 020: `facts.corroboration_inert` — provenance-anchored
 /// corroboration column, the convergence fix for the `cross_episode_merges`
 /// (P3) op.
 ///
@@ -773,7 +772,7 @@ pub(crate) async fn migrate_019_consolidation_substrate(
 /// corroboration reads filter `= 0` (directly-asserted structure only). The flag
 /// is monotone (merges only ever set it, never clear it), so the corroboration-live
 /// edge set shrinks monotonically across passes — the op reaches a fixpoint in
-/// ≤ 1 merge-pass. See ADR-067 + impl-spec §C0/§6.
+/// ≤ 1 merge-pass.
 ///
 /// **`is_dream_generated` (migration 016) is NOT reusable** — it marks
 /// dream-*synthesized* facts written by `verify_stage`/`supersession`, and Pass-2
@@ -856,15 +855,15 @@ pub(crate) async fn migrate_020_facts_corroboration_inert(
     tracing::info!(
         target: "kremory::migrations",
         migration = "020",
-        "migrate_020: facts.corroboration_inert (ADR-067 provenance-anchored corroboration) installed"
+        "migrate_020: facts.corroboration_inert (provenance-anchored corroboration) installed"
     );
     Ok(())
 }
 
 // ─── Migration 021 ─────────────────────────────────────────────────────────
 
-/// Migration 021 (reversible-graph-mutations arch-spec §2.1/§2.2 + §8.4):
-/// provenance + anti-re-merge substrate for Stage-1 reversible graph mutations.
+/// Migration 021: provenance + anti-re-merge substrate for Stage-1
+/// reversible graph mutations.
 ///
 /// Two new tables:
 ///

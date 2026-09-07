@@ -183,11 +183,11 @@ pub async fn migrate_012b_revert_pass4_source_tier(
     //
     // ── Step 4a: drop cascade trigger BEFORE dropping audit table ────────────
     //
-    // The trigger created by Migration 013 (per ADR-047 §IRREV-001 fold) must be
-    // dropped explicitly. SQLite does NOT auto-drop triggers that reference dropped
-    // tables — the trigger would remain but become invalid, blocking entity
-    // deletes with a runtime error. Per §RISK-002 fold (downgrade removes ALL v0.1.2
-    // schema artifacts): drop the trigger before the table.
+    // The trigger created by Migration 013 must be dropped explicitly. SQLite
+    // does NOT auto-drop triggers that reference dropped tables — the trigger
+    // would remain but become invalid, blocking entity deletes with a runtime
+    // error. Downgrading removes ALL schema artifacts this migration cluster
+    // added, so: drop the trigger before the table.
 
     conn.execute(
         "DROP TRIGGER IF EXISTS trg_dream_pass4_audit_cascade_delete",
@@ -212,8 +212,7 @@ pub async fn migrate_012b_revert_pass4_source_tier(
 
 // ─── Migration 014 ────────────────────────────────────────────────────────────
 
-/// Migration 014: add provenance columns to `entity_types` (ADR-037 §9.5,
-/// Dream Pass 0).
+/// Migration 014: add provenance columns to `entity_types` (Dream Pass 0).
 ///
 /// Adds four columns that record how a type was discovered:
 /// - `discovered_at TEXT`  — ISO-8601 timestamp when the type was discovered

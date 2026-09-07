@@ -1,12 +1,5 @@
 //! Dream pass — instance acronym/nickname recall (Site #5).
 //!
-//! Governing document: `.ai-docs/specs/adr-063-embedding-identity-impl-spec-2026-07-02.md`
-//! (cited throughout as "spec §N"). NOT `.ai-docs/adrs/adr-063-unified-embedding-identity-signal-architecture-2026-07-02.md`,
-//! which this header previously pointed at — that file is 113 lines and contains
-//! ZERO occurrences of `write_gate`, so every "ADR-063 spec §N" reference below
-//! was unresolvable against it. `:573` already cited the impl-spec correctly, so
-//! the file contradicted itself.
-//!
 //! Periodic dream-phase pass that closes the acronym/nickname gap
 //! `names_lexically_compatible` (`disambiguation/lexical.rs`) documents as an
 //! inherent, unclosable-by-token-matching limit: pairs like `"IBM"` /
@@ -55,7 +48,7 @@
 //! uses the `.with_known_alias()` escape hatch (spec §3.4, D8) — DEFERRED in
 //! this implementation pass; see the `// D8 escape hatch` marker below.
 //!
-//! ## Spike gating (spec §8) — VALIDATED 2026-07-03
+//! ## Spike gating — VALIDATED
 //!
 //! S1 (initialism precision/recall), S2 (LLM adjudication precision/recall),
 //! and S6 (co-occurrence query cost) have all PASSED. The fair adversarial
@@ -64,7 +57,7 @@
 //! 0.988, ZERO false merges. This pass ships behind
 //! `DreamOpts::include_acronym_nickname_recall`.
 //!
-//! ## ⚠️ DEFAULT IS `false` (TD-222, 2026-08-17) — the spike gate above is STALE
+//! ## ⚠️ DEFAULT IS `false` — the spike gate above is STALE
 //!
 //! The enablement gate passed on a 140-row curated harness and the pass shipped
 //! default-ON. On the real corpus it dissolved BOTH speakers of conv0 into the
@@ -75,7 +68,7 @@
 //! Four doc sites — this one, `:182`, `dream/mod.rs:10`, `facade/dream.rs:379` —
 //! still claimed `true` for a day after the flip, i.e. they asserted that a
 //! destructive pass was live when it had been deliberately disabled for
-//! destroying entities. Corrected 2026-08-19. `:193` said `false` throughout, so
+//! destroying entities. Corrected. `:193` said `false` throughout, so
 //! this module was self-contradictory in the meantime.
 //!
 //! ## Observability (spec §6)
@@ -84,7 +77,7 @@
 //! - `kremory.dream.acronym_recall.merges_applied_total`
 //! - `kremory.dream.acronym_recall.rejected_total`
 //! - `kremory.dream.acronym_recall.cooccurrence_precompute_ms` (histogram —
-//!   TD-133 B3b: wall-clock for the bulk co-occurrence pre-filter's two
+//!   Wall-clock for the bulk co-occurrence pre-filter's two
 //!   queries, sensitive to the group's episode/fact fan-out)
 //! - `kremory.dream.acronym_recall.cooccurrence_pairs_precomputed_total`
 //!   (counter — size of the pre-filter's resulting pair set)
@@ -139,11 +132,11 @@ pub struct AcronymNicknameRecallReport {
     /// Number of nominated pairs rejected (LLM said not-same, or verdict
     /// missing/parse-failed).
     pub rejected: usize,
-    /// TD-222 defect 2. Number of pairs whose WRITE was REFUSED because
+    /// Number of pairs whose WRITE was REFUSED because
     /// `resolve_survivor` had retargeted an endpoint, so the write that would
     /// have executed concerned a pair **nobody adjudicated**.
     ///
-    /// Covers BOTH write arms (2026-08-19): the destructive `Merge` arm and the
+    /// Covers BOTH write arms: the destructive `Merge` arm and the
     /// non-destructive `PotentialAlias` arm. The two are distinguishable in
     /// metrics — `kremory.identity.merge_retargeted_unadjudicated_total` vs
     /// `kremory.identity.alias_retargeted_unadjudicated_total` — deliberately
@@ -168,9 +161,9 @@ struct NominatedPair {
     a: String,
     b: String,
     /// WHY this pair was nominated — `true` for the initialism arm, `false` for
-    /// the co-occurrence arm (TD-222).
+    /// the co-occurrence arm.
     ///
-    /// Load-bearing, not bookkeeping. This site waives ADR-057's lexical gate,
+    /// Load-bearing, not bookkeeping. This site waives the lexical gate,
     /// and the waiver is only justified for INITIALISM pairs, which "share zero
     /// tokens by construction". Co-occurrence pairs share no lexical relation
     /// EITHER, and for them the waiver removes the last check standing between
@@ -182,8 +175,8 @@ struct NominatedPair {
 
 // ─── Public entry-point ───────────────────────────────────────────────────
 
-/// Bundled parameters for [`acronym_nickname_recall`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments, threshold 3). `llm` stays a
+/// Bundled parameters for [`acronym_nickname_recall`] — args-as-object
+/// (rust-conventions §too_many_arguments, threshold 3). `llm` stays a
 /// lead generic positional param (project convention, mirrors
 /// `type_registry_collapse<L>` / `discover_types<L>`).
 ///
@@ -202,23 +195,20 @@ pub struct AcronymNicknameRecallParams<'a> {
     /// `TemporalGraph`-typed methods (spec §3.3).
     pub graph: &'a TemporalGraph,
     pub group_id: &'a str,
-    /// Concrete model id for capability detection (TD-094-style threading).
-    /// Empty (`""`) → `PromptOnly` degrade.
+    /// Concrete model id for capability detection. Empty (`""`) → `PromptOnly` degrade.
     pub model_id: &'a str,
-    /// TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`): when `Some`,
-    /// a merge this pass applies recomputes + persists the keeper's name
+    /// When `Some`, a merge this pass applies recomputes + persists the keeper's name
     /// embedding so the surviving entity's stored embedding reflects its
     /// post-merge identity. Site #5 has NO dry-run gate, so whenever it IS
-    /// enabled (`DreamOpts::include_acronym_nickname_recall` — DEFAULT `false`
-    /// since TD-222, `memory/types.rs:1321`) it merges LIVE — leaving the
-    /// keeper's embedding stale is the exact TD-112 bug. `None` preserves the
-    /// pre-TD-112 no-re-embed behavior (used by unit tests that don't assert
+    /// enabled (`DreamOpts::include_acronym_nickname_recall` — DEFAULT `false`,
+    /// `memory/types.rs:1321`) it merges LIVE — leaving the
+    /// keeper's embedding stale is a real bug. `None` preserves the
+    /// pre-existing no-re-embed behavior (used by unit tests that don't assert
     /// on embeddings).
     pub embedder: Option<&'a dyn crate::core::provider::DynEmbeddingProvider>,
 }
 
-/// Run Site #5 instance acronym/nickname recall over `group_id` (ADR-063
-/// spec §3).
+/// Run Site #5 instance acronym/nickname recall over `group_id`.
 ///
 /// Called by `mem.dream()` when `DreamOpts::include_acronym_nickname_recall
 /// = true` (spike-gated, default `false` — spec §8). Hooked immediately
@@ -292,9 +282,9 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
         return Ok(report);
     }
 
-    // ── Step 2: structural pre-filter — named hybrid (spec §3.1) ─────────────
+    // ── Step 2: structural pre-filter — named hybrid ─────────────────────────
     //
-    // TD-133 B3: the graph co-occurrence half of the hybrid predicate used to
+    // The graph co-occurrence half of the hybrid predicate used to
     // call `cooccurs_in_graph` (2 DB queries) PER PAIR — O(N²) DB round-trips
     // (~10.7k queries for 105 entities / 5356 pairs on the labelled conv0
     // dream run — `pairs_examined`'s own denominator). `cooccurs_in_graph`
@@ -307,7 +297,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
     // evaluated changed (bulk-precomputed set membership vs per-pair DB
     // round-trip), never WHAT it evaluates.
     let cooccur_pairs = build_cooccurrence_prefilter_set(conn, group_id).await?;
-    // TD-222: one namespace-wide read, consumed by the type veto at the
+    // One namespace-wide read, consumed by the type veto at the
     // `write_gate` call site. Loaded here beside the other prefilter data so it
     // stays OUT of the O(N²) pair loop.
     let entity_types = load_entity_types(conn, group_id).await?;
@@ -317,8 +307,8 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             report.pairs_examined += 1;
             let a = &ids[i];
             let b = &ids[j];
-            // TD-222: keep the two arms DISTINGUISHABLE. `||` collapsed them into
-            // one boolean and the reason was lost, which is how ADR-057's lexical
+            // Keep the two arms DISTINGUISHABLE. `||` collapsed them into
+            // one boolean and the reason was lost, which is how the lexical
             // waiver became site-wide rather than initialism-only.
             let by_initialism = initialism_candidate(a, b);
             let is_nominated = by_initialism
@@ -410,10 +400,10 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             deterministic_signal: DeterministicSignal::from_structural_prefilter(true),
             llm_verdict: verdict.clone(),
             min_confidence_floor: None,
-            // TD-212: the temporal veto. Measured on `graph_mutation_log`, this
+            // The temporal veto. Measured on `graph_mutation_log`, this
             // site merged a full timestamp INTO its bare time in 10 of 21 merges
             // (`1037 am on 27 june 2023` -> `1037 am`) — irreversible data loss.
-            // Only the TEMPORAL arm of ADR-057's rule applies here: the full
+            // Only the TEMPORAL arm of the rule applies here: the full
             // lexical gate would reject this site's acronym pairs, which share
             // zero tokens by construction.
             // NOTE for the next reviewer: `pair.a`/`pair.b` are entity IDs, and in
@@ -423,26 +413,26 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
             names: Some((&pair.a, &pair.b)),
         });
 
-        // ── TD-222 — DIFFERENT KINDS OF THING ARE NEVER THE SAME ENTITY ──────
+        // ── DIFFERENT KINDS OF THING ARE NEVER THE SAME ENTITY ───────────────
         //
         // THE DEFECT THIS CLOSES. This site nominates on `initialism_candidate(a,b) OR
         // cooccurs_in_graph(a,b)`. For a CO-OCCURRENCE pair, `cosine` is pinned
         // to 0.0 (`:346`), `deterministic_signal` is hardcoded `true` (`:353` —
-        // the nomination itself IS the signal), and only ADR-057's TEMPORAL arm
+        // the nomination itself IS the signal), and only the TEMPORAL arm
         // is passed in `names`. So `write_gate` row 6 is satisfied by nothing
         // more than "these two appear near each other in the graph", and a
         // SINGLE LLM `true` at >= the confidence floor authorises an
         // IRREVERSIBLE merge with no independent corroboration anywhere.
         //
-        // MEASURED (6 live runs of `dream_full_consolidation_real_llm::happy_path`,
-        // 2026-08-14; 2 runs merged wrongly, `graph_mutation_log` named each —
+        // MEASURED (6 live runs of `dream_full_consolidation_real_llm::happy_path`;
+        // 2 runs merged wrongly, `graph_mutation_log` named each —
         // every one `structural_signal:true`, `cosine:null`):
         //   peru -> amazon river · radioactivity -> chemistry
         //   physics -> marie curie · chemistry -> marie curie
         // A country into a river; two fields and a phenomenon into a person.
         //
         // ⚠️ WHY NOT A LEXICAL GATE — the obvious fix, BUILT AND REVERTED, so
-        // that nobody re-derives it. Restoring ADR-057's LEXICAL gate for
+        // that nobody re-derives it. Restoring the LEXICAL gate for
         // co-occurrence pairs blocks the merges above AND `Bob`/`Robert`, which
         // is THIS SITE'S ENTIRE PURPOSE: nickname pairs are lexically
         // incompatible BY DEFINITION, exactly like acronym pairs, so a lexical
@@ -465,7 +455,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
         // endpoint (`entity_type_id == 0`) or one missing from the map yields
         // `false` and the pair proceeds exactly as before. That asymmetry is
         // what keeps this from repeating the lexical gate's over-blocking on
-        // corpora where types are sparse ([[over-blocking-is-a-security-failure]]).
+        // corpora where types are sparse.
         //
         // Applied BEFORE `record_write_gate_decision` so telemetry shows the
         // decision that was actually enacted.
@@ -485,7 +475,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                 type_a = entity_types.get(&pair.a).copied().unwrap_or(0),
                 type_b = entity_types.get(&pair.b).copied().unwrap_or(0),
                 "site5 TYPE veto — co-occurring pair with DIFFERENT entity types may not merge \
-                 destructively (TD-222). Co-occurrence is adjacency, not identity."
+                 destructively. Co-occurrence is adjacency, not identity."
             );
             WriteDecision::Reject
         } else {
@@ -493,7 +483,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
         };
 
         record_write_gate_decision(decision);
-        // Quinn MED-3: `write_gate` is documented pure/counter-free, so the veto
+        // `write_gate` is documented pure/counter-free, so the veto
         // cannot count itself. Without this, a veto-driven Reject is indistinguishable
         // from every other Reject in production telemetry — the gate would be working
         // and invisible. Counted HERE, at the caller, where counting is allowed.
@@ -565,7 +555,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                     continue;
                 }
 
-                // TD-222 defect 2 — REFUSE a merge nobody adjudicated.
+                // REFUSE a merge nobody adjudicated.
                 //
                 // `resolve_survivor` above follows the chain of merges this loop has
                 // already applied. When it CHANGES an endpoint, the merge about to
@@ -593,14 +583,13 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                 // NOT a lexical or type judgement: this adds no new signal, so it
                 // cannot over-block a legitimately adjudicated pair. `Bob`/`Robert`
                 // is adjudicated directly and is unaffected — the distinction that
-                // killed the reverted lexical veto (TD-222) and left the entity-type
+                // killed the reverted lexical veto and left the entity-type
                 // veto inert.
                 //
-                // Spec basis: ADR-063 impl-spec §4's transitive-chain provision is
-                // scoped to Site #3's TYPE ids and self-describes as "an
-                // implementation-time call, non-load-bearing to this spec"
-                // (`.ai-docs/specs/adr-063-embedding-identity-impl-spec-2026-07-02.md:752`).
-                // It does NOT sanction retargeting Site #5 entity merges.
+                // The transitive-chain provision this mirrors is scoped to Site #3's
+                // TYPE ids and self-describes as "an implementation-time call,
+                // non-load-bearing to this spec". It does NOT sanction retargeting
+                // Site #5 entity merges.
                 if keeper_id != pair.a || loser_id != pair.b {
                     report.retargeted_unadjudicated += 1;
                     counter!(
@@ -617,7 +606,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                         would_merge_keeper = %keeper_id,
                         would_merge_loser = %loser_id,
                         "site5 REFUSED merge: an endpoint was retargeted by an earlier \
-                         merge, so this pair was never adjudicated (TD-222)"
+                         merge, so this pair was never adjudicated"
                     );
                     continue;
                 }
@@ -631,8 +620,8 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                         site: crate::core::dream::provenance::MergeSite::Site5AcronymNickname,
                         // Site #5 nominates via the deterministic structural
                         // pre-filter (initialism / graph co-occurrence), so the
-                        // merge carries a structural signal (spec §2.3, Quinn L3) —
-                        // threaded explicitly, mirroring the audit row's
+                        // merge carries a structural signal — threaded explicitly,
+                        // mirroring the audit row's
                         // `structural_signal: true` below.
                         structural_signal: true,
                         audit: Some(crate::core::canonicalization::IdentityVerdictAuditRow {
@@ -646,14 +635,13 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                             decision: "merge",
                             run_id: &run_id,
                         }),
-                        // TD-112 (`.ai-docs/tech-debt/tech-debt-register.md:2547`):
                         // Site #5's DETECTION is embedder-independent (initialism /
                         // graph co-occurrence pre-filter — module doc), but that says
                         // nothing about the surviving keeper's STORED embedding, which
                         // still needs refreshing after the fusion. Site #5 has NO
                         // dry-run gate and is ON by default, so it merges live in every
                         // `mem.dream()`; thread the embedder so the keeper is re-embedded
-                        // post-commit instead of going stale (Quinn CONCERNS M1).
+                        // post-commit instead of going stale.
                         embedder,
                     },
                 )
@@ -691,7 +679,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                         // `load_entity_ids`; the aliases pass deleting rows). The
                         // counter + WARN below exist so the next occurrence is
                         // DIAGNOSABLE rather than swallowed — per
-                        // [[observability-first-class]], isolating an error without
+                        // isolating an error without
                         // making it visible would just move the silence.
                         counter!(
                             "kremory.identity.merge_apply_failed_total",
@@ -719,21 +707,21 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                 // dream cycle, exactly like any other potential-alias edge.
                 let confidence = verdict.as_ref().map(|v| v.confidence).unwrap_or(0.0);
 
-                // TD-220 — resolve BOTH endpoints through this loop's merge chain
+                // Resolve BOTH endpoints through this loop's merge chain
                 // before writing, exactly as the `Merge` arm above does (E2E-1).
                 //
                 // This arm used `pair.a` / `pair.b` RAW. When an earlier iteration
                 // merged one of them away, the entity row was gone by the time this
                 // insert ran, and `facts`' composite FK to `entities(id)`
-                // (`core/schema.rs:505-506`) rejected it. Measured on the 2026-08-13
+                // (`core/schema.rs:505-506`) rejected it. Measured on a real
                 // full-scale run: **71 `FOREIGN KEY constraint failed` warnings**, all
                 // at `21:04:23`, interleaved with the `entity_merge` rows for `mel` and
                 // `melanie` in `graph_mutation_log`.
                 //
                 // That is not cosmetic. `potential_alias` facts are the INPUT to
                 // `resolve_pending_aliases`, so 71 failed inserts are 71 alias
-                // candidates that never reached their consumer — and TD-203 already
-                // established that unresolved aliases cost recall. The pass reported
+                // candidates that never reached their consumer — and unresolved
+                // aliases are already known to cost recall. The pass reported
                 // success throughout; the only signal was a WARN with no counter.
                 let alias_keeper = resolve_survivor(&merged_into, &pair.a);
                 let alias_new = resolve_survivor(&merged_into, &pair.b);
@@ -759,7 +747,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                     continue;
                 }
 
-                // TD-222 (2026-08-19) — the alias arm's half of the defect-2 fix.
+                // The alias arm's half of the defect-2 fix.
                 //
                 // The `Merge` arm above REFUSES when `resolve_survivor` retargets an
                 // endpoint (`:575`). This arm did not: it wrote the RESOLVED pair
@@ -804,7 +792,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                         would_write_existing = %alias_keeper,
                         would_write_new = %alias_new,
                         "site5 REFUSED potential_alias: an endpoint was retargeted by an \
-                         earlier merge, so this pair was never adjudicated (TD-222)"
+                         earlier merge, so this pair was never adjudicated"
                     );
                     continue;
                 }
@@ -823,7 +811,7 @@ pub async fn acronym_nickname_recall<L: ChatProvider>(
                 )
                 .await;
                 if let Err(e) = inserted {
-                    // TD-220: a dropped alias candidate is a dropped INPUT to a later
+                    // A dropped alias candidate is a dropped INPUT to a later
                     // pass, so it needs a counter, not just prose. A bare WARN is
                     // invisible to every dashboard — which is why 71 of these went
                     // unnoticed for a day and were found by grepping for something
@@ -939,10 +927,10 @@ fn is_initialism_of(shorter: &str, longer: &str) -> bool {
         .all(|(ch, token)| token.starts_with(*ch))
 }
 
-/// Bundled parameters for [`cooccurs_in_graph`] — args-as-object per TD-042
+/// Bundled parameters for [`cooccurs_in_graph`] — args-as-object
 /// (rust-conventions §too_many_arguments, threshold 3).
 ///
-/// TD-133 B3: `cooccurs_in_graph` is no longer called from Step 2's
+/// `cooccurs_in_graph` is no longer called from Step 2's
 /// production loop (superseded by the bulk `build_cooccurrence_prefilter_set`
 /// precompute, immediately below) — its only remaining callers are the unit
 /// tests and the S5/S6 spike tests in `mod tests` below, which use it as the
@@ -965,9 +953,9 @@ struct CooccursInGraphParams<'a> {
 /// as subject/object of a fact involving a common third entity within 1
 /// hop). Bounded SQL scoped to `group_id`, not an in-memory full-graph
 /// traversal (spec §3.1). Requires `idx_facts_subject` (migration 018) to
-/// stay bounded-cost (spec §3.5 RISK-002).
+/// stay bounded-cost.
 ///
-/// TD-133 B3: test-only oracle now — see [`CooccursInGraphParams`]'s doc
+/// Test-only oracle now — see [`CooccursInGraphParams`]'s doc
 /// comment.
 #[cfg(test)]
 async fn cooccurs_in_graph(params: CooccursInGraphParams<'_>) -> Result<bool> {
@@ -1048,8 +1036,8 @@ async fn cooccurs_in_graph(params: CooccursInGraphParams<'_>) -> Result<bool> {
     Ok(found)
 }
 
-/// Bulk-precompute the graph co-occurrence relation for `group_id` (TD-133
-/// B3): the SAME relation `cooccurs_in_graph(a, b)` decides pairwise (shared
+/// Bulk-precompute the graph co-occurrence relation for `group_id`:
+/// the SAME relation `cooccurs_in_graph(a, b)` decides pairwise (shared
 /// episode mention OR shared 1-hop fact-neighbor), computed for every
 /// co-occurring pair in the group via exactly TWO queries total instead of
 /// TWO queries PER PAIR. Semantically identical to `cooccurs_in_graph`
@@ -1065,7 +1053,7 @@ async fn cooccurs_in_graph(params: CooccursInGraphParams<'_>) -> Result<bool> {
 /// lookups are order-independent regardless of which SQL branch produced the
 /// row.
 ///
-/// Observability (spec §6 / Rule 19): the two bulk queries below replace an
+/// Observability: the two bulk queries below replace an
 /// O(pairs) per-pair round-trip with an O(group-fan-out) precompute — their
 /// cost is now sensitive to the group's episode/fact fan-out rather than to
 /// `pairs_examined`, so it needs its own latency + result-size signal rather
@@ -1136,8 +1124,8 @@ async fn build_cooccurrence_prefilter_set(
     // `subject_id = ?`/`object_id = ?` equality predicate (that's what
     // `idx_facts_subject`/`idx_facts_object` — migration 018 — serve for
     // `cooccurs_in_graph`'s per-pair lookups). This CTE instead scans `facts`
-    // filtered by `group_id`, which is served by `idx_facts_group`. Verified
-    // 2026-07-21: no dedicated index exists on `episodic_edges` for the
+    // filtered by `group_id`, which is served by `idx_facts_group`. Verified:
+    // no dedicated index exists on `episodic_edges` for the
     // first query's `entity_group_id` filter either (only
     // `idx_episodic_edges_entity`/`idx_episodic_edges_episode` and the
     // migration-017 unique index leading with `episode_id`) — if this pass's
@@ -1210,13 +1198,13 @@ struct AdjudicateBatchParams<'a, L: ChatProvider> {
     group_id: &'a str,
 }
 
-/// Default bounded in-flight concurrency for the Phase-2 LLM adjudication calls
-/// (TD-133 B3). Measured on a labelled conv0 dream run: this site's LLM calls
+/// Default bounded in-flight concurrency for the Phase-2 LLM adjudication calls.
+/// Measured on a labelled conv0 dream run: this site's LLM calls
 /// are individually fast (avg ~1.58s) but were firing fully SERIALLY —
 /// `kremory.identity.llm_call_latency_ms_histogram{site="site5_acronym_nickname"}`
 /// summed to 307s across 194 calls, making this site the dominant cost of the
 /// whole dream pass. Kept conservative (not maxed): dream is latency-tolerant by
-/// design (ADR-063), and the LLM provider (Groq in the labelled run) enforces
+/// design, and the LLM provider (Groq in the labelled run) enforces
 /// per-account RPM limits a higher value would risk tripping.
 ///
 /// Overridable at runtime via `KREMORY_DREAM_ADJUDICATION_CONCURRENCY` (mirrors
@@ -1245,7 +1233,7 @@ fn parse_adjudication_concurrency(raw: Option<&str>) -> usize {
 }
 
 /// Adjudicate every nominated pair via one or more chunked `IdentityVerdictBatch`
-/// LLM calls (S3 spike fix — Quinn-verified; the timeout Site #3's spike surfaced
+/// LLM calls (S3 spike fix; the timeout Site #3's spike surfaced
 /// is shared infrastructure, so Site #5 gets the identical fix), returning
 /// verdicts keyed by the GLOBAL `pair_id` (index into the caller's full
 /// `nominated` slice).
@@ -1263,8 +1251,8 @@ fn parse_adjudication_concurrency(raw: Option<&str>) -> usize {
 /// timeout / DB read fail) only defaults THAT chunk's pairs to no-verdict —
 /// it does not lose verdicts already resolved by other chunks.
 ///
-/// TD-133 B3 (ADR-063 — dream is latency-tolerant, but the LLM calls
-/// themselves were needlessly serial): this runs in TWO phases rather than
+/// Dream is latency-tolerant, but the LLM calls
+/// themselves were needlessly serial: this runs in TWO phases rather than
 /// one straight loop, and deliberately does NOT wrap the whole loop in a
 /// single `buffer_unordered` — that would fire `build_adjudication_messages`'s
 /// DB reads concurrently against the shared `conn`, which can lock, and its
@@ -1342,8 +1330,8 @@ async fn adjudicate_batch<L: ChatProvider>(
 
     use futures::stream::StreamExt as _;
 
-    // TD-218 — INTRA-pass progress. This loop is where a full-scale run spends
-    // its time: on 2026-08-13 it made **309 `IdentityVerdictBatch` calls over 83
+    // INTRA-pass progress. This loop is where a full-scale run spends
+    // its time: on a real run it made **309 `IdentityVerdictBatch` calls over 83
     // minutes** (19:43:34 → 21:06:57), and emitted nothing between them. The
     // per-pass START/DONE framing in `facade/dream.rs` tells you WHICH pass is
     // running; only a completed/total counter distinguishes "advancing through
@@ -1409,9 +1397,9 @@ struct CallAdjudicationLlmParams<'a, L: ChatProvider> {
 /// within the chunk, NOT the caller's full `nominated` slice — see
 /// [`adjudicate_batch`] for the global-index remap). Missing/parse-failed
 /// entries are simply absent from the map — callers treat a missing `pair_id`
-/// as `llm_verdict = None` (spec §2.3 failure-mode default).
+/// as `llm_verdict = None` (failure-mode default).
 ///
-/// TD-133 B3: extracted from the pre-parallelization `adjudicate_chunk`'s LLM
+/// Extracted from the pre-parallelization `adjudicate_chunk`'s LLM
 /// half (the DB-read half — `build_adjudication_messages` — now runs in
 /// `adjudicate_batch`'s serial Phase 1). This is the half `adjudicate_batch`
 /// fires concurrently across chunks via `buffer_unordered`. All existing
@@ -1437,8 +1425,8 @@ async fn call_adjudication_llm<L: ChatProvider>(
     let raw_value = StructuredCallBuilder::new(llm, &schema, "IdentityVerdictBatch")
         .model(model_id)
         .messages(messages)
-        // S3 spike fix: dream-phase adjudication is latency-tolerant by design
-        // (ADR-063 spec) — raise the per-arm budget for THIS call site only,
+        // S3 spike fix: dream-phase adjudication is latency-tolerant by design —
+        // raise the per-arm budget for THIS call site only,
         // rather than the shared 30s default other call sites depend on
         // (`structured.rs:84`).
         .ttft_budget_ms(crate::core::identity_verdict::ADJUDICATION_TTFT_BUDGET_MS)
@@ -1620,13 +1608,13 @@ async fn load_entity_ids(conn: &libsql::Connection, group_id: &str) -> Result<Ve
     Ok(ids)
 }
 
-/// Load `id -> entity_type_id` for every entity in `group_id` (TD-222).
+/// Load `id -> entity_type_id` for every entity in `group_id`.
 ///
 /// ONE query for the whole namespace rather than two per pair: this site is
 /// O(N²) in pairs already (`pairs_examined` reached 28 on a 3-episode fixture
 /// and is far larger on a corpus), and a per-pair type lookup would put two
 /// more DB round-trips inside that loop — the same mistake `cooccurs_in_graph`
-/// was restructured to avoid (TD-133 B3, see `:249-257`).
+/// was restructured to avoid (see `:249-257`).
 ///
 /// `entity_type_id = 0` is the "Entity" CATCH-ALL sentinel, i.e. UNTYPED
 /// (`core/schema.rs:120`), and it is returned as-is. Callers must treat 0 as
@@ -1667,7 +1655,6 @@ async fn load_entity_types(
 }
 
 /// Do we POSITIVELY KNOW these two entities are different kinds of thing?
-/// (TD-222.)
 ///
 /// `true` ONLY when both endpoints carry a real type and those types differ.
 /// Any absence — either side missing from the map, either side untyped
@@ -1680,8 +1667,7 @@ async fn load_entity_types(
 /// exactly how the previous attempt at this fix (a lexical gate) halved
 /// full-corpus site-5 recall to 0.50 against a 0.90 threshold before being
 /// reverted. So this fires only on POSITIVE evidence of difference and is a
-/// no-op whenever the graph cannot answer
-/// ([[over-blocking-is-a-security-failure]]).
+/// no-op whenever the graph cannot answer.
 ///
 /// A country and a river are different kinds of thing and can never be the same
 /// entity. Two people with different names can be.
@@ -1698,7 +1684,7 @@ async fn load_entity_description(
     entity_id: &str,
     group_id: &str,
 ) -> Result<Option<String>> {
-    // ADR-029d: MUST filter on group_id. Under per-namespace-open the same
+    // MUST filter on group_id. Under per-namespace-open the same
     // entity id can exist in two namespaces; an unscoped `WHERE id = ?1` would
     // return whichever row libSQL yields first → cross-tenant data leak into the
     // dream acronym/nickname adjudication prompt. (mirrors reclassify.rs:639.)
@@ -1846,7 +1832,7 @@ mod tests {
     //   index j is `pair.b` (LOSER)  in (0,j)..(j-1,j)  -> deleted loser
     //   index j is `pair.a` (KEEPER) in (j,k)           -> deleted keeper
     //
-    // Measured rate before the fix: 1 failed run in 5 (real Ollama, 2026-08-05).
+    // Measured rate before the fix: 1 failed run in 5 (real Ollama).
 
     /// Shape 1 — **deleted KEEPER**, the `acme corporation` failure.
     ///
@@ -1886,7 +1872,7 @@ mod tests {
     /// graph neighbour are nominated by NEITHER arm, so a fixture without this
     /// runs the pass over zero pairs and every assertion about merge behaviour
     /// passes or fails for the wrong reason. Co-occurrence is also the arm the
-    /// TD-222 false merges actually came through.
+    /// false merges actually came through.
     async fn cooccur_all(graph: &TemporalGraph, group_id: &str, ids: &[&str]) {
         let ep = graph
             .insert_episode(InsertEpisodeParams {
@@ -1910,7 +1896,7 @@ mod tests {
         }
     }
 
-    // ── TD-222 defect 2 — refuse merges nobody adjudicated ───────────────────
+    // ── Defect 2 — refuse merges nobody adjudicated ─────────────────────────
     //
     // Resolution (above) is CORRECT and must stay: it stops the pass merging
     // against a row an earlier merge deleted. What was wrong is what happened
@@ -1922,7 +1908,7 @@ mod tests {
     // (what was DONE): 19 adjudicated, 19 executed, only 11 the same pair.
 
     /// THE FALSE-POSITIVE TEST, and the one that matters most here. Two of the
-    /// three remedies tried for TD-222 died by over-blocking — a lexical veto that
+    /// three remedies tried died by over-blocking — a lexical veto that
     /// halved site-5 recall, and a type veto too coarse to fire. A pair adjudicated
     /// DIRECTLY, with no retargeting, must still merge exactly as before.
     #[tokio::test]
@@ -1972,7 +1958,7 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         // The pre-filter nominates on `initialism_candidate OR cooccurs_in_graph`.
         // A shared episode mention makes all three pairwise co-occurring — the
-        // arm TD-222's false merges actually came through.
+        // arm the false merges actually came through.
         for id in ["aa_alpha", "bb_beta", "cc_gamma"] {
             insert_entity(&graph, id, "g_td222", "An entity.").await;
         }
@@ -2024,7 +2010,7 @@ mod tests {
         let graph = TemporalGraph::open_in_memory().await.expect("open");
         // The pre-filter nominates on `initialism_candidate OR cooccurs_in_graph`.
         // A shared episode mention makes all three pairwise co-occurring — the
-        // arm TD-222's false merges actually came through.
+        // arm the false merges actually came through.
         for id in ["aa_alpha", "bb_beta", "cc_gamma"] {
             insert_entity(&graph, id, "g_td222_ch", "An entity.").await;
         }
@@ -2133,7 +2119,7 @@ mod tests {
         }
     }
 
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn insert_entity(graph: &TemporalGraph, id: &str, group_id: &str, description: &str) {
         let props = serde_json::json!({ "name": id, "description": description });
         graph
@@ -2147,7 +2133,7 @@ mod tests {
             .expect("insert entity");
     }
 
-    /// Insert an entity carrying a REAL entity type (TD-222).
+    /// Insert an entity carrying a REAL entity type.
     ///
     /// `insert_entity` above hardcodes `entity_type_id: 0`, the "Entity"
     /// catch-all — which the type veto deliberately reads as "no information".
@@ -2168,13 +2154,13 @@ mod tests {
     }
 
     /// Plant ONE relational fact so two entities become graph neighbours —
-    /// which is what `cooccurs_in_graph` nominates on (TD-222). Both endpoint
+    /// which is what `cooccurs_in_graph` nominates on. Both endpoint
     /// entities must already exist: `facts` carries the composite FK
     /// `(subject_id, subject_group_id) -> entities(id, group_id)`
     /// (`core/schema.rs:505-506`).
     ///
     /// Takes the triple as ONE argument to stay at the project's arity-3 lint
-    /// threshold without an `#[allow]` (TD-042 args-as-object, applied in its
+    /// threshold without an `#[allow]` (args-as-object, applied in its
     /// lightest form — a tuple reads fine for a subject/predicate/object).
     async fn insert_fact(graph: &TemporalGraph, group_id: &str, triple: (&str, &str, &str)) {
         let (subject, predicate, object) = triple;
@@ -2293,9 +2279,9 @@ mod tests {
         .expect("query"));
     }
 
-    // ── build_cooccurrence_prefilter_set (TD-133 B3) ──────────────────────────
+    // ── build_cooccurrence_prefilter_set ──────────────────────────────────────
 
-    /// TD-133 B3 quality-neutrality proof: `build_cooccurrence_prefilter_set`
+    /// Quality-neutrality proof: `build_cooccurrence_prefilter_set`
     /// (bulk, 2 queries total) MUST agree, pair-for-pair, with the original
     /// per-pair `cooccurs_in_graph` oracle it replaces in Step 2's loop — for
     /// EVERY unordered pair among a fixture exercising both co-occurrence
@@ -2558,7 +2544,7 @@ mod tests {
     /// It also pins `kremory.identity.merge_apply_failed_total`, which until now
     /// appeared ONLY at its emit site. That counter is the sole standing signal for
     /// E2E-1's still-unknown root cause, so an untested counter here is an unverified
-    /// alarm ([[observability-first-class]]) — isolating an error without proving it
+    /// alarm — isolating an error without proving it
     /// stays visible would just move the silence. Captured via
     /// `metrics::with_local_recorder` on a single-threaded runtime (the library-safe
     /// pattern from `tests/b1_observability.rs`; the recorder is thread-local, so the
@@ -2805,7 +2791,7 @@ mod tests {
         );
     }
 
-    // ── parse_adjudication_concurrency (TD-133 B3 — env knob) ─────────────────
+    // ── parse_adjudication_concurrency (env knob) ───────────────────────────
 
     /// The Phase-2 adjudication concurrency is a runtime operational knob
     /// (`KREMORY_DREAM_ADJUDICATION_CONCURRENCY`), not a hardcoded constant.
@@ -2835,9 +2821,9 @@ mod tests {
         );
     }
 
-    // ── adjudicate_batch parallel-chunk remap (TD-133 B3) ─────────────────────
+    // ── adjudicate_batch parallel-chunk remap ───────────────────────────────
 
-    /// TD-133 B3: `adjudicate_batch` now fires each chunk's LLM call
+    /// `adjudicate_batch` now fires each chunk's LLM call
     /// concurrently (Phase 2, `buffer_unordered`) instead of one-at-a-time.
     /// Proves the GLOBAL `pair_id` remap (`range.start + local_pair_id`) is
     /// still correct under concurrent completion — 25 nominated pairs split
@@ -3039,12 +3025,12 @@ mod tests {
         assert_eq!(count, 1, "one potential_alias fact must be written");
     }
 
-    /// TD-222 — two entities that merely CO-OCCUR must never merge destructively
+    /// Two entities that merely CO-OCCUR must never merge destructively
     /// on an LLM `true` alone, however confident.
     ///
     /// # The bug this pins
     /// Site #5 nominates on `initialism_candidate(a,b) OR cooccurs_in_graph(a,b)`
-    /// and waives ADR-057's lexical gate site-wide, on the argument that "this
+    /// and waives the lexical gate site-wide, on the argument that "this
     /// site's acronym pairs share zero tokens by construction". That argument
     /// covers the INITIALISM arm only. For a co-occurrence pair there is no
     /// lexical relation AND no initialism relation, `cosine` is pinned to 0.0
@@ -3054,7 +3040,7 @@ mod tests {
     ///
     /// # Why THIS fixture
     /// Not invented — replayed from production output. Six live runs of
-    /// `dream_full_consolidation_real_llm::happy_path` on 2026-08-14 merged
+    /// `dream_full_consolidation_real_llm::happy_path` merged
     /// wrongly in 2, and `graph_mutation_log` named every one:
     /// `peru -> amazon river`, `radioactivity -> chemistry`,
     /// `physics -> marie curie`, `chemistry -> marie curie`. This test uses the
@@ -3065,7 +3051,7 @@ mod tests {
     /// returns the maximally-confident WRONG answer), so it belongs at the fast
     /// tier — the live suite caught this only 1 run in 3.
     ///
-    /// TD-222 — a co-occurring pair of DIFFERENT ENTITY TYPES must not merge,
+    /// A co-occurring pair of DIFFERENT ENTITY TYPES must not merge,
     /// however confident the model is.
     ///
     /// # The bug this pins
@@ -3077,7 +3063,7 @@ mod tests {
     ///
     /// # Why THIS fixture
     /// Replayed from production, not invented: 6 live runs of
-    /// `dream_full_consolidation_real_llm::happy_path` on 2026-08-14 merged
+    /// `dream_full_consolidation_real_llm::happy_path` merged
     /// wrongly in 2, and `graph_mutation_log` named each — `peru -> amazon
     /// river`, `radioactivity -> chemistry`, `physics -> marie curie`,
     /// `chemistry -> marie curie`. A country into a river is the clearest
@@ -3144,17 +3130,17 @@ mod tests {
         assert_eq!(
             report.merges_applied, 0,
             "a co-occurring pair of DIFFERENT entity types must NOT merge, even on a \
-             maximally-confident LLM `true` — co-occurrence is adjacency, not identity (TD-222)"
+             maximally-confident LLM `true` — co-occurrence is adjacency, not identity"
         );
         assert_eq!(
             count_entities(&conn, "g22").await,
             3,
             "`amazon river`, `peru` and `south america` must all survive; merging a country \
-             into a river is TD-167 set-valued destruction reached through the merge path"
+             into a river is set-valued destruction reached through the merge path"
         );
     }
 
-    /// TD-222 — the type veto must NOT fire when the graph has no type
+    /// The type veto must NOT fire when the graph has no type
     /// information. The over-blocking guard, and it is not optional.
     ///
     /// The previous attempt at this fix (a lexical gate) passed its own targeted
@@ -3206,7 +3192,7 @@ mod tests {
         );
         assert_eq!(
             report.merges_applied, 1,
-            "UNTYPED entities carry no type evidence, so the TD-222 veto must be a NO-OP and \
+            "UNTYPED entities carry no type evidence, so the veto must be a NO-OP and \
              the merge must proceed exactly as before the veto existed. If this is 0 the gate \
              is firing on absence of data — the exact over-blocking that forced the previous \
              fix to be reverted (full-corpus recall 0.50 vs a 0.90 gate)."
@@ -3214,11 +3200,11 @@ mod tests {
         assert_eq!(
             count_entities(&conn, "g23").await,
             2,
-            "the merge applied, so one endpoint is consumed — unchanged pre-TD-222 behaviour"
+            "the merge applied, so one endpoint is consumed — unchanged pre-existing behaviour"
         );
     }
 
-    /// TD-220 — a PotentialAlias pair whose endpoint an EARLIER pair merged
+    /// A PotentialAlias pair whose endpoint an EARLIER pair merged
     /// away must resolve to the survivor, not FK-fail against a deleted row.
     ///
     /// # The bug this pins
@@ -3226,11 +3212,11 @@ mod tests {
     /// (`resolve_survivor`, E2E-1); the `PotentialAlias` arm used `pair.a` /
     /// `pair.b` RAW. So when an earlier iteration consumed one of them, the
     /// insert referenced an entity row that no longer existed and `facts`'
-    /// composite FK to `entities(id)` rejected it. Measured on the 2026-08-13
+    /// composite FK to `entities(id)` rejected it. Measured on a real
     /// full-scale run: **71 `FOREIGN KEY constraint failed` warnings**, all at
     /// `21:04:23`, interleaved with the `entity_merge` rows for `mel` and
     /// `melanie`. Those are 71 alias candidates that never reached
-    /// `resolve_pending_aliases`, and TD-203 established unresolved aliases
+    /// `resolve_pending_aliases`, and unresolved aliases were already known to
     /// cost recall — while the pass reported success throughout.
     ///
     /// # Why the fixture is shaped this way (every character is load-bearing)
@@ -3261,10 +3247,10 @@ mod tests {
     /// Verdict 1 (conf 0.5, below the 0.7 floor) routes to PotentialAlias with
     /// `pair.a = fbi` — already deleted.
     ///
-    /// ## ⚠️ CONTRACT CHANGED 2026-08-19 (TD-222) — this test pinned a defect
+    /// ## ⚠️ CONTRACT CHANGED — this test pinned a defect
     ///
     /// It previously asserted that the `PotentialAlias` arm RESOLVES the dead
-    /// endpoint and writes the alias against the survivor (TD-220, whose real
+    /// endpoint and writes the alias against the survivor (whose real
     /// problem was 71 silently-swallowed FK failures). Read what this fixture
     /// actually produces under that contract:
     ///
@@ -3275,16 +3261,16 @@ mod tests {
     ///   investigative agency** — derived from a verdict about a pair that no
     ///   longer exists.
     ///
-    /// That is the TD-222 cascade in soft form: a claim propagated through an
+    /// That is the same cascade in soft form: a claim propagated through an
     /// endpoint nobody adjudicated against. The arm now REFUSES instead, matching
     /// the `Merge` arm at `:575`.
     ///
-    /// TD-220's actual protection is retained and is unaffected: the swallowed FK
+    /// The actual protection is retained and is unaffected: the swallowed FK
     /// error still has its `alias_insert_failed_total` counter and always-on WARN,
     /// and no durable row can reference the merged-away id. A refused write cannot
     /// FK-fail either, so the original symptom is closed by a strictly wider fix.
     ///
-    /// **RED-proof (2026-08-19)**: delete the retarget check in the
+    /// **RED-proof**: delete the retarget check in the
     /// `PotentialAlias` arm and this fails on both `potential_aliases == 0` and
     /// `retargeted_unadjudicated == 1`.
     #[tokio::test]
@@ -3363,7 +3349,7 @@ mod tests {
             "a retargeted pair must write NO potential_alias fact — got {aliases:?}"
         );
 
-        // TD-220's REAL protection, retained: whatever happens, the merged-away
+        // The REAL protection, retained: whatever happens, the merged-away
         // id must never appear in durable state. Previously this held because the
         // endpoints were resolved; now it holds because nothing is written. The
         // assertion is unchanged on purpose — it is the invariant, and it must
@@ -3377,7 +3363,7 @@ mod tests {
         }
     }
 
-    // ── S1 spike: initialism_candidate precision/recall (spec §8, ADR-063) ───
+    // ── S1 spike: initialism_candidate precision/recall ─────────────────────
     //
     // `initialism_candidate` is a name-only structural test — it cannot know
     // entity identity. "Precision" here therefore means: of the name-pairs
@@ -3525,8 +3511,7 @@ mod tests {
         // S2), not this pass. Do not read a knife-edge S1 as the "non-negotiable
         // precondition" being robustly cleared on its own.
         //
-        // Formula lives in `metrics_util::wilson_lower_upper` (spec
-        // `dream-adversarial-corpora-and-metrics-2026-07-02.md` §3 step 0, H1)
+        // Formula lives in `metrics_util::wilson_lower_upper`
         // so the metrics harness can reuse it instead of re-deriving it here.
         let (ci_lo, ci_hi) = wilson_lower_upper(tp, tp + fp);
 
@@ -3559,7 +3544,7 @@ mod tests {
     /// generate. Every row is scoped to `group_id` and non-expired, matching
     /// the exact shape `cooccurs_in_graph`'s subject-side query filters on
     /// (`subject_id = ? AND expired_at IS NULL AND group_id = ?`).
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn plant_facts_across_many_subjects(
         graph: &TemporalGraph,
         group_id: &str,
@@ -3730,7 +3715,7 @@ mod tests {
     // the pre-filter actually nominate? That fraction is exactly the LLM-call
     // volume ratio the spec's <5% bar constrains. (The L4 static threshold
     // band, `disambiguation::L4_POTENTIAL_ALIAS_THRESHOLD..L4_MERGE_THRESHOLD`,
-    // is a separate, already-fixed constant from ADR-057/Site #4 — not a
+    // is a separate, already-fixed constant from Site #4 — not a
     // quantity this spike measures; §3.5/§8 anchor S5's bar to Site #5's OWN
     // nomination volume, and this spike measures exactly that.)
     //
@@ -3749,7 +3734,7 @@ mod tests {
     // (deterministic — `initialism_candidate` + `cooccurs_in_graph`, no LLM
     // call happens at this stage of the pass), so it needs no VCR cassette
     // and runs in the default `cargo test` gate.
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn build_s5_budget_fixture(graph: &TemporalGraph, group_id: &str) -> Vec<String> {
         let mut names: Vec<String> = Vec::new();
 

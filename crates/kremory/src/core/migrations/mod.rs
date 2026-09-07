@@ -51,15 +51,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
-/// ADR-029a (v0.1.4): namespaces-table migration as a tooling-discoverable
+/// Namespaces-table migration as a tooling-discoverable
 /// constant. The actual DDL is also embedded directly in
 /// [`crate::core::schema::TemporalGraph::run_migrations`] so the table exists
 /// on every fresh `TemporalGraph::open*` call without requiring the runtime
 /// to wire `MigrationRunner` through `TemporalGraph`. This constant captures
 /// the canonical migration record for audit scripts + downstream tooling.
 ///
-/// CREATE-only, no backfill (Vera MED-1 — zero coupling with ADR-029b's
-/// `002_drop_rql_prefix`). Idempotent via `CREATE TABLE IF NOT EXISTS`.
+/// CREATE-only, no backfill — zero coupling with `002_drop_rql_prefix`.
+/// Idempotent via `CREATE TABLE IF NOT EXISTS`.
 pub const MIGRATION_003_NAMESPACES_TABLE: Migration = Migration {
     version: 3,
     name: "003_namespaces_table",
@@ -418,7 +418,7 @@ pub(crate) async fn prune_old_backups(backup_root: &Path, max_age_days: u32) -> 
 
 // ─── Split sub-modules ────────────────────────────────────────────────────────
 //
-// TD-045: migrate_migrations_god_file_split — the per-migration fns that lived
+// The per-migration fns that lived
 // inline in this file have been moved to per-file modules under `migrations/`.
 // All public/pub(crate) paths are preserved via wildcard re-exports below so
 // call sites in `core/schema.rs` require no import changes.
@@ -432,22 +432,22 @@ mod defs_f;
 mod defs_g1;
 mod defs_g2;
 mod defs_h;
-// defs_i (ADR-072 seq1 impl-spec §1): migrate_022_episodes_content_recall.
+// defs_i: migrate_022_episodes_content_recall.
 mod defs_i;
-// defs_j (TD-115): migrate_023_vector_index_column_type.
+// defs_j: migrate_023_vector_index_column_type.
 mod defs_j;
-// defs_k (TD-117, Vera M2): migrate_024_verify_embedding_dim.
+// defs_k: migrate_024_verify_embedding_dim.
 mod defs_k;
-// defs_l (TD-133 B2): migrate_025_fact_dedup_expired_partial.
+// defs_l: migrate_025_fact_dedup_expired_partial.
 mod defs_l;
-// defs_m (TD-136): migrate_026_episodes_embedding — dense episode vector arm.
+// defs_m: migrate_026_episodes_embedding — dense episode vector arm.
 // Entirely empty when `content-search` is off (its sole item is feature-gated
 // at the same level) — gate the module + re-export to keep the default build
 // free of a dead-module/unused-import warning under `-D warnings` (mirrors
 // defs_i's `content-search` gating exactly).
 #[cfg(feature = "content-search")]
 mod defs_m;
-// defs_n (steal-matrix-rescore item 2): migrate_027_fts5_porter_stemmer. NOT
+// defs_n: migrate_027_fts5_porter_stemmer. NOT
 // feature-gated at the module level — its `entities_fts`/`facts_fts` steps
 // are unconditional (base schema); only its `episodes_fts` step is
 // `content-search`-gated internally, mirroring Migration 022's own gate.
@@ -466,7 +466,7 @@ pub use defs_f::*;
 pub use defs_g1::*;
 pub use defs_g2::*;
 pub(crate) use defs_h::*;
-// defs_i (ADR-072 seq1) is entirely empty when `content-search` is off (its
+// defs_i is entirely empty when `content-search` is off (its
 // sole item is feature-gated at the same level) — gate the re-export itself
 // too, or the glob becomes a literal "unused import" under `-D warnings`.
 #[cfg(feature = "content-search")]
@@ -474,7 +474,7 @@ pub(crate) use defs_i::*;
 pub(crate) use defs_j::*;
 pub(crate) use defs_k::*;
 pub(crate) use defs_l::*;
-// defs_m (TD-136): migrate_026_episodes_embedding is `content-search`-gated at
+// defs_m: migrate_026_episodes_embedding is `content-search`-gated at
 // the item level, so gate the re-export too (mirrors defs_i).
 #[cfg(feature = "content-search")]
 pub(crate) use defs_m::*;

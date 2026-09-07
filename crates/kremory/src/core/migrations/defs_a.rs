@@ -54,7 +54,7 @@ pub(crate) async fn migrate_legacy_rql_entities_table(
 
 // ─── Migration 002 ─────────────────────────────────────────────────────────
 
-/// Migration 002: rename `rql_entities` → `entities` (ADR-029b Decision 2).
+/// Migration 002: rename `rql_entities` → `entities`.
 ///
 /// Idempotent: exits immediately when `rql_entities` does not exist.
 /// Called from `run_migrations()` BEFORE the base DDL block.
@@ -109,24 +109,24 @@ pub(crate) async fn migrate_002_drop_rql_prefix(
 
 // ─── Migration 004 ─────────────────────────────────────────────────────────
 
-/// Migration 004: composite PK on `entities` (ADR-029b Decision 1).
+/// Migration 004: composite PK on `entities`.
 ///
 /// Uses CREATE-COPY-DROP-RENAME to restructure the table to
 /// `PRIMARY KEY (id, group_id)`.
 ///
-/// Idempotency gate (Vera 2026-05-28 BUG-1 fix):
+/// Idempotency gate — SHAPE-based, not existence-based:
 ///   Uses `PRAGMA table_info('entities')` to check whether `group_id` is already
-///   in the PK — this is the SHAPE-based sentinel. The old `entities_bak_004`
-///   backup-table sentinel was a false gate: if the process crashed after creating
-///   the backup but before creating `entities_new`, the next startup would see
-///   the backup, return Ok(()), and silently leave the migration incomplete.
+///   in the PK. The old `entities_bak_004` backup-table sentinel was a false
+///   gate: if the process crashed after creating the backup but before creating
+///   `entities_new`, the next startup would see the backup, return Ok(()), and
+///   silently leave the migration incomplete.
 ///
-/// FK restore on ALL exit paths (Vera 2026-05-28 BUG-2 fix):
+/// FK restore on ALL exit paths:
 ///   `PRAGMA foreign_keys = ON` is guaranteed via the `body_result` wrapping
 ///   pattern — same approach used by migrate_006. An error in any restructure
 ///   step still restores FK enforcement before propagating the error.
 ///
-/// Post-migration `PRAGMA foreign_key_check` (Vera 2026-05-28 BUG-2 companion):
+/// Post-migration `PRAGMA foreign_key_check`:
 ///   After the body completes successfully the migration asserts that no FK
 ///   violations were introduced.
 pub(crate) async fn migrate_004_composite_pk_entities(
@@ -140,7 +140,7 @@ pub(crate) async fn migrate_004_composite_pk_entities(
         }
     }
 
-    // Vera BUG-1 fix: SHAPE-based idempotency gate.
+    // SHAPE-based idempotency gate.
     // If `group_id` is already part of the entities PK (pk > 0), the migration
     // has completed — return immediately without touching anything.
     let mut pragma_rows = conn
@@ -205,17 +205,17 @@ pub(crate) async fn migrate_004_composite_pk_entities(
         );
     }
 
-    // Vera BUG-2 fix: PRAGMA foreign_keys = OFF is set once here; `PRAGMA
+    // PRAGMA foreign_keys = OFF is set once here; `PRAGMA
     // foreign_keys = ON` is guaranteed via the `body_result` pattern below
     // regardless of whether the body succeeds or returns Err. This mirrors the
-    // pattern used by migrate_006 (Vera 2026-05-28 #2).
+    // pattern used by migrate_006.
     conn.execute("PRAGMA foreign_keys = OFF", ())
         .await
         .map_err(step("fk_off"))?;
 
     let body_result: crate::core::error::Result<()> = async {
         if partial_migration_in_progress {
-            // ── CONTENT-BASED RESUME (Quinn REL-002) ─────────────────────────
+            // ── CONTENT-BASED RESUME ─────────────────────────────────────────
             //
             // The `drop(rows2)` fix above makes this branch REACHABLE for the first
             // time — it previously always died on `database table is locked`, so the
@@ -367,10 +367,9 @@ pub(crate) async fn migrate_004_composite_pk_entities(
             .await;
 
         // Step 7+8: facts + episodic_edges composite FK restructure — PENDING
-        // ship-architect design review (2026-05-28). Current best-effort ALTER+
-        // UPDATE pattern is kept temporarily so the compile + downstream tests
-        // continue to surface the issue rather than papering over it. See
-        // `.ai-docs/planning/v014-adr-029b-composite-fk-design-2026-05-28.md`.
+        // a full design review. Current best-effort ALTER+UPDATE pattern is
+        // kept temporarily so the compile + downstream tests continue to
+        // surface the issue rather than papering over it.
         let _ = conn
             .execute("ALTER TABLE facts ADD COLUMN subject_group_id TEXT", ())
             .await;
@@ -418,7 +417,7 @@ pub(crate) async fn migrate_004_composite_pk_entities(
     }
     .await;
 
-    // Vera BUG-2 fix: always restore PRAGMA foreign_keys = ON, regardless of
+    // Always restore PRAGMA foreign_keys = ON, regardless of
     // whether the body succeeded or returned Err.  A failed migration that leaves
     // FK enforcement OFF on the connection is a silent data-integrity bug for all
     // subsequent application writes on that connection.
@@ -443,7 +442,7 @@ pub(crate) async fn migrate_004_composite_pk_entities(
     // present there, see line ~1163), not after migrate_004 alone — the schema
     // is intentionally in a mixed state between these two migrations.
     //
-    // The always-restore `PRAGMA foreign_keys` wrapper above (Vera BUG-2 fix)
+    // The always-restore `PRAGMA foreign_keys` wrapper above
     // ensures the connection's FK enforcement is correctly re-enabled on any
     // exit path. The post-condition gate is migrate_006's fk_check.
 
@@ -456,7 +455,7 @@ pub(crate) async fn migrate_004_composite_pk_entities(
 
 // ─── Migration 005 ─────────────────────────────────────────────────────────
 
-/// Migration 005: add `upgraded_at` column to `namespaces` (ADR-029b Decision 5).
+/// Migration 005: add `upgraded_at` column to `namespaces`.
 ///
 /// Idempotent: `ALTER TABLE ADD COLUMN` errors are swallowed when the column
 /// already exists.

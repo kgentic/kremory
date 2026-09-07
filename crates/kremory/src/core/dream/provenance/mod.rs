@@ -1,5 +1,4 @@
-//! Reversible-graph-mutations provenance types (arch-spec
-//! `reversible-graph-mutations-arch-spec-2026-07-10.md` §2.3 + §3.1).
+//! Reversible-graph-mutations provenance types.
 //!
 //! FOUNDATION ONLY — this module defines the schema-layer Rust types for the
 //! Stage-1 reversible-mutation substrate (Migration 021, `graph_mutation_log`
@@ -11,9 +10,8 @@
 //!
 //! 1. **`pre_state` / `inputs` snapshot structs** (§2.3) — the per-kind JSON
 //!    payloads persisted into `graph_mutation_log.pre_state` / `.inputs`. These
-//!    are the substrate's OWN structured emit (never LLM-authored,
-//!    [[load-bearing-invariants-at-emit-not-prompt]]), so they round-trip
-//!    through serde. Per [[llm-output-parse-loudly]] there is **no
+//!    are the substrate's OWN structured emit (never LLM-authored), so they
+//!    round-trip through serde. There is **no
 //!    `#[serde(default)]` on any required field** — a snapshot that fails to
 //!    deserialize is a hard error at the undo boundary, never a silent skip.
 //!    Genuinely-nullable DB columns are modelled as `Option<T>` (missing key
@@ -38,17 +36,17 @@
 use serde::{Deserialize, Serialize};
 
 /// Reversal core (sub-phase 1c) — `unmerge` / `restore_archived_fact` /
-/// `unsupersede` + `load_merge_nogoods` (arch-spec §4.2 / §4.4 / §4.5 / §6).
+/// `unsupersede` + `load_merge_nogoods`.
 pub(crate) mod reversal;
 
 /// Consumer INSPECT surface (Tier-1) — `list_mutations` / `mutation_history` +
-/// the `MutationRecord` consumer view (arch-spec §3 "Inspect surface"). The SEE
+/// the `MutationRecord` consumer view. The SEE
 /// half of the see+fix story: locate a mutation + its `mutation_id` to undo.
 pub(crate) mod inspect;
 
 /// Deterministic EDIT-ENTITY cascade (Tier-2a) — `edit_entity` (retype /
 /// rename-rekey with full FK propagation + provenance snapshot + freeze re-open)
-/// and its inverse `undo_entity_edit` (arch-spec §4.3 / §2.3 `entity_edit`). The
+/// and its inverse `undo_entity_edit` (`entity_edit`). The
 /// forward op and its undo live together because they share the FK-rekey helper
 /// (undo is the inverse rekey), so keeping them in one module keeps the rekey
 /// column-set a single source of truth.
@@ -56,8 +54,8 @@ pub(crate) mod edit;
 
 /// Deterministic DELETE cascade (Tier-2b) — `delete_entity` / `delete_fact`
 /// (reachability-based retract-on-zero + provenance snapshot + reconciler-freeze
-/// re-open) and their inverses `undo_delete_entity` / `undo_delete_fact` (arch-spec
-/// §4.4 / §4.5 / §2.3 `entity_delete` / `fact_delete`). A delete is REVERSIBLE:
+/// re-open) and their inverses `undo_delete_entity` / `undo_delete_fact`
+/// (`entity_delete` / `fact_delete`). A delete is REVERSIBLE:
 /// facts are ARCHIVED (not hard-deleted) so they restore by id, and the deleted
 /// entity row + its edges + community memberships are snapshotted for exact undo.
 pub(crate) mod delete;
@@ -135,7 +133,7 @@ impl MutationKind {
     }
 
     /// Parse the `graph_mutation_log.kind` tag (§2.1). Parse-loudly
-    /// ([[llm-output-parse-loudly]] extended to substrate emit): an unrecognised
+    /// (the same discipline extended to substrate emit): an unrecognised
     /// tag is a hard `Error`, never a silent default — a log row we cannot
     /// classify must surface, not be dropped from the inspect view.
     pub(crate) fn from_tag(tag: &str) -> crate::core::error::Result<Self> {
@@ -247,7 +245,7 @@ pub(crate) struct EntityMergePreState {
     pub(crate) keeper_pre: KeeperPre,
     pub(crate) repointed_facts: Vec<RepointedFact>,
     pub(crate) episodic_edges: Vec<EpisodicEdgeSnapshot>,
-    /// TD-203 D1 — fact ids the merge EXPIRED because re-pointing would have
+    /// D1 — fact ids the merge EXPIRED because re-pointing would have
     /// collapsed both endpoints onto the keeper (`X pred X`).
     ///
     /// A fact linking loser and keeper is meaningful only while they are
@@ -261,12 +259,12 @@ pub(crate) struct EntityMergePreState {
     /// Captured so `unmerge` can REVIVE them: undo un-points the endpoints back
     /// to the loser, at which point the fact is meaningful again. Without this
     /// the expiry would be one-way and `unmerge` would silently return a
-    /// strictly smaller graph than it was handed — breaking the ADR-073
+    /// strictly smaller graph than it was handed — breaking the
     /// reversibility guarantee.
     ///
     /// `#[serde(default)]` is REQUIRED for backward compatibility and is NOT a
-    /// silent-default anti-pattern (Rule 21 governs LLM-emitted output; this is
-    /// our own persisted state): `graph_mutation_log` rows written before this
+    /// silent-default anti-pattern — that concern applies to LLM-emitted output;
+    /// this is our own persisted state: `graph_mutation_log` rows written before this
     /// field existed have no key, and an empty list is the CORRECT reading of
     /// them — those merges expired nothing, because the code could not.
     #[serde(default)]

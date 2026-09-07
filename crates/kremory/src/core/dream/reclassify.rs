@@ -1,15 +1,15 @@
-//! Pass 2 reclassify primitive (ADR-046 / ADR-037 §5).
+//! Pass 2 reclassify primitive.
 //!
 //! ## What this does
 //!
-//! Queries entities matching two arms (ADR-046 Amendment 2026-06-09 Option E):
+//! Queries entities matching two arms:
 //!
 //! - **catch_all_cascade** — `entity_type_id = 0` (Entity catch-all, never classified)
 //! - **low_confidence**    — `entity_type_source = 'Phase1Ner' AND ner_confidence < threshold`
 //!
 //! `ConsumerPinned` and `DreamPass1` entities are excluded STRUCTURALLY in the WHERE
-//! clause — never touched by prompt engineering.  This satisfies DoD E1 /
-//! `[[load-bearing-invariants-at-emit-not-prompt]]`.
+//! clause — never touched by prompt engineering (DoD E1): the invariant is
+//! enforced structurally at emit, not by convention.
 //!
 //! For each batch the LLM returns a `ReclassifyBatch` (entity_id → entity_type_id
 //! mapping).  Results are validated and written back with confidence-aware source-tier
@@ -56,8 +56,8 @@ pub struct ReclassifyResult {
 
 // ─── LLM output structs ───────────────────────────────────────────────────────
 //
-// Required fields have NO `#[serde(default)]` per [[llm-output-parse-loudly]].
-// Missing required field = parse error → fallback ladder retries.
+// Required fields have NO `#[serde(default)]`: missing required field = parse
+// error → fallback ladder retries, so malformed LLM output fails loudly.
 // `confidence` is the sole exception: absent = semantically valid (LLM may omit),
 // modelled as `Option<f32>` with `#[serde(default)]`.
 
@@ -160,7 +160,7 @@ impl Default for ReclassifyOpts {
 /// Called by `mem.dream()` after Pass 0 (type discovery) and before Pass 3
 /// (canonicalise). Satisfies DoD E7 pass ordering.
 ///
-/// Bundled non-generic parameters for [`reclassify`] — args-as-object per TD-042
+/// Bundled non-generic parameters for [`reclassify`] — args-as-object
 /// (rust-conventions §too_many_arguments). The generic `llm: &L` stays a lead
 /// positional param (brief rule 4); the remaining args bundle here.
 ///
@@ -173,10 +173,11 @@ pub struct ReclassifyParams<'a> {
     pub conn: &'a libsql::Connection,
     pub group_id: &'a str,
     pub opts: ReclassifyOpts,
-    /// Concrete model id for capability detection (TD-094). Threaded from the
+    /// Concrete model id for capability detection. Threaded from the
     /// facade dream path (`dream_model_id_or_main`). Empty (`""`) → `PromptOnly`
-    /// degrade. Before TD-094 this was hardcoded to `String::new()`, silently
-    /// degrading every reclassify call to zero structured output.
+    /// degrade. Before this field existed the model id was hardcoded to
+    /// `String::new()`, silently degrading every reclassify call to zero
+    /// structured output.
     pub model_id: &'a str,
 }
 
@@ -236,7 +237,7 @@ pub async fn reclassify<L: ChatProvider>(
 
     let registry =
         crate::core::entity_types::EntityTypeRegistry::load_for_group(conn, group_id).await?;
-    // TD-094: the consumer-supplied model id (Option-1, 2026-06-23) now reaches
+    // The consumer-supplied model id now reaches
     // this pass via `ReclassifyParams.model_id`, threaded from the facade dream
     // path (`with_dream_model_id` / `with_model_id` → `dream_model_id_or_main`).
     // Empty → `PromptOnly` degrade; a populated id drives provider-native /
@@ -284,8 +285,9 @@ pub async fn reclassify<L: ChatProvider>(
 
     // ── Step 7: Deserialise with per-arm parse outcome counters (E9) ──────────
     //
-    // Direct-parse success vs repair-path success counted separately per
-    // [[llm-output-parse-loudly]] / cardinal failure mode #9.
+    // Direct-parse success vs repair-path success counted separately — a
+    // repair-path success is a weaker signal than a clean parse and must not
+    // be folded into one aggregate counter.
 
     let batch: ReclassifyBatch = match serde_json::from_value(raw_value.clone()) {
         Ok(b) => {
@@ -378,7 +380,7 @@ pub async fn reclassify<L: ChatProvider>(
         //
         // This rule used to cite a single-entity `core/reclassification.rs`
         // precedent. That module was never wired into any live path and was
-        // deleted (TD-237, 2026-09-06); the rule stands on its own terms, and
+        // deleted; the rule stands on its own terms, and
         // this batch pass is now the only implementation of it.
         let validated_type_id = registry.validate_or_fallback(decision.entity_type_id);
         if validated_type_id == 0 {
@@ -472,11 +474,11 @@ pub async fn reclassify<L: ChatProvider>(
 // ─── SQL helpers ──────────────────────────────────────────────────────────────
 
 /// Load two-arm candidates, excluding ConsumerPinned and DreamPass1 STRUCTURALLY
-/// in the WHERE clause (DoD E1 / [[load-bearing-invariants-at-emit-not-prompt]]).
+/// in the WHERE clause (DoD E1).
 ///
 /// Both exclusions are SQL-level, not post-fetch filter — the invariant is enforced
 /// at emit (the SELECT), not in application logic.
-/// Bundled parameters for [`load_candidates`] — args-as-object per TD-042
+/// Bundled parameters for [`load_candidates`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 struct LoadCandidatesParams<'a> {
     conn: &'a libsql::Connection,
@@ -495,13 +497,13 @@ async fn load_candidates(params: LoadCandidatesParams<'_>) -> Result<Vec<Candida
     let threshold_f64 = confidence_threshold as f64;
     let limit = max_batch_size as i64;
 
-    // ADR-046 Amendment 2026-06-09 Option E — 2-arm SELECT.
-    // Drift arm is explicitly NOT included (deferred per ADR-046 §8).
+    // 2-arm SELECT.
+    // Drift arm is explicitly NOT included (deferred for now).
     //
     // ConsumerPinned and DreamPass1 are excluded via `entity_type_source NOT IN (...)`.
     // This is structural (SQL WHERE) — not a prompt instruction. E1 satisfied.
     //
-    // ADR-050 Phase 3 — Guard anti-loop: `AND is_dream_generated = 0` excludes
+    // Guard anti-loop: `AND is_dream_generated = 0` excludes
     // entities written by Pass 4 / verify_stage (dream-generated). Without this,
     // reclassify would re-process dream-generated entities on the next dream pass,
     // creating a runaway loop (R-10 stop condition). Structural at SQL WHERE, not
@@ -651,7 +653,7 @@ async fn count_rows_with_one_param(
 /// Re-re-type protection is structural: DreamPass1 is excluded from the next
 /// cycle's SELECT at SQL WHERE level (E5).
 /// Bundled parameters for [`apply_reclassify_high_conf`] and
-/// [`apply_reclassify_low_conf`] — args-as-object per TD-042
+/// [`apply_reclassify_low_conf`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 struct ApplyReclassifyParams<'a> {
     conn: &'a libsql::Connection,
@@ -694,7 +696,7 @@ async fn apply_reclassify_high_conf(params: ApplyReclassifyParams<'_>) -> Result
 }
 
 /// Low-confidence UPDATE: set new type_id only; `entity_type_source` preserved (E3).
-/// `entity_id` is preserved across UPDATE per ADR-046 §3 (E4).
+/// `entity_id` is preserved across UPDATE (E4).
 async fn apply_reclassify_low_conf(params: ApplyReclassifyParams<'_>) -> Result<()> {
     let ApplyReclassifyParams {
         conn,

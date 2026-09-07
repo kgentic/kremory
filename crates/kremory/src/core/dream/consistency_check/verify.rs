@@ -1,9 +1,8 @@
-//! LLM verify-batch primitive for Dream Pass 4 (ADR-047).
+//! LLM verify-batch primitive for Dream Pass 4.
 //!
 //! Contains the `verify_batch` async function that calls the LLM structured
 //! endpoint, parses decisions, applies corrections, and writes audit rows.
-//! Extracted from the `consistency_check` monolith as part of TD-C split
-//! (ADR-050 §5).
+//! Extracted from the `consistency_check` monolith as part of the module split.
 
 use std::time::Instant;
 
@@ -149,7 +148,7 @@ pub(super) async fn verify_batch(
                     new_type_id: None,
                 };
                 counts.confirmed += 1;
-                // Quinn MED-01 fix: label confirm-counter by source so downstream observers
+                // Label confirm-counter by source so downstream observers
                 // can distinguish explicit LLM agreement from confidence-gate downgrades.
                 counter!(
                     "kremory.dream.consistency_check.verify_confirmed_total",
@@ -246,9 +245,7 @@ pub(super) async fn verify_batch(
                 // is the structural equivalent (keep current type, no change).
                 // Without this gate, every confidence value the LLM emits is
                 // treated as load-bearing, including the 0.50-0.65 band where
-                // local models hedge under polysemous-hard cases (per
-                // `c6-verify-model-local-ladder-benchmark-2026-06-10.md`
-                // sub-finding #2).
+                // local models hedge under polysemous-hard cases.
                 if decision.confidence < MIN_VERIFY_CONFIDENCE {
                     counter!(
                         "kremory.dream.consistency_check.verify_low_confidence_downgrade_total",
@@ -271,7 +268,7 @@ pub(super) async fn verify_batch(
                         new_type_id: None,
                     };
                     counts.confirmed += 1;
-                    // Quinn MED-01 fix: label confirm-counter by source. This downgrade
+                    // Label confirm-counter by source. This downgrade
                     // path is observably distinct from the explicit "confirm" LLM emit.
                     counter!(
                         "kremory.dream.consistency_check.verify_confirmed_total",
@@ -310,7 +307,7 @@ pub(super) async fn verify_batch(
                     };
                     write_audit_row(db, audit).await?;
                 } else if params.dry_run {
-                    // Quinn LOW-02 fix: emit dry_run counter for BOTH dream-phase
+                    // Emit dry_run counter for BOTH dream-phase
                     // (rowid > 0) and Stage 2 pre-write (rowid <= 0) paths. Without
                     // the Stage 2 branch, callers running verify_batch_for_candidates
                     // with dry_run=true would have no observability signal that the
@@ -386,19 +383,19 @@ pub struct VerifyBatchForCandidatesResult {
     pub decisions: Vec<crate::core::ingest::ResolvedDecision>,
 }
 
-/// Bundled parameters for [`verify_batch_for_candidates`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments). `db` stays a lead positional
+/// Bundled parameters for [`verify_batch_for_candidates`] — args-as-object
+/// (rust-conventions §too_many_arguments). `db` stays a lead positional
 /// param (receiver-like dep, mirrors `verify_batch(db, params)` precedent).
 pub struct VerifyBatchForCandidatesParams<'a> {
     pub candidates: &'a [crate::core::ingest::EntityCandidate],
     pub source_episode_text: &'a str,
     pub llm: &'a dyn crate::core::provider::ChatProvider,
-    /// ADR-029d: the namespace these candidates resolve entity rowids in.
+    /// The namespace these candidates resolve entity rowids in.
     /// `None` ⇒ `'default'` (mirrors `entity_groups.rs`'s `effective_group_id`
     /// convention). Entity identity is per-namespace-open — the same
     /// normalized name can exist as independent rows in TWO namespaces, so
     /// the rowid lookup below MUST filter on this, or it can resolve to (and
-    /// then correct/audit) an entity in the WRONG namespace (TD-129).
+    /// then correct/audit) an entity in the WRONG namespace.
     pub group_id: Option<&'a str>,
     pub opts: VerifyBatchForCandidatesOpts,
 }
@@ -431,7 +428,7 @@ pub struct VerifyBatchForCandidatesParams<'a> {
 /// - Stage 2 ingest-time flow (entities not yet in DB, rowid = -1)
 /// - Dream-phase flow (entities already in DB, rowid > 0)
 ///
-/// ## Observability (CLAUDE.md Rule 19)
+/// ## Observability
 /// - `kremory.verify_batch_for_candidates.invoked_total`
 /// - `kremory.verify_batch_for_candidates.decisions_total{variant}`
 pub async fn verify_batch_for_candidates(
@@ -448,7 +445,7 @@ pub async fn verify_batch_for_candidates(
         group_id,
         opts,
     } = params;
-    // ADR-029d: resolve None → 'default' once, mirroring `entity_groups.rs`'s
+    // Resolve None → 'default' once, mirroring `entity_groups.rs`'s
     // `effective_group_id` convention so callers that pass `None` (single-
     // namespace consumers) keep their existing semantics.
     let effective_group_id = group_id.unwrap_or("default");
@@ -461,7 +458,7 @@ pub async fn verify_batch_for_candidates(
         });
     }
 
-    // Option-1 (2026-06-23): no longer read `llm.model()`. The model is the
+    // Option-1: no longer read `llm.model()`. The model is the
     // consumer-supplied `verify_model_override` (set by the dream entry point
     // from the Engine model, or by the consumer directly). Empty → `PromptOnly`.
     let verify_model = opts.verify_model_override.clone().unwrap_or_default();
@@ -488,7 +485,7 @@ pub async fn verify_batch_for_candidates(
     for ec in effective_candidates {
         let entity_id = normalize_name(&ec.name);
         let rowid: i64 = {
-            // ADR-029d / TD-129: scoped by `group_id` — an unscoped
+            // Scoped by `group_id` — an unscoped
             // `WHERE id = ?1 LIMIT 1` can resolve to a DIFFERENT namespace's
             // same-id entity under per-namespace-open, so `apply_correction`/
             // `write_audit_row` downstream could mutate the wrong namespace's

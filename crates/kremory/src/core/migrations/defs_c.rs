@@ -63,7 +63,7 @@ pub(crate) async fn migrate_010_default_entity_types(
 
 // ─── Migration 011 ─────────────────────────────────────────────────────────
 
-/// Migration 011 (Phase G, ADR-042, TD-003): add `content_hash` column to
+/// Migration 011: add `content_hash` column to
 /// `episodes` with SHA-256 backfill over existing rows.
 ///
 /// ### Motivation
@@ -202,16 +202,15 @@ pub(crate) async fn migrate_011_episodes_content_hash(
 
 /// Migration 012: add source-tier columns to `entities` + legacy backfill.
 ///
-/// Adds three columns per ADR-045 §2 and ADR-046 §1:
+/// Adds three columns:
 ///   - `entity_type_source TEXT CHECK(...)` — which tier last set the entity type
 ///   - `entity_type_assigned_at TEXT`        — ISO-8601 timestamp of the last assignment
 ///   - `ner_confidence REAL`                 — GLiNER / NER span confidence (Phase 1 only)
 ///
-/// Note: `v_entity_drift_candidates` view is NOT created by this migration. Drift detection
-/// is deferred to Phase E reclassify implementation per ADR-046 Amendment 2026-06-09
-/// (Option E) — the original row-comparison design is structurally impossible under
-/// kremory's `id = normalize_name(text)` dedup model (same name → same row always).
-/// See ADR-046 §Amendment-2026-06-09 and TD-032 for rationale.
+/// Note: `v_entity_drift_candidates` view is NOT created by this migration. Drift
+/// detection is deferred to the reclassify implementation — the original
+/// row-comparison design is structurally impossible under kremory's
+/// `id = normalize_name(text)` dedup model (same name → same row always).
 ///
 /// Legacy backfill: sets `entity_type_source = 'Phase1Ner'` and
 /// `entity_type_assigned_at = COALESCE(recorded_at, datetime('now'))` on all existing rows
@@ -223,8 +222,8 @@ pub(crate) async fn migrate_011_episodes_content_hash(
 /// `CREATE VIEW IF NOT EXISTS`. The backfill UPDATE applies only to NULL-source rows.
 ///
 /// NOTE: `'DreamPass1'` is a historical enum name (schema-locked at this migration);
-/// it means "Dream Pass 2 reclassify confident output" per ADR-046 §6. The name
-/// predates the ADR-046 pass-numbering convention and cannot be renamed without a
+/// it means "Dream Pass 2 reclassify confident output". The name predates the
+/// current pass-numbering convention and cannot be renamed without a
 /// subsequent migration altering the CHECK constraint and existing rows.
 pub(crate) async fn migrate_012_source_tier_columns(
     conn: &libsql::Connection,
@@ -309,12 +308,12 @@ pub(crate) async fn migrate_012_source_tier_columns(
     // ── Step 5: Legacy backfill ───────────────────────────────────────────────
     //
     // NOTE: v_entity_drift_candidates view is intentionally NOT created here.
-    // Drift detection deferred to Phase E reclassify per ADR-046 Amendment
-    // 2026-06-09 (Option E). The row-comparison approach (self-JOIN on entities
-    // looking for same id, different entity_type_id) is structurally impossible
-    // in kremory: `id = normalize_name(text)` means same name → same row always;
-    // the join condition `e2.id != e1.id AND TRIM(e2.id) = TRIM(e1.id)` can
-    // never be satisfied. See TD-032 + ADR-046 §Amendment-2026-06-09 for rationale.
+    // Drift detection is deferred to the reclassify implementation. The
+    // row-comparison approach (self-JOIN on entities looking for same id,
+    // different entity_type_id) is structurally impossible in kremory:
+    // `id = normalize_name(text)` means same name → same row always; the join
+    // condition `e2.id != e1.id AND TRIM(e2.id) = TRIM(e1.id)` can never be
+    // satisfied.
     //
     // All existing rows written before this migration have NULL entity_type_source.
     // Backfill them to 'Phase1Ner' (the only tier active before v0.1.1) so
@@ -336,7 +335,7 @@ pub(crate) async fn migrate_012_source_tier_columns(
         target: "kremory::migrations",
         "migrate_012: entity_type_source / entity_type_assigned_at / ner_confidence \
          added to entities; legacy backfill done. \
-         (drift view deferred to Phase E per ADR-046 Amendment 2026-06-09 Option E)"
+         (drift view deferred to the reclassify implementation)"
     );
     Ok(())
 }

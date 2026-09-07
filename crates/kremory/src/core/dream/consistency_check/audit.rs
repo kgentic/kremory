@@ -1,4 +1,4 @@
-//! DB helpers and LLM prompt builder for Dream Pass 4 (ADR-047).
+//! DB helpers and LLM prompt builder for Dream Pass 4.
 //!
 //! Contains all database reads/writes used by `consistency_check`:
 //! - `load_type_registry` — entity_types table
@@ -9,8 +9,7 @@
 //! - `write_audit_row` — INSERT dream_pass4_audit row
 //! - `build_verify_messages` — LLM system+user messages for verify batch
 //!
-//! Extracted from the `consistency_check` monolith as part of TD-C split
-//! (ADR-050 §5).
+//! Extracted from the `consistency_check` monolith as part of the module split.
 
 use crate::core::error::{Error, Result};
 use crate::core::provider::{
@@ -19,10 +18,10 @@ use crate::core::provider::{
 
 use super::{CandidateRow, ConsistencyCheckOpts};
 
-/// Bundled parameters for [`super::run_consistency_check`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments). `db` stays a lead positional
+/// Bundled parameters for [`super::run_consistency_check`] — args-as-object
+/// (rust-conventions §too_many_arguments). `db` stays a lead positional
 /// param (receiver-like dep, mirrors `verify_batch(db, params)` precedent).
-/// Defined here (not `mod.rs`) to keep `mod.rs` under the TD-C 500-LoC guard.
+/// Defined here (not `mod.rs`) to keep `mod.rs` under the 500-LoC guard.
 pub struct RunConsistencyCheckParams<'a> {
     pub embedder: &'a dyn DynEmbeddingProvider,
     pub llm: &'a dyn ChatProvider,
@@ -131,10 +130,10 @@ pub(super) async fn load_top3_facts(
 /// Load the source-episode text for the most recent episode that mentioned
 /// this entity. Returns `None` if no episodic edge exists.
 ///
-/// Phase D iter 4 (2026-06-10) addition per ADR-047 amendment. The verify call
-/// needs source-text context to disambiguate polyseme entities ("Apple emailed
-/// me" vs "Apple is a fruit"). Without it the LLM operates on name + thin facts
-/// alone and produces ~50% precision on polysemes per RISK-001 iter 3 evidence.
+/// The verify call needs source-text context to disambiguate polyseme
+/// entities ("Apple emailed me" vs "Apple is a fruit"). Without it the LLM
+/// operates on name + thin facts alone and produces ~50% precision on
+/// polysemes.
 pub(super) async fn load_source_episode(
     db: &libsql::Connection,
     entity_id: &str,
@@ -165,7 +164,7 @@ pub(super) async fn load_source_episode(
 
 // ─── DB write helpers ─────────────────────────────────────────────────────────
 
-/// Bundled parameters for [`apply_correction`] — args-as-object per TD-042
+/// Bundled parameters for [`apply_correction`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 pub(super) struct ApplyCorrectionParams<'a> {
     pub(super) candidate: &'a CandidateRow,
@@ -249,7 +248,7 @@ pub(super) async fn write_audit_row(db: &libsql::Connection, p: AuditRowParams<'
 
 // ─── LLM prompt builder ───────────────────────────────────────────────────────
 
-/// Build the LLM messages for a verify batch (ADR-047 §3).
+/// Build the LLM messages for a verify batch.
 ///
 /// The user message MUST include the full type registry (id → name) so the LLM
 /// can assign valid `new_type_id` values when action=correct.  Without this menu
@@ -307,8 +306,8 @@ pub(super) fn build_verify_messages(
                     // `s.len() > 8000` is a BYTE check and `&s[..8000]` is a
                     // BYTE slice, so a multi-byte character straddling byte
                     // 8000 panics — and `s` is arbitrary user episode text.
-                    // Same defect class that crashed kremory-http on
-                    // 2026-07-28 (core/extraction_window.rs, 'è' then an
+                    // Same defect class that crashed kremory-http
+                    // (core/extraction_window.rs, 'è' then an
                     // emoji). Reachable here via POST /consolidation.
                     let truncated = {
                         let head = crate::core::text_utils::truncate_on_char_boundary(s, 8000);
@@ -323,7 +322,7 @@ pub(super) fn build_verify_messages(
                     )
                 })
                 .unwrap_or_else(|| "[no source episode available]".to_string());
-            // Per ADR-047 amendment + arXiv:2605.29168 ontology-grounded post-extraction
+            // Per arXiv:2605.29168 ontology-grounded post-extraction
             // correction precedent — source-episode text gives the LLM disambiguating
             // context for polysemes ("Apple emailed me" vs "Apple is a fruit").
             format!(

@@ -1,6 +1,5 @@
-//! Consumer INSPECT surface for the reversible-graph-mutations substrate
-//! (arch-spec `reversible-graph-mutations-arch-spec-2026-07-10.md` §3 "Inspect
-//! surface"). The **SEE** half of the see+fix story: a consumer asks "what did
+//! Consumer INSPECT surface for the reversible-graph-mutations substrate.
+//! The **SEE** half of the see+fix story: a consumer asks "what did
 //! `dream()` do to entity X?" and gets back a human/agent-readable
 //! [`MutationRecord`] carrying the `mutation_id` needed to reverse it (via
 //! `Memory::unmerge` / `restore_archived_fact` / `unsupersede`).

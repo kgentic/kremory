@@ -1,4 +1,4 @@
-//! CONSOLIDATION op — fact archival (ADR-066 §2.4, spec P2).
+//! CONSOLIDATION op — fact archival (P2).
 //!
 //! MOVE a long-expired (`expired_at < now - grace_days`), non-stranding fact from
 //! live `facts` into the append-only `facts_archive` table (migration 019). For each
@@ -7,7 +7,7 @@
 //! 1. `INSERT INTO facts_archive (<explicit cols>) SELECT <matching cols>, now AS
 //!    archived_at FROM facts WHERE id = ?` — a PROJECTED column list (NOT `SELECT *`)
 //!    because `facts_archive` intentionally drops `embedding` + `access_count` and
-//!    adds `archived_at` (spec P2.3, Quinn-P0 note).
+//!    adds `archived_at` (P2.3).
 //! 2. `DELETE FROM facts_fts WHERE fact_id = ?` — the inbound FTS shadow row
 //!    (RISK-003; `facts_fts` is the SOLE inbound `facts.id` reference, analogous to
 //!    the `entities_fts` delete on entity merge, `canonicalization.rs:582-593`).
@@ -21,9 +21,6 @@
 //! Idempotent (P2.4): a moved fact is gone from `facts`, so the candidate SELECT
 //! self-excludes it on the next run (second run archives 0).
 //!
-//! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`
-//! §3 (P2.1–P2.4) + §6 (archive corpus) + ADR-066 §2.4.
-
 use chrono::Utc;
 use metrics::counter;
 
@@ -35,18 +32,18 @@ use super::substrate::{
 };
 
 /// A fact eligible for archival: id + both endpoints (for the ref-count guard)
-/// + the predicate/object text needed to NAME it in the log (TD-219).
+/// + the predicate/object text needed to NAME it in the log.
 #[derive(Debug, Clone)]
 struct ArchiveCandidate {
     fact_id: i64,
     subject_id: String,
     /// `None` for literal-object facts (`object_id IS NULL`).
     object_id: Option<String>,
-    /// TD-219: carried for identity logging only — the ref-count guard never
+    /// Carried for identity logging only — the ref-count guard never
     /// reads it. Archival is a DESTRUCTIVE persisted mutation and emitted only
     /// an aggregate count, so "2 facts were archived" could not be turned into
     /// "WHICH 2" without re-running a stochastic pipeline and hoping it
-    /// reproduced. Rule 19: a persisted mutation records WHAT it wrote.
+    /// reproduced. A persisted mutation should record WHAT it wrote.
     predicate: String,
     /// `None` for relational facts (`object_value IS NULL`); the display side
     /// of `object_id`.
@@ -76,7 +73,7 @@ impl ArchiveCandidate {
 /// `archived_at` is supplied by the INSERT…SELECT as `?1 AS archived_at`; the first
 /// 18 are a direct projection of the matching `facts` columns. `facts_archive`
 /// intentionally OMITS `facts.embedding` + `facts.access_count` (deprecated, always
-/// 0) — hence a PROJECTED list, never `SELECT *` (Quinn-P0 note, P2.3).
+/// 0) — hence a PROJECTED list, never `SELECT *` (P2.3).
 pub(crate) const ARCHIVE_INSERT_SQL: &str = "INSERT INTO facts_archive \
      (id, subject_id, predicate, object_id, object_value, properties, \
       valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, \
@@ -119,7 +116,7 @@ pub async fn archive(graph: &TemporalGraph, group_id: &str, grace_days: u32) -> 
     let mut rows = graph
         .conn
         .query(
-            // TD-219: `predicate` + `object_value` are selected for IDENTITY
+            // `predicate` + `object_value` are selected for IDENTITY
             // LOGGING only — neither participates in candidacy or the guard, so
             // the candidate SET is unchanged from before this column list grew.
             "SELECT id, subject_id, object_id, predicate, object_value FROM facts \
@@ -164,7 +161,7 @@ pub async fn archive(graph: &TemporalGraph, group_id: &str, grace_days: u32) -> 
         // either endpoint entity. Skip (KEEP) if it would leave subject — or object,
         // when present — with ZERO live facts remaining AFTER this fact is removed.
         // The `skipped_would_orphan` decision is a GENUINELY-NEW observability point
-        // (ADR-070 Fork 2/3, §3.3) — this skip path previously emitted no signal.
+        // (Fork 2/3) — this skip path previously emitted no signal.
         // Archive has no dry_run concept → always `Applied`.
         if would_strand_endpoint(graph, group_id, cand).await? {
             emit_decision(DecisionRecord {
@@ -181,7 +178,7 @@ pub async fn archive(graph: &TemporalGraph, group_id: &str, grace_days: u32) -> 
         let moved = move_fact(graph, cand.fact_id, group_id).await?;
         if moved {
             archived += 1;
-            // TD-219 — name the fact, unconditionally. `emit_decision` below
+            // Name the fact, unconditionally. `emit_decision` below
             // carries the ENDPOINTS but not the predicate, so a decision record
             // could say "something between caroline and melanie was retired"
             // and never which relation. Deliberately not `KREMORY_DEBUG`-gated:
@@ -307,7 +304,7 @@ async fn move_fact(graph: &TemporalGraph, fact_id: i64, group_id: &str) -> Resul
     let guard = graph.begin_immediate_if_needed().await?;
     let result: Result<bool> = async {
         // 1. INSERT projected columns + archived_at. Scoped by `id AND group_id`
-        //    (Quinn-P2 Q2) so the INSERT and the DELETE (step 3) are group-symmetric:
+        //    (Q2) so the INSERT and the DELETE (step 3) are group-symmetric:
         //    a fact_id whose group_id ≠ arg copies nothing here AND deletes nothing
         //    below → no orphan duplicate in facts_archive. If the row already vanished
         //    the INSERT…SELECT copies zero rows (no orphan created).
@@ -687,7 +684,7 @@ mod tests {
         assert_eq!(archive_count(&graph, "g1").await, 0);
     }
 
-    // ── L2: a WHOLLY-EXPIRED entity never drains (Quinn-P2 Q1) ────────────────────
+    // ── L2: a WHOLLY-EXPIRED entity never drains (Q1) ──────────────────────────
     // An entity all of whose facts are expired-past-grace has ZERO live facts, so the
     // ref-count guard (DoD-P2.2: "would leave an endpoint with 0 live facts → keep")
     // KEEPS every one of them — a fully-quiet entity is never fully archived away, it
@@ -727,7 +724,7 @@ mod tests {
         );
     }
 
-    /// ADR-070 §4 matrix: the ref-count-guard reject path (previously SILENT — it just
+    /// The ref-count-guard reject path (previously SILENT — it just
     /// `continue`d) now emits `decision_total{op=archive,outcome=skipped_would_orphan}`
     /// — the "first-class observability closes a real gap" half of Fork 2/3.
     #[tokio::test]

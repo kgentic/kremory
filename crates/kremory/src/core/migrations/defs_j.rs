@@ -1,7 +1,6 @@
 // ─── Migration 023 ─────────────────────────────────────────────────────────
 
-/// Migration 023 (TD-115, `.ai-docs/tech-debt/tech-debt-register.md` session
-/// 2026-07-14): rebuild `entities` / `facts` with a real `embedding
+/// Migration 023: rebuild `entities` / `facts` with a real `embedding
 /// F32_BLOB(dim)` column when the current declared type is a generic `BLOB`.
 ///
 /// ## The bug
@@ -59,7 +58,7 @@
 /// Composite FKs to `entities(id, group_id)` (subject + object) and
 /// `episodes(id)` (source_episode_id) — mirrors `migrate_006`.
 ///
-/// ## LOUD index creation (Rule 19 / the actual TD-115 fix)
+/// ## LOUD index creation
 ///
 /// Unlike every other migration in this module, the vector-index
 /// `CREATE INDEX` here is NOT wrapped in `let _ = ...`. A failure here means
@@ -67,8 +66,7 @@
 /// which MUST surface as a hard migration error — silently continuing would
 /// reproduce the exact bug this migration exists to close.
 ///
-/// ## Crash-recovery hardening (Vera H3/H4, `.ai-docs/architecture-review/`
-/// `vera-adr-074-migrate-023-review-2026-07-14.md`)
+/// ## Crash-recovery hardening
 ///
 /// This migration runs unconditionally against every already-published
 /// consumer's existing, populated database — a crash mid-run must never
@@ -156,8 +154,8 @@ pub(crate) async fn migrate_023_vector_index_column_type(
 
     /// H3: content-based completeness check. `COUNT(*)` always returns
     /// exactly one row for a real table; the `None` arm is unreachable in
-    /// practice but handled without panicking (Rule 8 — no `.expect()` in
-    /// src) rather than trusting that invariant blindly.
+    /// practice but handled without panicking rather than trusting that
+    /// invariant blindly.
     async fn row_count(
         conn: &libsql::Connection,
         table: &str,
@@ -811,7 +809,7 @@ pub(crate) async fn migrate_023_vector_index_column_type(
     // `defs_g2.rs:231,339`). Without this they persist forever, permanently
     // duplicating the pre-migration table size on disk.
     //
-    // UNCONDITIONAL `IF EXISTS` (Quinn NEW-1) — NOT gated on `*_needs_rebuild`.
+    // UNCONDITIONAL `IF EXISTS` — NOT gated on `*_needs_rebuild`.
     // A crash after the RENAME but before all indexes finish resumes via the
     // H4 index-ensure path with `needs_rebuild = false` (column is already
     // `F32_BLOB`), yet a `_bak_023` snapshot from the crashed run still exists.

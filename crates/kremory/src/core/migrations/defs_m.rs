@@ -1,4 +1,4 @@
-//! Migration 026 (TD-136 — dense episode retrieval): add an `embedding`
+//! Migration 026 (dense episode retrieval): add an `embedding`
 //! column + DiskANN vector index to `episodes`, mirroring the
 //! `entities`/`facts` vector-search substrate.
 //!
@@ -7,13 +7,13 @@
 //! Episodes are retrieved by FTS5-BM25 ONLY (Migration 022 `episodes_fts`) —
 //! the table has no embedding column and no vector index, so
 //! paraphrase/pronoun questions never lexically match their answering episode
-//! (SYSTEM-PRIMER §1, TD-136 — the primary recall-breadth gap). This migration
+//! (the primary recall-breadth gap). This migration
 //! installs the dense arm's storage: an `F32_BLOB(dim)` column + a
 //! `libsql_vector_idx` cosine index, the EXACT shape `entities_vec_idx` /
 //! `facts_vec_idx` use (`core/schema.rs`, `migrations/defs_j.rs`).
 //!
-//! Feature-gated behind `content-search` (two-lever gating model, ADR-072 §6
-//! Finding 3 — same gate as Migration 022's `episodes_fts`): the whole
+//! Feature-gated behind `content-search` (two-lever gating model — same gate
+//! as Migration 022's `episodes_fts`): the whole
 //! function is compiled out of the default build, and the `run_migrations()`
 //! call site in `core/schema.rs` is gated identically, so a default
 //! (no-feature) build never touches `episodes` and behaves byte-identically to
@@ -27,7 +27,7 @@
 //! - Index: `CREATE INDEX IF NOT EXISTS episodes_vec_idx`. LOUD — the create
 //!   propagates `Err` (unlike the best-effort `episodes`-less `schema.rs`
 //!   index creates), so a genuine type mismatch (column not `F32_BLOB`) is
-//!   never swallowed into a silent brute-force regression — the exact TD-115
+//!   never swallowed into a silent brute-force regression — the exact
 //!   failure mode `migrate_023` was written to prevent.
 //!
 //! ## Backfill
@@ -76,7 +76,7 @@ pub(crate) async fn migrate_026_episodes_embedding(
         false
     } else {
         // `F32_BLOB(dim)` is the declared type the DiskANN vector index requires
-        // (a plain `BLOB` is rejected — TD-115). A fresh ADD COLUMN can declare
+        // (a plain `BLOB` is rejected). A fresh ADD COLUMN can declare
         // it directly (no BLOB→F32_BLOB rebuild dance needed, unlike defs_j's
         // pre-existing-column conversion).
         conn.execute(
@@ -104,7 +104,7 @@ pub(crate) async fn migrate_026_episodes_embedding(
         migration = "026",
         column_added = added,
         dim,
-        "migrate_026: episodes.embedding + episodes_vec_idx (TD-136 dense episode arm) installed"
+        "migrate_026: episodes.embedding + episodes_vec_idx (dense episode arm) installed"
     );
     Ok(())
 }

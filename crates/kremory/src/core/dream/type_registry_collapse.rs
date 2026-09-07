@@ -1,46 +1,46 @@
-//! Dream pass — type-registry post-hoc collapse (ADR-063 spec §4, "Site #3").
+//! Dream pass — type-registry post-hoc collapse (Site #3).
 //!
 //! Periodic dream-phase pass that de-duplicates the `entity_types` registry for
 //! a `group_id`: near-duplicate types (e.g. Pass-0-discovered "Company" +
 //! "Business Organisation") are merged, remapping every `entities.entity_type_id`
 //! that pointed at the loser onto the keeper.
 //!
-//! ## Pass shape (spec §4.0-§4.5)
+//! ## Pass shape
 //!
 //! 1. Load `entity_types` for `group_id` (skip id=0 catch-all — never a merge
 //!    candidate).
-//! 2. Embed each type's **DESCRIPTION** (never the bare name — spec §4.1; bare-
-//!    label cosine is TD-097's own confirmed degeneracy, `cos(Person, Date) =
+//! 2. Embed each type's **DESCRIPTION** (never the bare name; bare-
+//!    label cosine is a confirmed degeneracy, `cos(Person, Date) =
 //!    1.0000`). Degraded mode (no embedder): skip the pass entirely with a
-//!    warning, mirroring `discover_types`'s D7 degraded-mode discipline.
+//!    warning, mirroring `discover_types`'s degraded-mode discipline.
 //! 3. For every candidate pair, compute description-cosine + a lexical
 //!    pre-filter on the type NAME (`normalize_name` exact-match, or a lemma
-//!    match that strips a trailing `s` — spec §4.2).
-//! 4. Band the pair per spec §4.3's cosine table: auto-merge (row 1
-//!    equivalent, no LLM call), LLM-verify band, or no-candidate.
+//!    match that strips a trailing `s`).
+//! 4. Band the pair per a cosine table: auto-merge (the highest-confidence
+//!    band, no LLM call), LLM-verify band, or no-candidate.
 //! 5. LLM-verify band pairs are batched into ONE `IdentityVerdictBatch` call
-//!    (shared schema, spec §2.1/§4.4) per dream-pass invocation.
-//! 6. Each resolved pair is decided via the shared [`write_gate`] (spec §2.2).
-//!    `WriteDecision::Merge` triggers keeper selection (spec §4.5: longest
+//!    (shared schema) per dream-pass invocation.
+//! 6. Each resolved pair is decided via the shared [`write_gate`].
+//!    `WriteDecision::Merge` triggers keeper selection (longest
 //!    description wins, `evidence_count` secondary tiebreak) + an atomic
 //!    `entity_type_id` remap + `identity_verdict_audit` row, all inside ONE
-//!    `BEGIN IMMEDIATE` transaction (spec §5.1 RISK-003).
+//!    `BEGIN IMMEDIATE` transaction.
 //!    `WriteDecision::PotentialAlias` writes an audit row only (no merge — types
-//!    have no potential-alias edge concept, spec brief). `WriteDecision::Reject`
+//!    have no potential-alias edge concept). `WriteDecision::Reject`
 //!    writes nothing.
 //!
-//! ## Spike gating (spec §8)
+//! ## Spike gating
 //!
-//! The 0.85 primary threshold is ADR-037's own already-calibrated number
-//! (reused, not invented). The lemma-heuristic pre-filter (F3) is VALIDATED
-//! (2026-07-03, findings-log F3 RESOLVED): distinct-concept trailing-s collisions
+//! The 0.85 primary threshold is an already-calibrated number
+//! (reused, not invented). The lemma-heuristic pre-filter is VALIDATED:
+//! distinct-concept trailing-s collisions
 //! measure real nomic cosines 0.56–0.64 ≪ 0.85, so the dual-signal guard holds
-//! without an `exact_only` toggle. The 0.70 lower band edge (F4) is exercised
+//! without an `exact_only` toggle. The 0.70 lower band edge is exercised
 //! REJECT-side only — the `band_edge_moderate` corpus category (n=26) records
-//! zero false merges — but merge-side recall in [0.70, 0.85) is still unspiked
-//! (findings-log F4: open). Enablement rests on the strict lower-CI +
-//! zero-false-merge gate (site3_metrics.json precision 0.949, Wilson-lower 0.861
-//! ≥ 0.85, 0 false merges), which does NOT depend on F4's merge-side recall.
+//! zero false merges — but merge-side recall in [0.70, 0.85) is still unspiked.
+//! Enablement rests on the strict lower-CI +
+//! zero-false-merge gate (precision 0.949, Wilson-lower 0.861
+//! ≥ 0.85, 0 false merges), which does NOT depend on the unspiked merge-side recall.
 //! This pass therefore ships behind
 //! `DreamOpts::include_type_registry_collapse`, DEFAULT `true`.
 //!
@@ -71,16 +71,15 @@ use crate::core::identity_verdict::{
 };
 use crate::core::provider::{chat_msg_system, chat_msg_user, ChatProvider, DynEmbeddingProvider};
 
-/// Site label used on every shared `kremory.identity.*` counter (spec §6).
+/// Site label used on every shared `kremory.identity.*` counter.
 const SITE_LABEL: &str = "site3_type_registry";
 
-/// ADR-037's existing primary description-cosine threshold, reused per spec
-/// §4.3 (NOT a fresh number — R2's explicit recommendation against
-/// threshold-per-site inconsistency).
+/// The existing primary description-cosine threshold, reused (NOT a fresh
+/// number — chosen deliberately against threshold-per-site inconsistency).
 pub(crate) const TYPE_COLLAPSE_PRIMARY_COSINE: f32 = 0.85;
 
-/// Provisional lower band edge (spec §4.3/§8, spike-gated S3). Carried by
-/// analogy from ADR-037's secondary name-gate value; NOT independently
+/// Provisional lower band edge (spike-gated S3). Carried by
+/// analogy from the existing secondary name-gate value; NOT independently
 /// derived for the description-gate use here.
 pub(crate) const TYPE_COLLAPSE_LOWER_BAND_COSINE: f32 = 0.70;
 
@@ -140,8 +139,8 @@ struct MergeEdge {
 
 // ─── Public entry-point ───────────────────────────────────────────────────────
 
-/// Bundled parameters for [`type_registry_collapse`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments). `llm` stays a lead generic
+/// Bundled parameters for [`type_registry_collapse`] — args-as-object
+/// (rust-conventions §too_many_arguments). `llm` stays a lead generic
 /// positional param (project convention, mirrors `discover_types<L>`).
 ///
 /// `pub` + `#[doc(hidden)]` (not `pub(crate)`) per the MNT-002 precedent
@@ -155,12 +154,12 @@ pub struct TypeRegistryCollapseParams<'a> {
     pub conn: &'a libsql::Connection,
     pub group_id: &'a str,
     pub embedder: Option<&'a dyn DynEmbeddingProvider>,
-    /// Concrete model id for capability detection (mirrors TD-094 threading
+    /// Concrete model id for capability detection (mirrors the threading
     /// used by `discover_types`/`reclassify`). Empty (`""`) → `PromptOnly` degrade.
     pub model_id: &'a str,
 }
 
-/// Run Site #3 type-registry post-hoc collapse over `group_id` (ADR-063 spec §4).
+/// Run Site #3 type-registry post-hoc collapse over `group_id`.
 ///
 /// Called by `mem.dream()` when `DreamOpts::include_type_registry_collapse =
 /// true` (spike-gated, default `false` — spec §8). Hooked LAST in the pass
@@ -315,7 +314,7 @@ pub async fn type_registry_collapse<L: ChatProvider>(
             deterministic_signal: DeterministicSignal::from_lexical(true),
             llm_verdict: None,
             min_confidence_floor: None,
-            // TD-212 temporal veto. Enabled here after an explicit false-positive
+            // Temporal veto. Enabled here after an explicit false-positive
             // check, NOT by analogy with Site #5: the worry was that a trailing
             // numeral is a legitimate type variant (`person_2` vs `person`). The
             // corpus refutes it — `site3_type_collapse_adversarial.jsonl` has 57
@@ -326,7 +325,7 @@ pub async fn type_registry_collapse<L: ChatProvider>(
             names: Some((slots[*i].spec.name.as_str(), slots[*j].spec.name.as_str())),
         });
         record_write_gate_decision(decision);
-        // Quinn MED-3 — see the Site #5 caller. `write_gate` is counter-free by
+        // See the Site #5 caller. `write_gate` is counter-free by
         // contract, so the veto is counted here or not at all.
         if decision == WriteDecision::Reject
             && crate::core::disambiguation::temporal_conflict(
@@ -362,7 +361,7 @@ pub async fn type_registry_collapse<L: ChatProvider>(
             deterministic_signal: DeterministicSignal::from_lexical(pair.lexical_compatible),
             llm_verdict: verdict.clone(),
             min_confidence_floor: None,
-            // TD-212 temporal veto — same evidence as the auto-merge loop above
+            // Temporal veto — same evidence as the auto-merge loop above
             // (57 should-collapse corpus rows, 0 blocked; 152 real type names, 0
             // carrying temporal tokens).
             names: Some((
@@ -418,9 +417,9 @@ pub async fn type_registry_collapse<L: ChatProvider>(
                 .await?;
             }
             WriteDecision::Reject => {
-                // No write per spec §2.2 — Reject is silent (no audit row for
-                // clear-case rejects, mirrors ADR-047's dream_pass4_audit
-                // convention of auditing only LLM-touched decisions, spec §5.2).
+                // No write — Reject is silent (no audit row for
+                // clear-case rejects, mirrors the dream_pass4_audit
+                // convention of auditing only LLM-touched decisions).
             }
         }
     }
@@ -530,8 +529,8 @@ fn resolve_keeper_pair(slots: &[TypeSlot], i: usize, j: usize) -> (usize, usize)
 /// When a longer-description keeper displaces the previously-stored one, the
 /// merge provenance (`cosine` + `verdict`) is ALSO switched to that winning
 /// pair's, so the audit row reflects the pair that actually authorised the
-/// surviving keeper (spec §5.1).
-/// Bundled parameters for [`queue_merge`] — args-as-object per TD-042
+/// surviving keeper.
+/// Bundled parameters for [`queue_merge`] — args-as-object
 /// (rust-conventions §too_many_arguments, threshold 3).
 struct QueueMergeParams<'a> {
     loser_to_keeper: &'a mut HashMap<u32, MergeEdge>,
@@ -636,7 +635,7 @@ struct AdjudicateBatchParams<'a, L: ChatProvider> {
 }
 
 /// Adjudicate every nominated pair via one or more chunked `IdentityVerdictBatch`
-/// LLM calls (S3 spike fix — Quinn-verified), returning verdicts keyed by the
+/// LLM calls (S3 spike fix), returning verdicts keyed by the
 /// GLOBAL `pair_id` (index into the caller's full `nominated` slice).
 ///
 /// Root cause (S3 spike): a single call covering all nominated pairs at once
@@ -713,8 +712,8 @@ async fn adjudicate_chunk<L: ChatProvider>(
     let raw_value = StructuredCallBuilder::new(llm, &schema, "IdentityVerdictBatch")
         .model(model_id)
         .messages(messages)
-        // S3 spike fix: dream-phase adjudication is latency-tolerant by design
-        // (ADR-063 spec) — raise the per-arm budget for THIS call site only,
+        // S3 spike fix: dream-phase adjudication is latency-tolerant by design —
+        // raise the per-arm budget for THIS call site only,
         // rather than the shared 30s default other call sites depend on
         // (`structured.rs:84`).
         .ttft_budget_ms(crate::core::identity_verdict::ADJUDICATION_TTFT_BUDGET_MS)
@@ -786,7 +785,7 @@ async fn adjudicate_chunk<L: ChatProvider>(
             Ok(item) => {
                 if item.pair_id >= chunk.len() {
                     // Out-of-range pair_id — echoed id doesn't correlate to any
-                    // pair in this chunk; drop it loudly (Vera Cycle 2 OBS-01).
+                    // pair in this chunk; drop it loudly.
                     counter!(
                         "kremory.identity.verdict_parse_fail_total",
                         "site" => SITE_LABEL
@@ -1169,7 +1168,7 @@ mod tests {
 
     /// Unit-normalised vector helper (dot product == cosine for normalised inputs,
     /// matching `anti_redundancy::cosine`'s documented assumption).
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     fn unit_vec4(a: f32, b: f32, c: f32, d: f32) -> Vec<f32> {
         let norm = (a * a + b * b + c * c + d * d).sqrt();
         if norm == 0.0 {
@@ -1178,7 +1177,7 @@ mod tests {
         vec![a / norm, b / norm, c / norm, d / norm]
     }
 
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn seed_two_types(
         conn: &libsql::Connection,
         group_id: &str,
@@ -1204,7 +1203,7 @@ mod tests {
         .expect("insert type B");
     }
 
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn insert_entity_of_type(
         conn: &libsql::Connection,
         group_id: &str,
@@ -1667,7 +1666,7 @@ mod tests {
         assert!(!names_share_lemma_or_exact("Person", "Vehicle"));
     }
 
-    /// ADR-063 test-strategy spec §6.3 / F3 — the lemma false-merge safety
+    /// The lemma false-merge safety
     /// corpus, TIER 1 (unit, pure-fn, no LLM/embedder). Characterizes what
     /// `names_share_lemma_or_exact`'s naive `strip_trailing_s` singular/plural
     /// heuristic ACTUALLY does across three adversarial categories. This does

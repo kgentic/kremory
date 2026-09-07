@@ -1,10 +1,10 @@
-//! Dream Pass 4 — consistency_check (ADR-047).
+//! Dream Pass 4 — consistency_check.
 //!
 //! Hybrid embed-prefilter + LLM-verify for detecting high-confidence wrong entity
 //! types.  Scope: entities with `entity_type_source NOT IN ('ConsumerPinned','DreamPass4')`
 //! and `entity_type_id != 0` (catch-all excluded).
 //!
-//! ## Observability (CLAUDE.md Rule 19)
+//! ## Observability
 //! - `kremory.dream.consistency_check.scanned_total`
 //! - `kremory.dream.consistency_check.flagged_total`
 //! - `kremory.dream.consistency_check.cap_overflow_total{drop_count}`
@@ -95,9 +95,10 @@ pub struct ConsistencyCheckSummary {
 
 // ─── LLM output schema ────────────────────────────────────────────────────────
 //
-// Required fields have NO `#[serde(default)]` per [[llm-output-parse-loudly]].
+// Required fields have NO `#[serde(default)]` so a malformed LLM emission
+// fails loudly rather than silently defaulting.
 // `action=correct` structurally REQUIRES `new_type_id` — enforced via custom
-// Deserialize (Vera SCOPE-001 fold from ADR-047 amendments).
+// Deserialize.
 
 /// A single verify decision from the LLM.
 /// `action=correct` requires `new_type_id` (enforced at deserialize time).
@@ -146,7 +147,7 @@ pub(crate) struct VerifyBatch {
 /// Hand-crafted JSON Schema for `VerifyBatch` compatible with Anthropic's
 /// `NativeSchema` arm.
 ///
-/// Anthropic structured-output constraints (verified empirically 2026-06-10 via
+/// Anthropic structured-output constraints (verified empirically via
 /// `curl -d '{...,"maxItems":1}' https://api.anthropic.com/v1/messages` →
 /// `{"error":{"type":"invalid_request_error","message":"output_config.format.schema:
 /// For 'array' type, property 'maxItems' is not supported"}}`):
@@ -161,7 +162,7 @@ pub(crate) struct VerifyBatch {
 ///   compatibility but is UNUSED — array-length enforcement must come from
 ///   the prompt + caller-side validation, not the schema (Anthropic limitation).
 ///
-/// Per [[load-bearing-invariants-at-emit-not-prompt]] the load-bearing
+/// The load-bearing
 /// invariant (one-decision-per-entity) is structurally enforced by:
 /// 1. `additionalProperties: false` rejects extra fields → enforces field-name correctness
 /// 2. `required: ["entity_id", "action", "confidence"]` rejects missing required fields
@@ -207,7 +208,7 @@ pub fn embed_input_formatter(name: &str, facts: &[String]) -> String {
     parts.join(" | ")
 }
 
-/// `true` when entity should be flagged: `cos < τ` (exclusive boundary, ADR-047 §D1).
+/// `true` when entity should be flagged: `cos < τ` (exclusive boundary).
 pub fn embed_prefilter_gate(tau: f32, cos: f32) -> bool {
     cos < tau
 }
@@ -241,7 +242,6 @@ pub struct CandidateRow {
     pub entity_type_id: i64,
     pub top3_facts: Vec<String>,
     /// Source-episode text (the most recent episode that mentioned this entity).
-    /// Phase D iter 4 (2026-06-10) addition per ADR-047 amendment.
     pub source_episode: Option<String>,
 }
 
@@ -365,9 +365,9 @@ pub async fn verify_batch(
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 // `RunConsistencyCheckParams` is defined in `audit.rs` (re-exported below) to
-// keep this module under the TD-C 500-LoC guard (ADR-050 §5).
+// keep this module under the 500-LoC guard.
 
-/// Run Dream Pass 4 consistency check (ADR-047).
+/// Run Dream Pass 4 consistency check.
 pub async fn run_consistency_check(
     db: &libsql::Connection,
     params: RunConsistencyCheckParams<'_>,
@@ -380,7 +380,7 @@ pub async fn run_consistency_check(
     let mut summary = ConsistencyCheckSummary::default();
     let tau = opts.embed_prefilter_threshold;
     let run_id = Uuid::new_v4().to_string();
-    // Option-1 (2026-06-23): no longer read `llm.model()`. The model is the
+    // Option-1: no longer read `llm.model()`. The model is the
     // consumer-supplied `verify_model_override` (set by the dream entry point
     // from the Engine model, or by the consumer directly). Empty → `PromptOnly`.
     let verify_model = opts.verify_model_override.clone().unwrap_or_default();
@@ -433,7 +433,7 @@ pub async fn run_consistency_check(
     }
 
     // Derive provider label from model string for correct attribution
-    // (prev hardcoded "ollama" was wrong for Anthropic verify provider — Rule 19).
+    // (prev hardcoded "ollama" was wrong for Anthropic verify provider).
     let provider_label = if verify_model.starts_with("claude-") {
         "anthropic"
     } else if verify_model.starts_with("gpt-")
@@ -483,7 +483,7 @@ pub use verify::{
     VerifyBatchForCandidatesResult,
 };
 
-/// Build the LLM messages for a verify batch (ADR-047 §3).
+/// Build the LLM messages for a verify batch.
 ///
 /// The user message MUST include the full type registry (id → name) so the LLM
 /// can assign valid `new_type_id` values when action=correct.  Without this menu

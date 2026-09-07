@@ -1,8 +1,8 @@
 // ─── Migration 015a ───────────────────────────────────────────────────────────
 
-/// Migration 015a (ADR-051): add `episode_processing_status` column to `episodes`.
+/// Migration 015a: add `episode_processing_status` column to `episodes`.
 ///
-/// Introduces an explicit state-machine column for ADR-051's async extraction
+/// Introduces an explicit state-machine column for the async extraction
 /// gate.  Values follow a strict lifecycle:
 ///
 /// ```text
@@ -125,7 +125,7 @@ pub async fn migrate_015a_episode_processing_status(
 
         // ── Step 3: backfill — episodes with entities are already Verified ───
         //
-        // Per ADR-051 §R-02 mitigation: existing episodes that have at least
+        // Existing episodes that have at least
         // one entry in `episodic_edges` (the join table linking episodes to their
         // extracted entities) are logically already in the Verified state.
         // `episodic_edges.episode_id` is the authoritative post-extraction FK.

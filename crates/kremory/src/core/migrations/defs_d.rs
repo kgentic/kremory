@@ -1,7 +1,7 @@
 // ─── Migration 013 ─────────────────────────────────────────────────────────
 
 /// Migration 013: extend `entity_type_source` CHECK to accept `'DreamPass4'` +
-/// create `dream_pass4_audit` table (ADR-047, v0.1.2 Phase B).
+/// create `dream_pass4_audit` table.
 ///
 /// ### Steps
 ///
@@ -32,14 +32,15 @@
 /// row id) as a SOFT reference. With composite PK `(id, group_id)` the rowid
 /// is the physical row id, queryable via `SELECT rowid FROM entities WHERE id = ?1`.
 ///
-/// **FK omission + cascade semantic via TRIGGER (ADR-047 IRREV-001 amendment)**:
+/// **FK omission + cascade semantic via TRIGGER**:
 /// SQLite FK resolution requires the referenced column to be UNIQUE or a single-column
 /// INTEGER PRIMARY KEY. Entities uses composite PK (id, group_id), so a single-column
-/// FK on rowid is invalid. To preserve IRREV-001's `ON DELETE CASCADE` provenance
+/// FK on rowid is invalid. To preserve the `ON DELETE CASCADE` provenance
 /// semantic without a FK constraint, this migration creates an `AFTER DELETE` trigger
 /// (`trg_dream_pass4_audit_cascade_delete`) that mirrors FK CASCADE behaviour: when an
-/// entity is deleted, its audit history is also deleted. Per [[treat-cause-not-symptom]]
-/// the TRIGGER is the cause-fix; FK omission alone would have been the band-aid.
+/// entity is deleted, its audit history is also deleted. The trigger is the
+/// cause-fix; omitting the FK with no replacement cascade mechanism would have
+/// silently orphaned audit rows on delete.
 ///
 /// **Visibility (`pub` not `pub(crate)`)**: integration tests in
 /// `crates/kremory/tests/migration_013_pass4_source_tier.rs` need direct access for
@@ -95,7 +96,7 @@ pub async fn migrate_013_pass4_source_tier(
         // column to be explicitly UNIQUE or a single-column INTEGER PRIMARY KEY.
         // entities uses a composite PK (id, group_id), so rowid is not a valid FK target.
         //
-        // To preserve the IRREV-001 cascade-delete semantic from ADR-047 amendment,
+        // To preserve the cascade-delete semantic without a FK constraint,
         // an AFTER DELETE trigger mirrors `ON DELETE CASCADE` behaviour: when an entity
         // is deleted, its audit-history rows are also deleted.
         conn.execute_batch(
@@ -138,9 +139,9 @@ pub async fn migrate_013_pass4_source_tier(
 
     let body_result: crate::core::error::Result<()> = async {
         // Drop any view that references `entities` — SQLite rejects RENAME when
-        // a view references the table by name. Per ADR-046 Amendment 2026-06-09,
-        // v_entity_drift_candidates is deferred and its self-JOIN approach is
-        // structurally impossible in kremory; safe to discard permanently.
+        // a view references the table by name. v_entity_drift_candidates is
+        // deferred and its self-JOIN approach is structurally impossible in
+        // kremory; safe to discard permanently.
         let _ = conn
             .execute("DROP VIEW IF EXISTS v_entity_drift_candidates", ())
             .await;
@@ -291,13 +292,13 @@ pub async fn migrate_013_pass4_source_tier(
     .await
     .map_err(step("create_audit_table"))?;
 
-    // ── Step 4: cascade-delete trigger (IRREV-001 amendment cause-fix) ──────
+    // ── Step 4: cascade-delete trigger ───────────────────────────────────────
     //
-    // Per ADR-047 §IRREV-001 fold: when an entity is deleted, its audit-history
-    // rows must be deleted too. SQLite FK with composite PK on entities is
-    // structurally impossible (see step 3 comment), so the cascade semantic is
-    // implemented via an AFTER DELETE TRIGGER instead. Per [[treat-cause-not-symptom]],
-    // the TRIGGER is the cause-fix; FK omission alone would have been the band-aid.
+    // When an entity is deleted, its audit-history rows must be deleted too.
+    // SQLite FK with composite PK on entities is structurally impossible (see
+    // step 3 comment), so the cascade semantic is implemented via an AFTER
+    // DELETE TRIGGER instead — the trigger is the cause-fix; omitting the FK
+    // with no replacement cascade mechanism would have been the band-aid.
 
     conn.execute(
         "CREATE TRIGGER IF NOT EXISTS trg_dream_pass4_audit_cascade_delete \

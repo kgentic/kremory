@@ -1,4 +1,4 @@
-//! Pass 0 type discovery primitive (ADR-037 §3 / §9).
+//! Pass 0 type discovery primitive.
 //!
 //! ## What this does
 //!
@@ -6,12 +6,12 @@
 //! 2. **Top-K clusters** — groups catch-alls by name, ranks by frequency, takes
 //!    top `max_proposals` clusters as proposal candidates (one cluster → one LLM prompt entry).
 //!    (Embedding-based clustering is deferred to v0.2.0; name-frequency grouping is the
-//!    v0.1.1 minimal-first implementation anchored by ADR-037 §9.2.)
+//!    v0.1.1 minimal-first implementation.)
 //! 3. **LLM proposal call** — single `StructuredCallBuilder` call asking the LLM to
 //!    propose entity types for the supplied clusters.  `max_proposals` is enforced
 //!    PROMPT-SIDE (cap in the system prompt), not post-emission filter.
 //! 4. **Shape validator** — each proposal runs through `validate_proposed_name`
-//!    (9 rejection categories per ADR-037 §3.1).
+//!    (9 rejection categories).
 //! 5. **Anti-redundancy gate** — if an embedder is available, each proposal's
 //!    description and name are embedded and compared against existing types at
 //!    0.85 / 0.70 cosine thresholds.  Without an embedder the gate is skipped
@@ -23,27 +23,28 @@
 //!    `entity_type_id = new_id, entity_type_source = 'DreamPass0'`.
 //!    Without an embedder: retype ALL evidence entities for the accepted type (D4).
 //!
-//!    **TD-123 guard (default OFF):** this cosine-only comparison is a BARE
+//!    **Evidence-retype guard (default OFF):** this cosine-only comparison is a BARE
 //!    ENTITY NAME (`entities.id`) embedded against a TYPE DESCRIPTION — the same
-//!    degenerate-embedding failure class TD-097/ADR-063 documented (short bare
+//!    degenerate-embedding failure class documented elsewhere (short bare
 //!    labels collapse to near-identical vectors under `nomic-embed-text`), just
-//!    cross-domain instead of name-vs-name. Unlike ADR-063's six sites, this
-//!    comparison was never spike-validated (ADR-063: "every kremory-specific
-//!    numeric threshold MUST PASS a `/ship-spike`... BEFORE it is wired into the
+//!    cross-domain instead of name-vs-name. Unlike the other embedding-based
+//!    identity checks in this codebase, this
+//!    comparison was never spike-validated ("every kremory-specific
+//!    numeric threshold MUST PASS a spike... BEFORE it is wired into the
 //!    production path") and has no deterministic corroboration signal — a
 //!    lexical gate on entity-name-vs-type-name would reject legitimate matches
 //!    (an instance name like "Nobu Malibu" shares no lemma with its type
-//!    "Restaurant"), so the ADR-057/063 lexical-gate pattern does not transplant
-//!    here unmodified. Gated behind `DreamOpts::include_evidence_retype_by_
+//!    "Restaurant"), so the lexical-gate pattern used elsewhere does not
+//!    transplant here unmodified. Gated behind `DreamOpts::include_evidence_retype_by_
 //!    similarity` (default `false`) pending a proper spike (mirrors the
-//!    quarantine-until-spiked posture ADR-063 used for every other new
+//!    quarantine-until-spiked posture used for every other new
 //!    mechanism). When OFF, evidence entities are left as catch-all
 //!    (`entity_type_id = 0`) — Pass 2 `reclassify` (LLM + confidence-gated, not
 //!    cosine-alone) runs immediately after Pass 0 in the same `mem.dream()` call
-//!    and safely picks up promotion instead (ADR-037 §9.6), so disabling this
+//!    and safely picks up promotion instead, so disabling this
 //!    path does not lose retype coverage, only the risky cosine-alone shortcut.
 //!
-//! ## Observability (ADR-037 §6)
+//! ## Observability
 //!
 //! All 6 required metrics are emitted:
 //! - `kremory.dream.types_proposed_total{model, namespace}`
@@ -102,12 +103,11 @@ pub struct DiscoveryResult {
 /// Enforced PROMPT-SIDE — embedded in the system prompt instruction.
 pub(crate) const MAX_PROPOSALS: usize = 5;
 
-/// Cosine threshold for in-place evidence retype (ADR-037 §9.6 / §3.5).
+/// Cosine threshold for in-place evidence retype.
 const EVIDENCE_RETYPE_COSINE: f32 = 0.75;
 
 /// Site label used on every shared `kremory.identity.*` counter for Site #2
-/// (ADR-063 spec §6 site-labeled observability convention, mirrors Site #3's
-/// `type_registry_collapse.rs::SITE_LABEL`).
+/// (mirrors Site #3's `type_registry_collapse.rs::SITE_LABEL`).
 const SITE_LABEL: &str = "site2_type_novelty";
 
 // ─── Main primitive ───────────────────────────────────────────────────────────
@@ -115,10 +115,10 @@ const SITE_LABEL: &str = "site2_type_novelty";
 /// Discover new entity types from catch-all entities in `group_id`.
 ///
 /// Called by `mem.dream()` when `include_type_discovery = true` (D6).
-/// Can also be called standalone via the escape-hatch `mem.discover_types()` (ADR-037 §4.2).
+/// Can also be called standalone via the escape-hatch `mem.discover_types()`.
 ///
-/// Bundled non-generic parameters for [`discover_types`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments). The generic `llm: &L` stays a
+/// Bundled non-generic parameters for [`discover_types`] — args-as-object
+/// (rust-conventions §too_many_arguments). The generic `llm: &L` stays a
 /// lead positional param (brief rule 4); the remaining args bundle here.
 ///
 /// Fields:
@@ -131,24 +131,25 @@ pub(crate) struct DiscoverTypesParams<'a> {
     pub(crate) group_id: &'a str,
     pub(crate) embedder: Option<&'a dyn DynEmbeddingProvider>,
     pub(crate) max_proposals: usize,
-    /// Concrete model id for capability detection (TD-094). Threaded from the
+    /// Concrete model id for capability detection. Threaded from the
     /// facade dream path (`dream_model_id_or_main`). Empty (`""`) → `PromptOnly`
-    /// degrade — the correct behaviour when the model is unknown. Before TD-094
-    /// this was hardcoded to `String::new()`, silently degrading every call.
+    /// degrade — the correct behaviour when the model is unknown. Before this
+    /// field existed the model id was hardcoded to `String::new()`, silently
+    /// degrading every call.
     pub(crate) model_id: &'a str,
-    /// Site #2 (ADR-063 "The six sites" #2) — `DreamOpts::include_type_novelty_
+    /// Site #2 — `DreamOpts::include_type_novelty_
     /// llm_verify`, threaded from `facade/dream.rs`. `false` (default): a
     /// `GateOutcome::NeedsLlmVerify` classification falls back to the pre-Site-#2
     /// behaviour (≥0.85 → reject, else accept) — the DEFAULT build's outcome is
     /// UNCHANGED. `true`: `NeedsLlmVerify` proposals are adjudicated via the
     /// shared `write_gate` (spec §2.2).
     pub(crate) llm_verify_band: bool,
-    /// TD-123 — `DreamOpts::include_evidence_retype_by_similarity`, threaded
+    /// `DreamOpts::include_evidence_retype_by_similarity`, threaded
     /// from `facade/dream.rs`. `false` (default): the in-place evidence-retype
     /// step (D4) skips the cosine-only bare-name-vs-type-description comparison
     /// entirely (unspiked degeneracy risk, see module docs) and leaves evidence
     /// entities as catch-all for Pass 2 `reclassify` to pick up safely. `true`:
-    /// opt-in to the pre-TD-123 cosine-alone retype behaviour.
+    /// opt-in to the pre-existing cosine-alone retype behaviour.
     pub(crate) evidence_retype_by_similarity: bool,
 }
 
@@ -199,7 +200,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
     // ── Step 3: Load existing registry for anti-redundancy gate ──────────────
 
     let registry = EntityTypeRegistry::load_for_group(conn, group_id).await?;
-    // TD-094: the consumer-supplied model id (Option-1, 2026-06-23) now reaches
+    // The consumer-supplied model id now reaches
     // this pass via `DiscoverTypesParams.model_id`, threaded from the facade
     // dream path (`with_dream_model_id` / `with_model_id` → `dream_model_id_or_main`).
     // Empty → `PromptOnly` degrade (correct when the model is unknown); a
@@ -215,7 +216,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
             if spec.id == 0 {
                 continue;
             }
-            // TD-097 (Site #1): only the DESCRIPTION is embedded now. The name signal
+            // Site #1: only the DESCRIPTION is embedded now. The name signal
             // is a deterministic normalized exact-match in `check_proposal`, not a
             // (degenerate) bare-name cosine, so no name embedding is computed.
             let desc_emb = emb.embed_dyn(&spec.description).await?;
@@ -324,7 +325,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
 
     // ── Step 7: Per-proposal: shape validate → anti-redundancy → persist ──────
 
-    // TD-210: one run_id per `discover_types` invocation, shared by every
+    // One run_id per `discover_types` invocation, shared by every
     // `identity_verdict_audit` row this call writes — mirrors
     // `type_registry_collapse.rs`'s `run_id` (generated once per call, not
     // once per row) so audit rows from the same Pass-0 pass are correlatable.
@@ -388,7 +389,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                     continue;
                 }
             };
-            // TD-097 (Site #1): no name embedding — `check_proposal` uses a
+            // Site #1: no name embedding — `check_proposal` uses a
             // deterministic normalized exact-match on `proposal.name` instead of a
             // (degenerate) bare-name cosine.
             match anti_redundancy::check_proposal(anti_redundancy::CheckProposalParams {
@@ -403,7 +404,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                     desc_cosine,
                 } => {
                     let reason = format!("redundant_with:{existing_name}");
-                    // TD-210: leave evidence for this rejection regardless of
+                    // Leave evidence for this rejection regardless of
                     // `llm_verify_band` — `desc_cosine` is `None` when the
                     // exact-name pre-filter fired (no cosine was ever computed
                     // for this decision) and `Some` when the desc-cosine
@@ -443,7 +444,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         result: &mut result,
                     })
                     .await?;
-                    // TD-210: this is the branch that previously left NO trace
+                    // This is the branch that previously left NO trace
                     // at all — an accept via `Pass` never called
                     // `record_type_novelty_decision` (that fn is only reached
                     // from the LLM-verify sub-path below) and never wrote to
@@ -523,14 +524,14 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                         continue;
                     }
 
-                    // Flag ON (ADR-065): trust the LLM as terminal arbiter — a
+                    // Flag ON: trust the LLM as terminal arbiter — a
                     // Site-#2-LOCAL decision that intentionally does NOT call the
                     // shared `write_gate`. Type synonyms ("Firm"/"Company") are
                     // lexically dissimilar by nature, so write_gate Row 6's
-                    // deterministic-corroboration requirement (an ADR-057 ENTITY-
+                    // deterministic-corroboration requirement (an ENTITY-
                     // homonymy guard) over-generalized to schema types and
                     // downgraded correct confident `true` verdicts to accept →
-                    // duplicate types. See `type_novelty_is_redundant` + ADR-065.
+                    // duplicate types. See `type_novelty_is_redundant`.
                     let existing_desc = existing_embeddings
                         .iter()
                         .find(|(spec, _)| spec.name == existing_name)
@@ -585,7 +586,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
                                 desc_cosine = %desc_cosine,
                                 "discover_types: Site #2 low-confidence/absent type-novelty \
                                  verdict — accepting proposal (a new type must not be blocked \
-                                 on weak evidence; ADR-065)"
+                                 on weak evidence)"
                             );
                         }
                         accept_proposal(AcceptProposalParams {
@@ -631,7 +632,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
         }
     }
 
-    // ── Fail-loud on silent zero-discovery (TD-052 fix) ───────────────────────
+    // ── Fail-loud on silent zero-discovery ───────────────────────────────────
     //
     // We only reach here with a NON-EMPTY catch-all bucket (empty buckets and
     // empty clusters early-returned above), so `types_accepted.is_empty()` here
@@ -640,8 +641,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
     // validator rejects) or prompt drift. Previously this was SILENT: the
     // DreamSummary looked identical to "nothing to discover". Pass-0 is
     // non-fatal, so we WARN (never abort): a counter + a tracing::warn! + a
-    // consumer-visible `DiscoveryResult.warnings` entry. See ADR-037 §6 +
-    // [[project_dream_discovery_needs_deferred_quality_model]].
+    // consumer-visible `DiscoveryResult.warnings` entry.
     if result.types_accepted.is_empty() {
         counter!(
             "kremory.dream.discovery_yielded_zero_total",
@@ -683,7 +683,7 @@ pub(crate) async fn discover_types<L: ChatProvider>(
 /// Uses Migration 014's provenance columns (`discovered_at`, `discovered_by`,
 /// `evidence_count`, `confidence`).
 ///
-/// Bundled parameters for [`accept_proposal`] — args-as-object per TD-042
+/// Bundled parameters for [`accept_proposal`] — args-as-object
 /// (rust-conventions §too_many_arguments). Same precedent as
 /// `extraction/structured.rs:TryArmParams`. A plain field-literal struct (all
 /// fields required) — no builder layer needed.
@@ -695,7 +695,7 @@ struct AcceptProposalParams<'a> {
     catch_alls: &'a [CatchAllEntity],
     /// (proposal_desc_embedding, embedder) — `None` = degraded mode.
     desc_emb_and_embedder: Option<(&'a [f32], &'a dyn DynEmbeddingProvider)>,
-    /// TD-123 — `DreamOpts::include_evidence_retype_by_similarity` (default
+    /// `DreamOpts::include_evidence_retype_by_similarity` (default
     /// `false`). Gates ONLY the `desc_emb_and_embedder = Some(..)` cosine-only
     /// retype path (see module docs); irrelevant when `desc_emb_and_embedder`
     /// is `None` (degraded mode always uses `retype_evidence_all`, unaffected).
@@ -731,7 +731,7 @@ async fn accept_proposal(params: AcceptProposalParams<'_>) -> Result<()> {
     // as a subquery inside the INSERT (atomic at statement level). New custom
     // types land above any seeded range; id=0 catch-all is never touched. On a
     // name clash, UNIQUE(group_id, name) triggers OR IGNORE and the SELECT-back
-    // below returns the existing id. (Fixes TD-051.)
+    // below returns the existing id.
     conn.execute(
         "INSERT OR IGNORE INTO entity_types \
          (group_id, id, name, description, discovered_at, discovered_by, evidence_count, confidence) \
@@ -817,7 +817,7 @@ async fn accept_proposal(params: AcceptProposalParams<'_>) -> Result<()> {
     //
     // If embedder available AND `evidence_retype_by_similarity` opted in: retype
     // only evidence entities whose name embedding is cosine ≥ 0.75 to the new
-    // type's description embedding (ADR-037 §9.6). TD-123 (default OFF): this
+    // type's description embedding. This guard (default OFF): this
     // bare-name-vs-type-description comparison is an unspiked degeneracy risk
     // (module docs) — when the flag is off, evidence entities are left as
     // catch-all here; Pass 2 `reclassify` (LLM + confidence-gated) picks them up
@@ -849,7 +849,7 @@ async fn accept_proposal(params: AcceptProposalParams<'_>) -> Result<()> {
                 group_id = %group_id,
                 type_name = %proposal.name,
                 new_id = new_id,
-                "discover_types: TD-123 — skipping cosine-only evidence retype \
+                "discover_types: skipping cosine-only evidence retype \
                  (DreamOpts::include_evidence_retype_by_similarity is false); \
                  evidence entities remain catch-all for Pass 2 reclassify"
             );
@@ -879,8 +879,8 @@ async fn accept_proposal(params: AcceptProposalParams<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Bundled parameters for [`retype_evidence_by_similarity`] — args-as-object per
-/// TD-042 (rust-conventions §too_many_arguments). Same precedent as
+/// Bundled parameters for [`retype_evidence_by_similarity`] — args-as-object
+/// (rust-conventions §too_many_arguments). Same precedent as
 /// `AcceptProposalParams` above.
 struct RetypeBySimilarityParams<'a> {
     conn: &'a libsql::Connection,
@@ -926,7 +926,7 @@ async fn retype_evidence_by_similarity(params: RetypeBySimilarityParams<'_>) -> 
     Ok(count)
 }
 
-/// Bundled parameters for [`retype_evidence_all`] — args-as-object per TD-042
+/// Bundled parameters for [`retype_evidence_all`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 struct RetypeAllParams<'a> {
     conn: &'a libsql::Connection,
@@ -958,7 +958,7 @@ async fn retype_evidence_all(params: RetypeAllParams<'_>) -> Result<usize> {
     Ok(catch_alls.len())
 }
 
-/// Bundled parameters for [`retype_entity`] — args-as-object per TD-042
+/// Bundled parameters for [`retype_entity`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 struct RetypeEntityParams<'a> {
     conn: &'a libsql::Connection,
@@ -1058,7 +1058,7 @@ pub(crate) struct NameCluster {
 
 /// Group catch-alls by normalised name, rank by frequency, take top K.
 ///
-/// ADR-037 §9.2 specifies embedding-cosine clustering at threshold 0.7 with
+/// An earlier design specifies embedding-cosine clustering at threshold 0.7 with
 /// minimum cluster size 3. v0.1.1 minimal-first: name-frequency grouping.
 /// Embedding clustering ships in v0.2.0 when the embedder is always available.
 fn top_k_clusters(entities: &[CatchAllEntity], k: usize) -> Vec<NameCluster> {
@@ -1136,7 +1136,7 @@ fn reason_to_string(r: RejectionReason) -> String {
     r.as_str().to_string()
 }
 
-// ─── Site #2 LLM-verify-band adjudication (ADR-063 spec §2.2/§4.4 sibling) ────
+// ─── Site #2 LLM-verify-band adjudication ──────────────────────────────────
 
 /// `pub` + `#[doc(hidden)]` (MNT-002 pattern, same as the Site #3/#5 test-utils
 /// re-exports in `mod.rs`) — this and [`adjudicate_type_novelty`] were
@@ -1276,7 +1276,7 @@ pub async fn adjudicate_type_novelty<L: ChatProvider>(
 }
 
 /// Bundled parameters for [`build_type_novelty_adjudication_messages`] —
-/// args-as-object per TD-042 (rust-conventions §too_many_arguments, threshold 3).
+/// args-as-object (rust-conventions §too_many_arguments, threshold 3).
 struct BuildTypeNoveltyMessagesParams<'a> {
     proposal_name: &'a str,
     proposal_desc: &'a str,
@@ -1313,15 +1313,15 @@ Existing: name=\"{existing_name}\" description=\"{existing_desc}\""
     vec![chat_msg_system(system), chat_msg_user(user)]
 }
 
-/// ADR-065: Site #2 type-novelty write decision. UNLIKE the shared
+/// Site #2 type-novelty write decision. UNLIKE the shared
 /// [`write_gate`](crate::core::identity_verdict::write_gate) (`identity_verdict.rs`),
 /// this does NOT require deterministic (lexical) corroboration — type synonyms
 /// ("Firm"/"Company") are lexically dissimilar by nature, and schema-level
-/// matching trusts the LLM as terminal arbiter (ADR-065; ontology-alignment
+/// matching trusts the LLM as terminal arbiter (ontology-alignment
 /// prior art). `write_gate`'s Row 6 protects against ENTITY homonymy (same name,
 /// different referent), a failure mode that cannot recur here after the
-/// exact-match pre-filter. See ADR-065 for the residual-risk analysis. The two
-/// decision rules carry a bidirectional doc cross-reference (Vera Finding 3) so
+/// exact-match pre-filter. The two
+/// decision rules carry a bidirectional doc cross-reference so
 /// a maintainer grepping `write_gate` finds this carve-out and does not re-unify
 /// them.
 ///
@@ -1338,7 +1338,7 @@ pub fn type_novelty_is_redundant(verdict: &Option<IdentityVerdictItem>) -> bool 
     matches!(verdict, Some(v) if v.is_same_entity && v.confidence >= LLM_VERIFY_CONFIDENCE_FLOOR)
 }
 
-/// ADR-065 observability (Rule 19): a per-decision counter for the Site #2
+/// Observability: a per-decision counter for the Site #2
 /// type-novelty gate. NOT the shared `write_gate_decision_total` — Site #2
 /// bypasses `write_gate`, so a distinct, honestly-named metric avoids conflating
 /// the two decision rules. `decision` ∈ {`redundant`, `novel`,
@@ -1359,7 +1359,7 @@ fn record_type_novelty_decision(redundant: bool, verdict: &Option<IdentityVerdic
     .increment(1);
 }
 
-/// Bundled parameters for [`record_gate_decision`] — args-as-object per TD-042
+/// Bundled parameters for [`record_gate_decision`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 struct RecordGateDecisionParams<'a> {
     conn: &'a libsql::Connection,
@@ -1373,7 +1373,7 @@ struct RecordGateDecisionParams<'a> {
     /// never because a comparison happened and its result was discarded.
     existing_name: Option<&'a str>,
     /// `None` ONLY when no cosine was ever computed for this decision (the
-    /// TD-097 exact-name pre-filter fires before the desc-cosine loop runs).
+    /// exact-name pre-filter fires before the desc-cosine loop runs).
     desc_cosine: Option<f32>,
     /// `Some` only on the flag-on LLM-verify sub-path; `None` for every
     /// deterministic decision (Pass, Redundant, and the flag-off
@@ -1389,7 +1389,7 @@ struct RecordGateDecisionParams<'a> {
     model: &'a str,
 }
 
-/// TD-210: leave a durable, always-on trace of EVERY Pass-0 anti-redundancy
+/// Leave a durable, always-on trace of EVERY Pass-0 anti-redundancy
 /// gate decision — Pass, Redundant, and both `NeedsLlmVerify` sub-paths (flag
 /// off AND flag on) — independent of `DreamOpts::include_type_novelty_llm_verify`.
 ///
@@ -1398,8 +1398,8 @@ struct RecordGateDecisionParams<'a> {
 /// no persisted row. A default run's `Pass` accepts (the overwhelming
 /// majority of decisions) left ZERO evidence: `identity_verdict_audit` never
 /// received a Site #2 row, so an accepted proposal's `desc_cosine` could not
-/// be reconstructed from stored state after the fact (see tech-debt register
-/// TD-210, "the flag-on counterfactual CANNOT be read from stored state").
+/// be reconstructed from stored state after the fact ("the flag-on
+/// counterfactual CANNOT be read from stored state").
 ///
 /// Emits BOTH:
 /// 1. An always-on counter (`kremory.dream.type_novelty_gate_decision_total`)
@@ -1488,7 +1488,7 @@ async fn record_gate_decision(params: RecordGateDecisionParams<'_>) -> Result<()
     Ok(())
 }
 
-// ─── ADR-065 type_novelty_is_redundant unit tests ────────────────────────────
+// ─── type_novelty_is_redundant unit tests ────────────────────────────────────
 #[cfg(test)]
 mod adr065_type_novelty_redundant_tests {
     use super::*;
@@ -1538,12 +1538,12 @@ mod adr065_type_novelty_redundant_tests {
     }
 }
 
-// ─── TD-051 regression tests ──────────────────────────────────────────────────
+// ─── Regression tests: composite-PK INSERT id omission ───────────────────────
 //
-// `accept_proposal` is the ADR-037 Pass-0 persistence step. It was buried below
+// `accept_proposal` is the Pass-0 persistence step. It was buried below
 // the LLM call + clustering + anti-redundancy gate, so the only test exercising
 // it was the `#[ignore]`d real-LLM smoke (`tests/phase_d_pass_0.rs`) — which hid
-// TD-051 (INSERT omitted `id` on a composite-PK table → runtime NOT NULL crash).
+// a bug where INSERT omitted `id` on a composite-PK table → runtime NOT NULL crash.
 // These tests drive the REAL `accept_proposal` deterministically (no LLM, no
 // embedder; empty `catch_alls` makes retype a no-op) so the persistence/id
 // allocation is asserted in the default `cargo test` gate.
@@ -1570,7 +1570,7 @@ mod td051_tests {
     }
 
     /// First discovered type allocates `id = 10` — above the seeded range (0..=9).
-    /// Before the TD-051 fix this panicked with `NOT NULL constraint failed`.
+    /// Before this fix, this panicked with `NOT NULL constraint failed`.
     #[tokio::test]
     async fn accept_proposal_allocates_id_above_seed_range() {
         let graph = TemporalGraph::open_in_memory()
@@ -1599,7 +1599,7 @@ mod td051_tests {
             result: &mut result,
         })
         .await
-        .expect("accept_proposal must persist the discovered type (TD-051)");
+        .expect("accept_proposal must persist the discovered type");
 
         assert_eq!(
             accepted_type_id(&conn, "g1", "Vehicle").await,
@@ -1653,16 +1653,16 @@ mod td051_tests {
     }
 }
 
-// ─── TD-050 deterministic full-workflow test ──────────────────────────────────
+// ─── Deterministic full-workflow test ─────────────────────────────────────────
 //
-// The TD-051 tests above drive `accept_proposal` (the persistence STEP) in
+// The regression tests above drive `accept_proposal` (the persistence STEP) in
 // isolation. The only test exercising the FULL chain (load catch-alls → cluster
 // → LLM proposal → shape-validate → accept → retype evidence) was the `#[ignore]`d
 // real-LLM smoke (`tests/phase_d_pass_0.rs`), which is stochastic + shape-only
 // ("types_discovered is stochastic — type-shape check only"). So the SEMANTIC
 // correctness of discovery — does it grow the table by the proposed type AND
 // retype the catch-all evidence with `entity_type_source='DreamPass0'`? — was
-// unasserted in the default `cargo test` gate (the TD-050 gap).
+// unasserted in the default `cargo test` gate.
 //
 // This test closes it deterministically: a scripted `ChatProvider` returns a
 // KNOWN proposal batch and `embedder = None` takes the degraded-mode path
@@ -1802,7 +1802,7 @@ mod td050_full_workflow_tests {
             );
             assert_eq!(
                 src, "DreamPass0",
-                "retype provenance must be 'DreamPass0' (ADR-037 D4)"
+                "retype provenance must be 'DreamPass0'"
             );
             checked += 1;
         }
@@ -1812,7 +1812,7 @@ mod td050_full_workflow_tests {
         );
     }
 
-    /// TD-052 fail-loud: when discovery engages on a non-empty catch-all bucket
+    /// Fail-loud: when discovery engages on a non-empty catch-all bucket
     /// but accepts ZERO types (here the scripted proposal is a `"..."` placeholder
     /// the shape validator rejects — the exact gemma4-e2b real-world failure), the
     /// result must carry a loud, consumer-visible warning, NOT silently look like
@@ -1900,7 +1900,7 @@ mod td050_full_workflow_tests {
     }
 }
 
-// ─── Site #2 (ADR-063 "The six sites" #2) — type-novelty LLM-verify band ──────
+// ─── Site #2 — type-novelty LLM-verify band ─────────────────────────────────
 //
 // Deterministic tests for the `DreamOpts::include_type_novelty_llm_verify` flag:
 // (a) flag OFF preserves the pre-Site-#2 outcome exactly (regression guard); (b)
@@ -1957,7 +1957,7 @@ mod site2_type_novelty_tests {
     /// Seed a group with the default 0..=9 types plus ONE custom existing type
     /// (id=11) whose description embeds to `unit_vec4(1,0,0,0)` — used as the
     /// Site #2 candidate's `existing_name`/`existing_desc`.
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn seed_existing_type(conn: &libsql::Connection, group_id: &str, name: &str, desc: &str) {
         ensure_default_types_seeded(conn, group_id)
             .await
@@ -2134,10 +2134,10 @@ mod site2_type_novelty_tests {
     }
 
     /// (b) Flag ON + scripted LLM `is_same_entity=true` (high confidence) →
-    /// `type_novelty_is_redundant` (ADR-065) → the proposal IS redundant →
+    /// `type_novelty_is_redundant` → the proposal IS redundant →
     /// REJECTED. (The lemma overlap between "Organizations"/"Organization" is now
     /// irrelevant to the decision — it mattered only to the OLD write_gate Row 5;
-    /// the confident `true` verdict alone is decisive under ADR-065.) Mid-band
+    /// the confident `true` verdict alone is decisive.) Mid-band
     /// cosine (0.80, in `[0.70, 0.85)`) is used so `check_proposal` nominates
     /// `NeedsLlmVerify` rather than auto-rejecting at the pure classification step
     /// (lemma overlap at cosine ≥0.85 would short-circuit to `Redundant` before
@@ -2200,7 +2200,7 @@ mod site2_type_novelty_tests {
         assert!(
             result.types_accepted.is_empty(),
             "flag ON + confident LLM true verdict: proposal must be rejected as \
-             redundant (ADR-065 type_novelty_is_redundant), got accepted={:?}",
+             redundant (type_novelty_is_redundant), got accepted={:?}",
             result.types_accepted
         );
         assert_eq!(result.types_rejected.len(), 1);
@@ -2208,10 +2208,10 @@ mod site2_type_novelty_tests {
     }
 
     /// (b') Flag ON + scripted LLM `is_same_entity=true` (high confidence) but
-    /// WITHOUT any deterministic lemma signal — the exact Site #2 bug ADR-065
+    /// WITHOUT any deterministic lemma signal — the exact Site #2 bug this
     /// fixes. Under the OLD shared `write_gate` this hit Row 6 (no deterministic
     /// corroboration → `PotentialAlias` → accept → DUPLICATE type). Under
-    /// ADR-065's `type_novelty_is_redundant`, a confident `true` verdict is the
+    /// `type_novelty_is_redundant`, a confident `true` verdict is the
     /// terminal arbiter (type synonyms are lexically dissimilar by nature) → the
     /// proposal IS redundant → REJECTED. This assertion FLIPPED with the fix.
     #[tokio::test]
@@ -2269,7 +2269,7 @@ mod site2_type_novelty_tests {
 
         assert!(
             result.types_accepted.is_empty(),
-            "ADR-065: confident LLM `is_same=true` verdict (no lemma signal needed) → \
+            "Confident LLM `is_same=true` verdict (no lemma signal needed) → \
              redundant → REJECT (was accept under write_gate Row 6), accepted={:?}",
             result.types_accepted
         );
@@ -2348,14 +2348,14 @@ mod site2_type_novelty_tests {
         assert_eq!(result.types_accepted[0].name, "LegalPrecedent");
     }
 
-    /// TD-210 — the flag-OFF, no-LLM-call, ACCEPT-via-`Pass` path is exactly
-    /// the branch the tech-debt register flags as leaving ZERO evidence: prior
+    /// The flag-OFF, no-LLM-call, ACCEPT-via-`Pass` path is exactly
+    /// the branch that used to leave ZERO evidence: prior
     /// to this fix, `discover_types` never wrote to `identity_verdict_audit`
     /// at all on `GateOutcome::Pass`, so an accepted proposal's `desc_cosine`
     /// (the value that decided it was novel enough to accept) could not be
     /// reconstructed from stored state after the fact — only re-embedding the
-    /// stored descriptions live could recover it (register TD-210, "the
-    /// flag-on counterfactual CANNOT be read from stored state").
+    /// stored descriptions live could recover it ("the flag-on counterfactual
+    /// CANNOT be read from stored state").
     ///
     /// One existing type is seeded so a REAL comparison happens (best_cosine
     /// is computed, not skipped) — and the proposal's description embeds
@@ -2436,7 +2436,7 @@ mod site2_type_novelty_tests {
             .await
             .expect("query identity_verdict_audit");
         let row = rows.next().await.expect("row read").expect(
-            "an accepted Pass-0 proposal must leave an identity_verdict_audit row (TD-210) \
+            "an accepted Pass-0 proposal must leave an identity_verdict_audit row \
                  — this is the RED assertion: pre-fix, discover_types never wrote to this table \
                  on the Pass path at all, so this query returns zero rows",
         );
@@ -2446,7 +2446,7 @@ mod site2_type_novelty_tests {
         assert!(
             cosine.is_some(),
             "an accepted proposal compared against a real existing type must persist a \
-             NON-NULL cosine — the evidence for WHY it was accepted (TD-210)"
+             NON-NULL cosine — the evidence for WHY it was accepted"
         );
         assert_eq!(decision, "accept");
         assert!(
@@ -2456,12 +2456,12 @@ mod site2_type_novelty_tests {
     }
 }
 
-// ─── TD-123 — cosine-alone evidence-retype guard ──────────────────────────────
+// ─── Cosine-alone evidence-retype guard ──────────────────────────────────────
 //
-// Vera-surfaced 7th cosine-alone-write site (outside ADR-063's six enumerated
-// sites): `retype_evidence_by_similarity` embeds a BARE ENTITY NAME and
+// A 7th cosine-alone-write site (outside the other enumerated sites):
+// `retype_evidence_by_similarity` embeds a BARE ENTITY NAME and
 // compares it to the newly-accepted TYPE's DESCRIPTION embedding — the same
-// degenerate-embedding failure class TD-097 documented (short bare labels
+// degenerate-embedding failure class documented elsewhere (short bare labels
 // collapse to near-identical vectors under weak embedders), just cross-domain
 // (name vs. description) rather than name-vs-name. This test simulates that
 // exact degeneracy: an UNRELATED catch-all entity's name embeds IDENTICALLY
@@ -2571,7 +2571,7 @@ mod td123_evidence_retype_guard_tests {
         // Degenerate collision: the catch-all entity's bare name embeds
         // IDENTICALLY to the new type's description (cosine = 1.0), simulating
         // an anisotropic embedder that does not discriminate unrelated bare
-        // labels (TD-097's `cos(Person, Date) = 1.0000` finding, cross-domain).
+        // labels (`cos(Person, Date) = 1.0000`, cross-domain).
         let collision_vec = vec![1.0_f32, 0.0, 0.0, 0.0];
         let mut vectors = std::collections::HashMap::new();
         vectors.insert("ibm".to_string(), collision_vec.clone());
@@ -2617,11 +2617,11 @@ mod td123_evidence_retype_guard_tests {
             0,
             "'ibm' must remain catch-all (entity_type_id=0) — a bare-name-vs-\
              type-description cosine collision is not a valid retype signal \
-             without corroboration (TD-123)"
+             without corroboration"
         );
     }
 
-    /// Regression: explicitly opting IN to the pre-TD-123 behaviour still
+    /// Regression: explicitly opting IN to the pre-existing behaviour still
     /// retypes on the same degenerate collision — proves the flag genuinely
     /// gates the code path (not a permanently-dead branch) and preserves the
     /// escape hatch for a caller who has independently validated the threshold.
@@ -2664,19 +2664,19 @@ mod td123_evidence_retype_guard_tests {
 
         assert_eq!(
             result.entities_retyped, 1,
-            "flag ON: opt-in preserves the pre-TD-123 cosine-only retype \
+            "flag ON: opt-in preserves the pre-existing cosine-only retype \
              behaviour on the same degenerate collision"
         );
         assert_ne!(
             entity_type_id(&conn, "g2", "ibm").await,
             0,
-            "flag ON: 'ibm' is retyped away from catch-all, matching pre-TD-123 \
+            "flag ON: 'ibm' is retyped away from catch-all, matching the pre-existing \
              behaviour exactly"
         );
     }
 }
 
-// ─── TD-050 real-LLM discovery-OUTCOME test ───────────────────────────────────
+// ─── Real-LLM discovery-OUTCOME test ──────────────────────────────────────────
 //
 // Closes the gaps the existing `#[ignore]`d smoke (`tests/phase_d_pass_0.rs`)
 // leaves open: that smoke (a) can pass VACUOUSLY (if stochastic extraction
@@ -2698,16 +2698,16 @@ mod td123_evidence_retype_guard_tests {
 //   OLLAMA_CHAT_MODEL=gemma4:e4b cargo test -p kremory \
 //     --features llm-integration --lib discover_types_real_llm -- --ignored --nocapture
 //
-// MODEL TIER (load-bearing finding, 2026-06-22): defaults to `gemma4:e4b` — the
+// MODEL TIER (load-bearing): defaults to `gemma4:e4b` — the
 // DEFERRED-phase QUALITY model (90%, Phase 2 per tests/llm_integration.rs:1-25),
 // NOT the interactive `gemma4-e2b`. Discovery is a background/quality task. The
 // smoke run that built this test showed `gemma4-e2b` proposing a placeholder
 // name `"..."` → rejected (`ellipsis_placeholder`) → ZERO types discovered,
 // while `gemma4:e4b` proposes "Over-the-Counter Pain Reliever" → accepted → all
 // evidence retyped. A consumer wiring only the fast interactive model for dreams
-// gets silent zero-discovery. See [[project_dream_discovery_needs_deferred_quality_model]].
+// gets silent zero-discovery.
 //
-// Governed by ADR-037 (Pass-0 discovery, §9.6 D4 provenance). Complements the
+// Complements the
 // deterministic `td050_full_workflow_tests` (scripted proposal) by proving the
 // REAL model end of the chain.
 #[cfg(all(test, feature = "llm-integration"))]

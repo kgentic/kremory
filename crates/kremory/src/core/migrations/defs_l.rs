@@ -1,6 +1,6 @@
 // ─── Migration 025 ─────────────────────────────────────────────────────────
 
-/// Migration 025 (TD-133 B2): make `idx_facts_content_hash_unique` a partial
+/// Migration 025: make `idx_facts_content_hash_unique` a partial
 /// UNIQUE index over ACTIVE (non-expired) rows only, so its predicate matches
 /// the dedup pre-check SELECT in `graph/facts.rs`
 /// (`WHERE content_hash = ?1 AND expired_at IS NULL`).
@@ -13,7 +13,7 @@
 /// bi-temporal assert→expire→re-assert — passed the dedup SELECT (no ACTIVE
 /// duplicate) yet collided with the stale EXPIRED row still present in the
 /// global index → `UNIQUE constraint failed` → the re-assertion was silently
-/// lost. Measured on the TD-133 instrumented conv0 run (2026-07-21): 21
+/// lost. Measured on a real conv0 run: 21
 /// `kremory_ingest_phase2_fact_insert_failed_total{reason=unique_violation}`
 /// in a single namespace — NOT the cross-namespace collision the plan
 /// hypothesised (conv0 ingests under one namespace).
@@ -38,7 +38,7 @@
 /// NB: this deliberately does NOT group-scope the index/dedup by `group_id`.
 /// The measured failure is single-namespace (expired-collision). Cross-namespace
 /// dedup semantics (same triple in different namespaces = distinct facts) is a
-/// separate, latent multi-tenant concern tracked under TD-126 — it is not
+/// separate, latent multi-tenant concern noted for future work — it is not
 /// exercised by this data and would change the semantics asserted by
 /// `test_try_insert_fact_with_group_dedups_cross_variant`, so it is out of
 /// scope here.

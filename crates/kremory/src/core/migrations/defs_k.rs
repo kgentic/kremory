@@ -1,7 +1,6 @@
 // ─── Migration 024 ─────────────────────────────────────────────────────────
 
-/// Migration 024 (TD-117, Vera M2 adversarial review,
-/// `.ai-docs/tech-debt/tech-debt-register.md`): hard-error when the
+/// Migration 024: hard-error when the
 /// caller-supplied `embedding_dim` disagrees with the embedding dimension
 /// this store already contains data for.
 ///

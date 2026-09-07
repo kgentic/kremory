@@ -1,6 +1,5 @@
 //! Deterministic EDIT-ENTITY cascade (Tier-2a) for the reversible-graph-mutations
-//! substrate (arch-spec `reversible-graph-mutations-arch-spec-2026-07-10.md` §4.3
-//! + §2.3 `entity_edit`).
+//! substrate (`entity_edit`).
 //!
 //! Completes the diarization flow (`merge → unmerge → rename "Speaker 1" →
 //! "Alice"`). Two edit flavors, one provenance shape:
@@ -15,15 +14,15 @@
 //!   coerced to the catch-all nor written dangling into the FK-less column.
 //! - **`rename`** — a **REKEY** of the composite TEXT PK `(id, group_id)`: every
 //!   entity-id foreign key is re-pointed `old_id → new_id` inside ONE
-//!   `BEGIN IMMEDIATE`. The full FK set (arch-spec §4.3, enumerated against the
+//!   `BEGIN IMMEDIATE`. The full FK set (enumerated against the
 //!   migrations):
 //!   `facts.subject_id`/`object_id`, `facts_archive.subject_id`/`object_id`
 //!   (V5 — archived facts carry TEXT endpoint ids too), `episodic_edges.entity_id`,
 //!   `entity_communities.entity_id`, the `entities_fts` shadow, and the `entities`
 //!   PK row itself. A rename INTO an occupied id is refused with a structured
-//!   [`Error::EntityEditConflict`] (never a silent auto-merge — ADR-059).
+//!   [`Error::EntityEditConflict`] (never a silent auto-merge).
 //!
-//! ## FK-off caveat (arch-spec §4.3 V5, load-bearing)
+//! ## FK-off caveat (load-bearing)
 //!
 //! The runtime DB open does NOT set `PRAGMA foreign_keys = ON` (the `=ON` lines in
 //! `schema.rs` are all inside `#[tokio::test]` bodies). So the composite FKs on
@@ -73,7 +72,7 @@ use super::{EditEntityOutcome, EditInputs, EntityEditPreState, EpisodeEdgeKey};
 // ─── caller-facing params ────────────────────────────────────────────────────
 
 /// The single edit operation to apply — exactly one per [`edit_entity`] call
-/// (the builder rejects zero/both, arch-spec §4.3).
+/// (the builder rejects zero/both).
 #[derive(Debug, Clone)]
 pub enum EntityEditOp {
     /// Rename/REKEY: change the entity id (`old → new_id`), re-pointing every FK.
@@ -474,12 +473,12 @@ struct RetypeTxnParams<'a> {
 /// accepted by SQLite and written dangling. It then resolves through the read-time
 /// `COALESCE(et.name, 'Entity')` join to the catch-all label — the entity is
 /// mislabelled permanently, with nothing anywhere reporting that it happened.
-/// Arch-spec §4.3 specifies the retype mechanics but never specified a bounds
+/// The retype mechanics were specified without a bounds
 /// check on the incoming id; this closes that gap.
 ///
 /// ## Why this does NOT reuse `validate_or_fallback`
 ///
-/// [`EntityTypeRegistry::validate_or_fallback`] (L3, TD-013) silently coerces an
+/// [`EntityTypeRegistry::validate_or_fallback`] (L3) silently coerces an
 /// unusable id to the id=0 catch-all, and the two sites that use it
 /// (`dream::reclassify`, `dream::consistency_check::audit`) then SKIP the write and
 /// continue. That is right for them: the id is LLM output, one arm of a multi-stage
@@ -663,7 +662,7 @@ async fn rename_txn(
         current,
     } = params;
 
-    // Reject rename into an existing id (never a silent fuse — ADR-059).
+    // Reject rename into an existing id (never a silent fuse).
     if old_id != new_id {
         let occupied = {
             let mut rows = conn

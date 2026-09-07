@@ -417,14 +417,14 @@ async fn set_mtime(path: &Path, when: SystemTime) {
     f.set_modified(when).expect("set_modified");
 }
 
-// ─── migrate_025 (TD-133 B2) — active-only partial dedup index ────────────────
+// ─── migrate_025 — active-only partial dedup index ────────────────────────────
 //
 // The upgrade path (DROP old-form + CREATE active-only partial) is the migration's
 // whole reason to exist, and it is NOT exercised by the graph-layer fresh-DB tests
 // (a fresh DB gets the correct index form straight from schema.rs, so migrate_025
-// hits its no-op branch there — Quinn MEDIUM finding). These pin the upgrade /
+// hits its no-op branch there). These pin the upgrade /
 // idempotent / absent-index paths per the migrate_006 fresh/idempotent/precondition
-// convention. Anchors: TD-133 B2 + ADR-003 (bi-temporal re-assertion).
+// convention.
 
 /// Read the current `idx_facts_content_hash_unique` DDL from sqlite_master.
 async fn dedup_index_sql(conn: &libsql::Connection) -> Option<String> {
@@ -456,7 +456,7 @@ async fn seed_minimal_facts_table(conn: &libsql::Connection) {
 async fn migrate_025_rewrites_old_form_index_to_active_only_partial() {
     let conn = in_memory_conn().await;
     seed_minimal_facts_table(&conn).await;
-    // Simulate a pre-TD-133 on-disk DB: OLD-form index (all rows, no expired_at).
+    // Simulate a pre-migration on-disk DB: OLD-form index (all rows, no expired_at).
     conn.execute(
         "CREATE UNIQUE INDEX idx_facts_content_hash_unique \
          ON facts(content_hash) WHERE content_hash IS NOT NULL",
@@ -533,7 +533,7 @@ async fn migrate_025_creates_active_only_partial_when_index_absent() {
     );
 }
 
-// ── migrate_004 crash-resume — the NON-VACUOUS drive (Quinn REL-002) ─────────
+// ── migrate_004 crash-resume — the NON-VACUOUS drive ─────────────────────────
 //
 // `tests/migration_crash_resume.rs::an_incomplete_entities_scratch_is_not_renamed_
 // over_live_data` asserts the right property but **cannot reach the code that

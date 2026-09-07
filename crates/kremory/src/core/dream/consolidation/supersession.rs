@@ -1,4 +1,4 @@
-//! CONSOLIDATION op — supersession sweep (ADR-066 §2.3, spec P1).
+//! CONSOLIDATION op — supersession sweep (P1).
 //!
 //! Two lanes:
 //! - **deterministic world-time window close-out** (default, this op's payload):
@@ -15,9 +15,6 @@
 //!   invert the arrow of time). **STUB-OFF this phase** — the lane is plumbed but
 //!   returns 0 with a documented no-op (P1 ships the deterministic lane fully).
 //!
-//! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`
-//! §3 (P1.1–P1.4) + §6 (corpus) + ADR-066 §2.3 (the RESHAPED window-closeout lane).
-
 use chrono::{DateTime, Utc};
 use metrics::counter;
 
@@ -28,7 +25,7 @@ use super::substrate::{
     emit_decision, ConsolidationBudget, ConsolidationOpKind, DecisionMode, DecisionRecord, OpReport,
 };
 
-/// Bundled params for [`supersession`] — args-as-object per TD-042
+/// Bundled params for [`supersession`] — args-as-object
 /// (`too_many_arguments` threshold 3). `graph` is the receiver-like lead dep.
 ///
 /// **MNT-002 visibility (`pub` + `#[doc(hidden)]`):** promoted from `pub(crate)`
@@ -43,7 +40,7 @@ pub struct SupersessionParams<'a> {
     pub budget: &'a mut ConsolidationBudget,
     /// Select the optional LLM-nominated value-change lane (P1.3). Default-off.
     pub include_llm_nominate: bool,
-    /// Resolved dream model id, threaded for the LLM lane (TD-094 style).
+    /// Resolved dream model id, threaded for the LLM lane.
     pub model_id: &'a str,
 }
 
@@ -107,8 +104,8 @@ pub async fn supersession(params: SupersessionParams<'_>) -> Result<OpReport> {
         // Documented no-op rather than a silent skip so the surface is observable.
         counter!("kremory.dream.consolidation.supersession_llm_nominate_stub_off_total",)
             .increment(1);
-        // Uniform decision record alongside the existing counter (ADR-070 Fork 2/3,
-        // §3.3). No entity refs (the lane is a whole-op stub-off signal, not a
+        // Uniform decision record alongside the existing counter (Fork 2/3).
+        // No entity refs (the lane is a whole-op stub-off signal, not a
         // per-entity decision); supersession has no dry_run concept → `Applied`.
         emit_decision(DecisionRecord {
             op: ConsolidationOpKind::Supersession,
@@ -191,7 +188,7 @@ pub(crate) async fn window_closeout(graph: &TemporalGraph, group_id: &str) -> Re
 
         // Collect the retired fact ids; the per-fact decision records are emitted ONLY
         // after this txn durably commits (see the Ok arm) so a mid-sweep rollback never
-        // leaves an un-revertable decision_total increment (Quinn Phase-B MED-1).
+        // leaves an un-revertable decision_total increment.
         let mut retired_ids: Vec<i64> = Vec::new();
         for cand in &candidates {
             // Set `expired_at = valid_to` — the demonstrated window-close time, NOT
@@ -221,10 +218,10 @@ pub(crate) async fn window_closeout(graph: &TemporalGraph, group_id: &str) -> Re
         Ok(retired_ids) => {
             guard.commit().await?;
             let retired = retired_ids.len();
-            // Post-commit emission of the per-fact decision records (ADR-070 Fork 2/3,
-            // §3.3): fired ONLY after the txn durably commits so
+            // Post-commit emission of the per-fact decision records (Fork 2/3):
+            // fired ONLY after the txn durably commits so
             // decision_total{op=supersession,outcome=window_closeout} never overcounts
-            // a mid-sweep rollback (Quinn Phase-B MED-1) — mirroring the post-commit
+            // a mid-sweep rollback — mirroring the post-commit
             // counter below, which is why the two stay equal. fact id is
             // HIGH-cardinality → trace-only via debug_context (Fork 3); no entity refs
             // are loaded on this fact-level lane; no dry_run → `Applied`.
@@ -294,7 +291,7 @@ mod tests {
     }
 
     /// Insert a `facts` row with explicit temporal columns. Returns its id.
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn plant_fact(
         graph: &TemporalGraph,
         group_id: &str,
@@ -803,7 +800,7 @@ mod tests {
                 let group = GROUPS[rng.below(GROUPS.len() as u64) as usize];
                 // Namespace the subject by group so the SAME name never crosses
                 // namespaces. `insert_entity_with_group` guards against a
-                // cross-namespace name collision (ADR-029b bypass surface #2) and
+                // cross-namespace name collision (bypass surface #2) and
                 // returns an error the `ensure_entity` helper swallows — which would
                 // then leave the fact's composite FK `(subject, group)` unsatisfied.
                 // Subjects still REPEAT within a group (the small pool + the group
@@ -1109,7 +1106,7 @@ mod tests {
         );
     }
 
-    /// Quinn Phase-B MED-1 lock: the per-fact `decision_total{window_closeout}` records
+    /// Lock: the per-fact `decision_total{window_closeout}` records
     /// are emitted POST-COMMIT only, so a mid-sweep rollback must leave the metric at
     /// ZERO — never overcounting the rolled-back "good" candidate. Mirrors the
     /// atomicity test above but asserts the TELEMETRY side (the decision counter never

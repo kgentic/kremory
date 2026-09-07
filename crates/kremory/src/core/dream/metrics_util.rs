@@ -1,10 +1,9 @@
 //! Shared statistical helpers for dream-pass precision/recall spikes and the
-//! metrics harness (spec `dream-adversarial-corpora-and-metrics-2026-07-02.md`
-//! §3 step 0, H1).
+//! metrics harness.
 //!
 //! Extracted from the inline Wilson-interval block in
 //! `acronym_nickname_recall::tests::initialism_pre_filter_precision_recall_s1`
-//! (ADR-063 Site #5 S1 spike) so the new metrics harness can reuse it instead
+//! (the Site #5 S1 spike) so the new metrics harness can reuse it instead
 //! of re-deriving the formula per call site.
 
 /// Wilson 95% score interval (z = 1.96) on the proportion `successes / n`.
@@ -21,8 +20,7 @@
 /// the dream-pass precision/recall spikes for the zero-denominator case).
 ///
 /// Gated `#[cfg(any(test, feature = "test-utils"))]`: `tests/dream_metrics_
-/// harness.rs` (spec `dream-adversarial-corpora-and-metrics-2026-07-02.md`
-/// §3) is the first `tests/*.rs` integration-test consumer of this helper via
+/// harness.rs` is the first `tests/*.rs` integration-test consumer of this helper via
 /// the `metrics_util` re-export in `dream/mod.rs`, so the `feature =
 /// "test-utils"` arm is no longer dead code in kremory's `[dev-dependencies]`
 /// self-reference compilation unit (`kremory = { path = ".", features =

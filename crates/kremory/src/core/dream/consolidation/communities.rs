@@ -1,4 +1,4 @@
-//! CONSOLIDATION op — community detection (ADR-066 §2.1, spec P4).
+//! CONSOLIDATION op — community detection (P4).
 //!
 //! Build a `petgraph::UnGraph` of a namespace's entity CO-OCCURRENCE (two entities
 //! that share ≥1 episode), run the DETERMINISTIC synchronous weighted label
@@ -43,15 +43,11 @@
 //! the whole graph into ONE community. **This is the HONEST answer** — a near-complete
 //! graph genuinely has no sub-structure to surface ("everyone appeared together, so
 //! there is one community"), NOT garbage. The modularity go/no-go spike
-//! (`.ai-docs/research/p4-community-modularity-spike-2026-07-03.md`) confirmed:
-//! STRUCTURED graphs yield meaningful communities (Q≈0.65/0.71), the hairball honestly
-//! collapses to `count == 1`. Higher-modularity / incremental clustering (Leiden) that
-//! would tease sub-structure out of a hairball is a deferred follow-up — see the ADR-066
-//! "P4 hairball follow-up TD" (§A3/§A4). This op ships default-off (opt-in via
+//! confirmed: STRUCTURED graphs yield meaningful communities (Q≈0.65/0.71), the
+//! hairball honestly collapses to `count == 1`. Higher-modularity / incremental
+//! clustering (Leiden) that would tease sub-structure out of a hairball is a
+//! deferred follow-up. This op ships default-off (opt-in via
 //! `DreamOpts.include_community_detection`).
-//!
-//! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`
-//! §3 (P4.1–P4.6) + §6 (communities corpus) + ADR-066 §2.1.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -84,7 +80,7 @@ const LABEL_PROP_MAX_ITERS: usize = 50;
 /// under `feature = "test-utils"` (external test binaries cannot import `pub(crate)`
 /// items — E0365). NOT part of the stable public API.
 ///
-/// Args count = 2 — plain args, no params struct needed (TD-042 threshold 3).
+/// Args count = 2 — plain args, no params struct needed (threshold 3).
 #[doc(hidden)]
 pub async fn communities(graph: &TemporalGraph, group_id: &str) -> Result<OpReport> {
     let mut report = OpReport::default();
@@ -137,7 +133,7 @@ pub async fn communities(graph: &TemporalGraph, group_id: &str) -> Result<OpRepo
         let member_hash = community_member_hash(&member_ids);
         // A community whose exact membership SET existed last run (same hash) is
         // unchanged; a new/changed membership set counts toward `communities_updated`.
-        // Both arms emit a uniform decision record (ADR-070 Fork 2/3, §3.3): the
+        // Both arms emit a uniform decision record (Fork 2/3): the
         // `unchanged_passthrough` arm is a GENUINELY-NEW observability point — the
         // idempotency no-op path previously emitted no signal at all. Communities has
         // no dry_run concept → always `Applied`.
@@ -453,7 +449,7 @@ async fn clear_persisted_partition(graph: &TemporalGraph, group_id: &str) -> Res
     Ok(())
 }
 
-/// Bundled params for [`persist_community`] — args-as-object per TD-042
+/// Bundled params for [`persist_community`] — args-as-object
 /// (`too_many_arguments` threshold 3). `graph` is the receiver-like lead dep.
 struct PersistCommunityParams<'a> {
     group_id: &'a str,
@@ -498,7 +494,7 @@ async fn persist_community(graph: &TemporalGraph, p: PersistCommunityParams<'_>)
     Ok(())
 }
 
-/// Emit the source-attributed `communities_updated` counter (Rule 19). The o11y
+/// Emit the source-attributed `communities_updated` counter. The o11y
 /// cross-check asserts this equals `OpReport.count`.
 fn emit_updated_counter(updated: usize) {
     counter!("kremory.dream.consolidation.communities_updated_total").increment(updated as u64);
@@ -518,7 +514,7 @@ mod tests {
     /// Insert a NON-catch-all entity (`entity_type_id = 1` unless overridden) so it
     /// participates in community structure. `entity_type_id = 0` is the catch-all and
     /// is excluded from the node set (C-INV5).
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn insert_typed_entity(graph: &TemporalGraph, gid: &str, id: &str, type_id: u32) {
         graph
             .insert_entity_with_group(InsertEntityWithGroupParams {
@@ -543,7 +539,7 @@ mod tests {
             .expect("episode")
     }
 
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     async fn anchor(graph: &TemporalGraph, gid: &str, episode_id: i64, entity: &str) {
         graph
             .insert_episodic_edge(InsertEpisodicEdgeParams {
@@ -810,7 +806,7 @@ mod tests {
         );
     }
 
-    /// ADR-070 §4 matrix: the idempotency-hash-unchanged path (previously SILENT) now
+    /// The idempotency-hash-unchanged path (previously SILENT) now
     /// emits `decision_total{op=communities,outcome=unchanged_passthrough}` — the
     /// "first-class observability closes a real gap" half of Fork 2/3.
     #[tokio::test]
@@ -1034,7 +1030,7 @@ mod tests {
                 } else {
                     u32::try_from(rng.in_range(1, 3)).unwrap_or(1)
                 };
-                // Namespace-unique id by construction (group + sequence). ADR-029d:
+                // Namespace-unique id by construction (group + sequence).
                 // entity identity is per-namespace-open — a repeated name-slug across
                 // namespaces would now succeed as two independent rows, not error —
                 // but this property test still wants distinct per-namespace ids so

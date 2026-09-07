@@ -41,7 +41,7 @@ pub(crate) async fn migrate_007_source_id_source_uri(
             "migrate_007 step `pragma_table_info_next` failed: {e}"
         ))
     })? {
-        // Per Quinn cycle-1 LOW: propagate row.get errors rather than silently
+        // Propagate row.get errors rather than silently
         // mapping to empty string — surface malformed PRAGMA rows to the runner.
         let col_name: String = row.get(1).map_err(|e| {
             crate::core::error::Error::Other(anyhow::anyhow!(
@@ -66,7 +66,7 @@ pub(crate) async fn migrate_007_source_id_source_uri(
 
     // Pre-ALTER backup: row-level snapshot of episodes in its current shape.
     // CREATE TABLE IF NOT EXISTS makes this step safe on resume-from-partial.
-    // Per Quinn cycle-1 MED: propagate via `?` rather than silent discard so
+    // Propagate via `?` rather than silent discard so
     // disk-full / permission errors surface to the migration runner.
     conn.execute(
         "CREATE TABLE IF NOT EXISTS episodes_bak_007 AS SELECT * FROM episodes",
@@ -140,7 +140,7 @@ pub(crate) async fn migrate_007_source_id_source_uri(
 // ─── Migration 008 ─────────────────────────────────────────────────────────
 
 /// Migration 008: introduce `entity_types` registry table + `entity_type_id`
-/// column on `entities` (TD-013 unified extraction architecture).
+/// column on `entities` (unified extraction architecture).
 ///
 /// ### Steps
 ///
@@ -388,7 +388,7 @@ pub(crate) async fn migrate_008_entity_types(
 
 // ─── Migration 009 ─────────────────────────────────────────────────────────
 
-/// Migration 009 (Phase 2, TD-013): DROP the `label` column from `entities`.
+/// Migration 009: DROP the `label` column from `entities`.
 ///
 /// ### Pre-conditions
 ///

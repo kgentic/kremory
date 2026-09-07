@@ -1,4 +1,4 @@
-//! Dream CONSOLIDATION sub-phase (ADR-066 axes D+E) — graph-global cleanup that
+//! Dream CONSOLIDATION sub-phase — graph-global cleanup that
 //! runs AFTER the per-entity reconciliation pass chain.
 //!
 //! Four independently-gated, independently-budgeted, independently-testable ops
@@ -9,16 +9,14 @@
 //! 3. `cross_episode` — merge the same referent recurring across episodes (P3).
 //! 4. `communities` — deterministic label-propagation community detection (P4).
 //!
-//! The four ops are fully implemented (P1-P4) and each adopts the uniform ADR-070
+//! The four ops are fully implemented (P1-P4) and each adopts the uniform
 //! `emit_decision` telemetry contract. `run_consolidation` (DoD-P0.4) dispatches them
-//! in the strict dependency order supersession→archive→cross_episode→communities
-//! (§2.6), each gated by its `DreamOpts.include_*` flag + a shared soft
+//! in the strict dependency order supersession→archive→cross_episode→communities,
+//! each gated by its `DreamOpts.include_*` flag + a shared soft
 //! `ConsolidationBudget` pre-check, and fires the `on_merge_proposed` consumer event
-//! (ADR-070 Fork 5) for each cross_episode merge decision. Wired into
+//! (Fork 5) for each cross_episode merge decision. Wired into
 //! `facade/dream.rs` after the reconciliation chain; inert by default (all
 //! `include_*` flags default `false`).
-//!
-//! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`.
 
 pub(crate) mod archive;
 pub(crate) mod communities;
@@ -45,27 +43,27 @@ use substrate::{ConsolidationBudget, OpReport};
 /// is an op-internal concern folded in as each op lands.
 const OP_TOKEN_PROJECTION: u64 = 0;
 
-/// Sibling of [`OP_TOKEN_PROJECTION`] for the USD-micro ceiling (TD-060). Same
+/// Sibling of [`OP_TOKEN_PROJECTION`] for the USD-micro ceiling. Same
 /// coarse-gate rationale: 0 until an op's real per-call USD projection is wired.
 const OP_USD_PROJECTION: u64 = 0;
 
-/// Bundled params for [`run_consolidation`] — args-as-object per TD-042
+/// Bundled params for [`run_consolidation`] — args-as-object
 /// (`too_many_arguments` threshold 3). `graph` is the receiver-like lead dep.
 pub(crate) struct RunConsolidationParams<'a> {
     pub(crate) graph: &'a TemporalGraph,
     pub(crate) group_id: &'a str,
     pub(crate) opts: &'a DreamOpts,
-    /// Resolved dream model id (TD-094 style), threaded to supersession's LLM lane.
+    /// Resolved dream model id, threaded to supersession's LLM lane.
     pub(crate) model_id: &'a str,
     /// Optional consumer event sink. The orchestrator fires `on_merge_proposed` from
-    /// here for each cross_episode merge decision (ADR-070 Fork 5, Risk #17
+    /// here for each cross_episode merge decision (Fork 5, Risk #17
     /// orchestrator-fires) — the sink lives at this layer already (`facade/dream.rs`
     /// `resolve_sink`), so the op itself does not need it threaded in.
     pub(crate) sink: Option<&'a Arc<dyn EnrichmentEventSink>>,
 }
 
 /// Dispatch the four consolidation ops over `group_id` in dependency order
-/// (ADR-066 §2.6), each gated by its `include_*` flag + a soft budget pre-check.
+/// each gated by its `include_*` flag + a soft budget pre-check.
 ///
 /// Order: **supersession → archive → cross_episode → communities.** supersession's
 /// `expired_at` writes are archive's input; cross_episode delegates to the shared
@@ -79,7 +77,7 @@ pub(crate) struct RunConsolidationParams<'a> {
 /// A budget skip emits `kremory.dream.consolidation.budget_skip_total{op}` and a
 /// warning; later ops still run (soft partial-abort, F-1).
 ///
-/// Args-as-object per TD-042 (`too_many_arguments` threshold 3).
+/// Args-as-object (`too_many_arguments` threshold 3).
 pub(crate) async fn run_consolidation(
     params: RunConsolidationParams<'_>,
 ) -> Result<ConsolidationSummary> {
@@ -138,8 +136,8 @@ pub(crate) async fn run_consolidation(
             summary.ran_cross_episode = true; // D1b
             let report =
                 cross_episode::cross_episode(graph, group_id, opts.cross_episode_dry_run).await;
-            // Orchestrator-fires the consumer event for each merge decision (ADR-070
-            // Fork 5, Risk #17 contingency): the sink lives at THIS layer, so
+            // Orchestrator-fires the consumer event for each merge decision (Fork 5,
+            // Risk #17 contingency): the sink lives at THIS layer, so
             // cross_episode returns its merge pairs via `OpReport.merges` and we fan
             // them out here. Fires for shadow AND applied decisions (dry_run carried).
             if let (Some(sink), Ok(op)) = (sink, &report) {
@@ -187,14 +185,14 @@ pub(crate) async fn run_consolidation(
     Ok(summary)
 }
 
-/// TD-106 (ADR-071 §Item 4b) — net-mutation warn guard. Pure post-aggregation
+/// Net-mutation warn guard. Pure post-aggregation
 /// check, no change to any op's own decision logic. `communities_updated` is
 /// EXCLUDED: a community "update" is a recomputed partition write, not a
-/// destructive mutation of fact/entity identity (ADR-071 Item 2's own
-/// reversibility argument), so including it would conflate a safe, fully
-/// reversible op with the three ops that DO destroy/move source rows.
+/// destructive mutation of fact/entity identity (a fully reversible op), so
+/// including it would conflate that with the three ops that DO destroy/move
+/// source rows.
 ///
-/// NOTE (Vera MED-2, carried from impl-spec §4b): supersession→archive are
+/// NOTE: supersession→archive are
 /// coupled (the dispatcher runs supersession before archive; archive consumes
 /// its `expired_at` output). A fact superseded THIS pass could — rarely, given
 /// `archive_grace_days` default 90 — also be archived same-pass, double-counting
@@ -210,7 +208,7 @@ fn check_net_mutation_warn(group_id: &str, floor: Option<usize>, summary: &Conso
     let net_mutations =
         summary.cross_episode_merges + summary.supersessions_recorded + summary.facts_archived;
     if net_mutations > floor {
-        // Always-on trace (not KREMORY_DEBUG-gated) per ADR-071 §Item 5 table:
+        // Always-on trace (not KREMORY_DEBUG-gated):
         // "a warn is itself the operator signal."
         tracing::warn!(
             target: "kremory.dream.consolidation",
@@ -239,7 +237,7 @@ fn fold(count: &mut usize, report: Result<OpReport>, warnings: &mut Vec<String>)
 }
 
 /// Record a budget skip: emit the source-attributed counter (fires identically
-/// whether the token or the USD-micro ceiling tripped — TD-060), set the summary's
+/// whether the token or the USD-micro ceiling tripped), set the summary's
 /// typed `budget_exhausted` flag, and append a warning. `KREMORY_DEBUG`-gated trace
 /// carries the USD ceiling/used values as FIELDS (never counter labels), mirroring
 /// the pattern at `cross_episode.rs`'s corroboration-score debug trace.
@@ -272,8 +270,8 @@ mod tests {
     async fn run_consolidation_inert_when_all_ops_off() {
         // With every consolidation flag explicitly OFF, `any_consolidation_enabled()`
         // is false (facade skips the dispatcher) and the dispatcher is itself inert
-        // (all-zero summary) if called. NOTE: this is NO LONGER the DEFAULT — ADR-071
-        // Item 1 enabled `include_cross_episode_merges` (SHADOW) by default, so the
+        // (all-zero summary) if called. NOTE: this is NO LONGER the DEFAULT —
+        // `include_cross_episode_merges` is enabled (SHADOW) by default, so the
         // flags are pinned OFF explicitly here. The enabled path is covered by
         // `run_consolidation_stub_ops_return_zero_when_enabled` + the cross_episode
         // shadow tests + the P3 corpus gate.
@@ -302,8 +300,8 @@ mod tests {
     fn dream_opts_default_all_four_consolidation_ops_enabled() {
         // D1 (consumer-API hardening): ALL FOUR consolidation ops default ON, so
         // `any_consolidation_enabled()` is true for a bare default. (This is the
-        // keep-on-since-Tier-1 posture — the inverse of the spec's original
-        // defaults-off; see dream-consumer-api-hardening-arch-spec.)
+        // keep-on-since-Tier-1 posture — the inverse of the original
+        // defaults-off design.)
         let d = DreamOpts::default();
         assert!(d.include_community_detection, "community default ON (D1)");
         assert!(
@@ -432,7 +430,7 @@ mod tests {
         );
     }
 
-    // ── USD budget (TD-060) ─────────────────────────────────────────────────────
+    // ── USD budget ───────────────────────────────────────────────────────────
 
     #[test]
     fn budget_exhausted_flag_set_on_usd_skip() {
@@ -480,9 +478,9 @@ mod tests {
         );
     }
 
-    // ── Net-mutation warn guard (TD-106) ────────────────────────────────────────
+    // ── Net-mutation warn guard ──────────────────────────────────────────────
 
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     fn summary_with(
         cross_episode_merges: usize,
         supersessions_recorded: usize,

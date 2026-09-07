@@ -1,4 +1,4 @@
-//! Shared substrate for the dream CONSOLIDATION sub-phase (ADR-066 §2.5, spec P0).
+//! Shared substrate for the dream CONSOLIDATION sub-phase (P0).
 //!
 //! Three concerns, all zero-LLM + deterministic:
 //!
@@ -11,21 +11,18 @@
 //! - **Idempotency-key helpers** (F-2, DoD-P0.2) — canonicalized SHA-256 hashes for
 //!   the richer objects consolidation keys on (a community's sorted member set, a
 //!   sorted entity pair, a fact-archive event). Sorting makes the pair/member hashes
-//!   order-independent, extending the proven ADR-050 `content_hash` shape.
+//!   order-independent, extending the proven `content_hash` shape.
 //! - **`OpReport` / `ConsolidationSummary`** — the per-op result struct and the
 //!   dispatcher's aggregate. The four ops (P1-P4) are fully implemented and
-//!   populate these with real counts (doc-drift fix, ADR-071 impl-spec §"Pre-existing
-//!   doc drift to fix in passing" — this line previously said "STUBS this phase").
-//!
-//! Spec: `.ai-docs/specs/adr-066-dream-consolidation-impl-spec-2026-07-03.md`
-//! §3 (P0.1/P0.2) + ADR-066 §2.5 (F-1/F-2).
+//!   populate these with real counts (doc-drift fix — this line previously said
+//!   "STUBS this phase").
 
 use sha2::{Digest, Sha256};
 
 use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
-/// Unit separator (0x1F) between hash components — same delimiter the ADR-050
+/// Unit separator (0x1F) between hash components — same delimiter
 /// `canonical_entity_view` uses (`dream/idempotency.rs`), so field boundaries are
 /// unambiguous and two distinct layouts can never collide.
 // planned consumer: the idempotency helpers below (P1-P4 ops key on them).
@@ -34,7 +31,7 @@ const FIELD_SEP: char = '\u{1F}';
 
 // ─── Budget primitive (F-1, DoD-P0.1) ──────────────────────────────────────────
 
-/// A single SOFT token-ceiling for the consolidation sub-phase (ADR-066 §2.5 F-1).
+/// A single SOFT token-ceiling for the consolidation sub-phase (F-1).
 ///
 /// Threaded mutably through `run_consolidation` so the four ops share ONE budget
 /// (NOT per-subsystem fragmentation). `check` gates each op BEFORE it runs; ops
@@ -63,7 +60,7 @@ pub struct ConsolidationBudget {
     pub ceiling_tokens: u64,
     /// Cumulative tokens spent by consolidation ops so far this run.
     pub used_tokens: u64,
-    /// Per-run USD-micro ceiling (TD-060, from `DreamOpts.consolidation_budget_usd_micro`).
+    /// Per-run USD-micro ceiling (from `DreamOpts.consolidation_budget_usd_micro`).
     /// `None` = unbounded — kept as `Option` (not folded to `u64::MAX` like the token
     /// ceiling) because `check_usd` reads it directly via `unwrap_or(u64::MAX)`, and
     /// a bare `None` is the more honest "no USD ceiling configured" representation for
@@ -75,7 +72,7 @@ pub struct ConsolidationBudget {
 }
 
 impl ConsolidationBudget {
-    /// Construct from optional token + USD ceilings (TD-060). `None` token ceiling →
+    /// Construct from optional token + USD ceilings. `None` token ceiling →
     /// unbounded (`u64::MAX`); `None` USD ceiling → unbounded (checked via
     /// `unwrap_or(u64::MAX)` in `check_usd`).
     pub fn new(ceiling_tokens: Option<u64>, ceiling_usd_micro: Option<u64>) -> Self {
@@ -97,7 +94,7 @@ impl ConsolidationBudget {
     }
 
     /// SOFT check: does `used + projected` stay within the USD-micro ceiling
-    /// (TD-060)? Mirrors `check`'s exact shape. `None` ceiling → unbounded (always
+    /// Mirrors `check`'s exact shape. `None` ceiling → unbounded (always
     /// `true`). Saturating add so a pathological `projected` can never wrap past the
     /// ceiling into a false allow.
     pub(crate) fn check_usd(&self, projected_usd_micro: u64) -> bool {
@@ -109,11 +106,11 @@ impl ConsolidationBudget {
     /// `used_usd_micro` and append a row to the EXISTING `dream_pass_budget_usage`
     /// ledger (migration 016).
     ///
-    /// `provider`/`model` are recorded for per-op source attribution (Rule 19).
+    /// `provider`/`model` are recorded for per-op source attribution.
     /// `cost_usd_micro` is `None` for $0-cost local Ollama dream passes (the
     /// ledger's `cost_usd_micro` column is nullable; `used_usd_micro` advances by 0
     /// in that case) and `Some(cost)` when a caller has a real per-call cost
-    /// (TD-060). Non-fatal: a ledger-write failure returns `Err` for the caller's
+    /// Non-fatal: a ledger-write failure returns `Err` for the caller's
     /// warn-and-continue handling, but `used_tokens`/`used_usd_micro` are advanced
     /// regardless so the in-memory ceilings stay honest even if persistence hiccups.
     // planned consumer: supersession LLM lane (P1) + communities (P4) — the two ops
@@ -164,7 +161,7 @@ impl ConsolidationBudget {
     }
 }
 
-/// Bundled params for [`ConsolidationBudget::record`] — args-as-object per TD-042
+/// Bundled params for [`ConsolidationBudget::record`] — args-as-object
 /// (`too_many_arguments` threshold 3). `graph` is the receiver-like lead dep.
 // planned consumer: constructed by supersession (P1) + communities (P4) at their
 // `record` call sites. Constructed by the unit test now.
@@ -177,7 +174,7 @@ pub(crate) struct BudgetRecordParams<'a> {
     pub(crate) model: &'a str,
     pub(crate) tokens_input: u64,
     pub(crate) tokens_output: u64,
-    /// TD-060: real USD-micro cost when known; `None` for $0-cost local Ollama ops
+    /// Real USD-micro cost when known; `None` for $0-cost local Ollama ops
     /// (matches the ledger's pre-existing nullable `cost_usd_micro` column).
     pub(crate) cost_usd_micro: Option<u64>,
 }
@@ -197,7 +194,7 @@ fn sha256_hex(input: &str) -> String {
 }
 
 /// Idempotency hash for a community: SHA-256 over the entity-id members
-/// **sorted** then separator-joined (ADR-066 §F-2). Sorting makes the hash a pure
+/// **sorted** then separator-joined (F-2). Sorting makes the hash a pure
 /// function of the membership SET — a community whose members are unchanged
 /// (regardless of discovery order) hashes identically and is not re-counted
 /// (`communities_updated`, P4.3/P4.5).
@@ -211,7 +208,7 @@ pub(crate) fn community_member_hash(member_ids: &[&str]) -> String {
 }
 
 /// Idempotency hash for an entity/fact PAIR + op name: SHA-256 over the
-/// **sorted** pair `(min, max)` then the op (ADR-066 §F-2). Sorting makes the hash
+/// **sorted** pair `(min, max)` then the op (F-2). Sorting makes the hash
 /// order-independent — `pair_hash(a, b, op) == pair_hash(b, a, op)` — so a pair
 /// cross_episode/supersession already processed hashes identically on the next run.
 // planned consumer: cross_episode (P3) + supersession (P1) key pair idempotency on this.
@@ -227,7 +224,7 @@ pub(crate) fn pair_hash(id_a: &str, id_b: &str, op: &str) -> String {
 }
 
 /// Idempotency hash for a fact-archive event: SHA-256 over `fact_id` + its
-/// `expired_at` (ADR-066 §F-2). Keys the archive move so a re-run of the archive op
+/// `expired_at` (F-2). Keys the archive move so a re-run of the archive op
 /// on an already-moved fact is a no-op (P2.4).
 // planned consumer: archive op (P2) keys the archive-move idempotency on this.
 #[allow(dead_code)]
@@ -241,7 +238,7 @@ pub(crate) fn fact_archive_hash(fact_id: i64, expired_at: &str) -> String {
 /// The result of a single consolidation op (P1-P4). One count (the op's own
 /// source-attributed mutation total) + any non-fatal warnings it emitted + (for
 /// cross_episode only) the merge decisions for the orchestrator to fan out as
-/// `on_merge_proposed` events (ADR-070 Fork 5).
+/// `on_merge_proposed` events (Fork 5).
 ///
 /// The four ops are fully implemented and populate their real counts (the inert path
 /// — all-zero `default()` — is only returned when an op is disabled or errors).
@@ -251,7 +248,7 @@ pub(crate) fn fact_archive_hash(fact_id: i64, expired_at: &str) -> String {
 /// under `feature = "test-utils"`. NOT part of the stable public API.
 /// One cross-episode merge decision (keeper ← loser) surfaced by `cross_episode` so
 /// the orchestrator (`run_consolidation`) can fire the `on_merge_proposed` consumer
-/// event from the layer that already holds the `EnrichmentEventSink` (ADR-070 Fork 5,
+/// event from the layer that already holds the `EnrichmentEventSink` (Fork 5,
 /// Risk #17 orchestrator-fires contingency — chosen over threading the sink INTO
 /// `cross_episode`, which would push its arity past the `too_many_arguments` threshold).
 /// Carries only the two entity ids; `dry_run` is known by the orchestrator (from the
@@ -281,13 +278,13 @@ pub struct OpReport {
     /// `DreamSummary.warnings` surface (`facade/mod.rs`).
     pub warnings: Vec<String>,
     /// Cross-episode merge decisions this pass (keeper ← loser), for the orchestrator
-    /// to fire `on_merge_proposed` (ADR-070 Fork 5). Populated ONLY by `cross_episode`;
+    /// to fire `on_merge_proposed` (Fork 5). Populated ONLY by `cross_episode`;
     /// EMPTY for every other op (default). One entry per `merged` decision, whether
     /// shadowed or applied.
     pub merges: Vec<CrossEpisodeMerge>,
 }
 
-/// Aggregate of the four consolidation ops (ADR-066 §5). The dispatcher
+/// Aggregate of the four consolidation ops. The dispatcher
 /// (`run_consolidation`) fills each field from its op's [`OpReport`]; the facade
 /// folds these into the four (already-existing) `DreamSummary` consolidation
 /// fields.
@@ -317,7 +314,7 @@ pub(crate) struct ConsolidationSummary {
     pub(crate) ran_community_detection: bool,
     /// Aggregated non-fatal warnings across all four ops.
     pub(crate) warnings: Vec<String>,
-    /// TD-060: `true` when ANY op was skipped this run because either the token or
+    /// `true` when ANY op was skipped this run because either the token or
     /// USD-micro ceiling would have been exceeded (`mod.rs`'s `skip()` sets this on
     /// every skip, regardless of which ceiling tripped). Typed field, not a
     /// `warnings` string, per `llm-output-parse-loudly`'s "required fields have no
@@ -325,7 +322,7 @@ pub(crate) struct ConsolidationSummary {
     pub(crate) budget_exhausted: bool,
 }
 
-// ─── Uniform decision telemetry (ADR-070 Fork 2/3) ──────────────────────────────
+// ─── Uniform decision telemetry (Fork 2/3) ────────────────────────────────────
 //
 // A single `emit_decision(DecisionRecord)` contract every consolidation op calls at
 // its decision points. Structurally enforces the cardinality split (Fork 3): the
@@ -376,7 +373,7 @@ impl DecisionMode {
     }
 }
 
-/// One consolidation op's decision at a single decision point (ADR-070 Fork 2).
+/// One consolidation op's decision at a single decision point (Fork 2).
 /// `op`/`mode`/`outcome` are LOW-cardinality — safe as counter labels.
 /// `group_id`/`entity_refs`/`debug_context` are HIGH-cardinality — trace fields
 /// ONLY (Fork 3). [`emit_decision`] enforces this split structurally: there is no
@@ -396,7 +393,7 @@ pub(crate) struct DecisionRecord<'a> {
 }
 
 /// The ONE emission function every consolidation op calls at its decision point
-/// (ADR-070 Fork 2/3). Structurally enforces the cardinality split: low-cardinality
+/// Structurally enforces the cardinality split: low-cardinality
 /// fields go on the counter's labels; high-cardinality fields go ONLY on the trace
 /// event.
 pub(crate) fn emit_decision(record: DecisionRecord<'_>) {
@@ -473,7 +470,7 @@ mod tests {
         );
     }
 
-    // ── USD budget (TD-060) ─────────────────────────────────────────────────────
+    // ── USD budget ───────────────────────────────────────────────────────────
 
     #[test]
     fn budget_usd_allows_within_ceiling_denies_over() {
@@ -700,7 +697,7 @@ mod tests {
         }
     }
 
-    // ── Decision telemetry (ADR-070 Fork 2/3) ───────────────────────────────────
+    // ── Decision telemetry (Fork 2/3) ─────────────────────────────────────────
 
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
 
@@ -718,7 +715,7 @@ mod tests {
     /// Does `decision_total` carry exactly the `(op, mode, outcome)` labels with the
     /// given count? Filters a `DebuggingRecorder` snapshot (the reuse pattern from
     /// `tests/consolidation_supersession_test.rs`).
-    #[allow(clippy::too_many_arguments)] // test helper — CLAUDE.md rule 5 test-exemption
+    #[allow(clippy::too_many_arguments)] // test helper — test files are exempt from the arg-count lint
     fn decision_counter(
         snapshotter: &metrics_util::debugging::Snapshotter,
         op: &str,

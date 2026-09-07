@@ -1,9 +1,9 @@
-//! Migration 022 (ADR-072 seq1 impl-spec §1): `episodes_fts` — BM25/FTS5
+//! Migration 022: `episodes_fts` — BM25/FTS5
 //! content-recall substrate over raw `episodes.content`.
 //!
-//! Feature-gated behind `content-search` (two-lever gating model, ADR-072 §6
-//! Finding 3 — seq1 minimum is the compile feature-gate; a per-episode
-//! runtime `index_content` toggle is a later increment). The entire function
+//! Feature-gated behind `content-search` (two-lever gating model: the compile
+//! feature-gate is the current minimum; a per-episode runtime `index_content`
+//! toggle is a later increment). The entire function
 //! is compiled out of the default build — `run_migrations()`'s call site in
 //! `core/schema.rs` is gated identically, so a default (no-feature) build
 //! never creates `episodes_fts` and behaves byte-identically to pre-change.
@@ -57,8 +57,8 @@ pub(crate) async fn migrate_022_episodes_content_recall(conn: &libsql::Connectio
     .map_err(step("create_episodes_fts"))?;
 
     // One-time guarded backfill of pre-existing episodes (pure SQL, no
-    // embedder — `episodes.content` is stored verbatim + immutable per
-    // ADR-042, so there is nothing to re-derive). `NOT EXISTS` makes this
+    // embedder — `episodes.content` is stored verbatim + immutable,
+    // so there is nothing to re-derive). `NOT EXISTS` makes this
     // idempotent AND self-healing across restarts (see module doc).
     let backfilled = conn
         .execute(
@@ -74,7 +74,7 @@ pub(crate) async fn migrate_022_episodes_content_recall(conn: &libsql::Connectio
         target: "kremory::migrations",
         migration = "022",
         backfilled,
-        "migrate_022: episodes_fts (ADR-072 seq1 content-search substrate) installed"
+        "migrate_022: episodes_fts (content-search substrate) installed"
     );
     Ok(())
 }

@@ -1,10 +1,8 @@
 //! `ProposedType` + `DiscoveryProposalBatch` — structured output for Pass 0
-//! type discovery, plus the shape validator (9 rejection categories per
-//! ADR-037 §3.1 + TD-010).
+//! type discovery, plus the shape validator (9 rejection categories).
 //!
 //! ## Parse discipline
 //!
-//! Per [[llm-output-parse-loudly]]:
 //! - NO `#[serde(default)]` on required fields.  Missing field → parse error.
 //! - `Vec<ProposedType>` wrapper uses `#[serde(default)]` (empty = no proposals,
 //!   semantically identical to `Vec::new()`).
@@ -23,7 +21,7 @@ use serde::Deserialize;
 
 /// Single type proposal emitted by the LLM in Pass 0.
 ///
-/// All fields are required — per [[llm-output-parse-loudly]], NO `#[serde(default)]`
+/// All fields are required — NO `#[serde(default)]`
 /// on any field.  A missing field is a parse error that triggers the fallback
 /// ladder (FormatSchema → LlmJsonRepair), not a silent default.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -41,8 +39,8 @@ pub(crate) struct ProposedType {
 /// Wrapper batch struct — the root object the LLM emits.
 ///
 /// `proposals` uses `#[serde(default)]` because an empty array is semantically
-/// correct ("no proposals this call") and is not a parse failure.  Per the
-/// split in [[llm-output-parse-loudly]]: wrapper containers may use default.
+/// correct ("no proposals this call") and is not a parse failure — wrapper
+/// containers may use default; required fields on the inner struct may not.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct DiscoveryProposalBatch {
     #[serde(default)]
@@ -187,7 +185,7 @@ pub(crate) fn validate_proposed_name(name: &str, namespace: &str) -> Result<(), 
 }
 
 /// Emit the per-reason rejection counter.  Called exactly once per rejection,
-/// at the point of detection — built-in observability per [[observability-first-class]].
+/// at the point of detection, as a first-class observability signal.
 fn emit_rejected(reason: RejectionReason, namespace: &str) {
     counter!(
         "kremory.dream.types_rejected_total",

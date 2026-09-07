@@ -1,5 +1,4 @@
-//! Migration 027 (steal-matrix-rescore item 2, `.ai-docs/research/steal-matrix-rescore-2026-07-27.md`
-//! §7 rank 2): add `tokenize='porter unicode61'` to `entities_fts` / `facts_fts`
+//! Migration 027: add `tokenize='porter unicode61'` to `entities_fts` / `facts_fts`
 //! / `episodes_fts`, so a stored "painted" matches a query for "painting".
 //!
 //! ## Why a new migration, not editing the original `CREATE VIRTUAL TABLE`s
@@ -14,8 +13,7 @@
 //! Confirmed BEFORE writing this migration, not assumed: a throwaway
 //! compile-spike against the exact `libsql = "=0.9.30"` this crate pins
 //! confirmed `porter` is available and that `MATCH 'painting'` finds a row
-//! stored as `'painted the fence yesterday'` (mechanical-compile-spike-beats-
-//! paper-review discipline).
+//! stored as `'painted the fence yesterday'`.
 //!
 //! ## Idempotency
 //!

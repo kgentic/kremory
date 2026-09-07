@@ -1,4 +1,4 @@
-//! Anti-redundancy gate for Pass 0 type discovery (ADR-037 §3.2 / §9.4).
+//! Anti-redundancy gate for Pass 0 type discovery.
 //!
 //! Each surviving shape-validated proposal is checked against existing registered
 //! entity types.  Two signals, either triggers rejection:
@@ -8,7 +8,7 @@
 //! | proposal name ↔ existing type name | normalized **exact** match (`normalize_name`) | free deterministic pre-filter for true duplicates ("Person"/"person") |
 //! | proposal description ↔ existing type description | 0.85 **cosine** | both are definitional prose; tight gate catches near-duplicate vocab ("LegalPrecedent"/"LegalRuling") |
 //!
-//! ## Site #2 — type-novelty DESCRIPTION-gate LLM-verify band (ADR-063 spec §4.3 sibling)
+//! ## Site #2 — type-novelty DESCRIPTION-gate LLM-verify band
 //!
 //! `check_proposal` classifies each proposal against every existing type's best
 //! description-cosine match into one of three [`GateOutcome`]s:
@@ -31,15 +31,15 @@
 //! reusing the same `IdentityVerdictBatch` machinery Site #3 (`type_registry_collapse.rs`)
 //! already ships.
 //!
-//! ## TD-097 — why the NAME signal is exact-match, not cosine (Site #1 of ADR-063)
+//! ## Why the NAME signal is exact-match, not cosine (Site #1)
 //!
 //! Bare-label cosine is a DEGENERATE identity signal: `nomic-embed-text` returns
-//! cosine ≈ 1.0 for unrelated short strings (`cos(Person, Date) = 1.0000`, TD-097's
-//! own measurement; R3 confirms no surveyed embedding technique discriminates bare
-//! proper nouns).  The old name-COSINE gate (≥0.70) therefore falsely rejected
-//! DISTINCT type proposals as "redundant".  Per ADR-063's surface-dependent signal
-//! table, a type's stable identity signal is its DESCRIPTION (definitional prose),
-//! never its bare name — so the name signal is reduced to a normalized exact-match
+//! cosine ≈ 1.0 for unrelated short strings (`cos(Person, Date) = 1.0000`; no
+//! surveyed embedding technique discriminates bare proper nouns). The old
+//! name-COSINE gate (≥0.70) therefore falsely rejected
+//! DISTINCT type proposals as "redundant". A type's stable identity signal is
+//! its DESCRIPTION (definitional prose), never its bare name — so the name
+//! signal is reduced to a normalized exact-match
 //! pre-filter (catches the trivial dup for free) and the description-cosine gate is
 //! primary + sufficient for near-duplicates.  (A singular/plural lemma pre-filter is
 //! deferred to Site #3's spike-gated pass, SYNTHESIS §4 S3 — not Phase 1.)
@@ -79,7 +79,7 @@ pub(crate) fn cosine(a: &[f32], b: &[f32]) -> f32 {
 /// called in degraded mode, so `GateOutcome` has no `Skipped` variant.
 /// The degraded-mode counter / warning are emitted by `emit_gate_skipped()`.
 ///
-/// TD-210: every variant carries the best-match `existing_name` / `desc_cosine`
+/// Every variant carries the best-match `existing_name` / `desc_cosine`
 /// it was decided against, so the caller can leave a full audit trail for EVERY
 /// decision — not just the ones that happened to reject. Both fields are
 /// `Option`-typed on `Pass` (and `desc_cosine` on `Redundant`) precisely because
@@ -111,7 +111,7 @@ pub enum GateOutcome {
     /// Proposal is too similar to an existing type (name or description exceeded threshold).
     ///
     /// `desc_cosine` is `None` when the deterministic normalized-exact-name
-    /// pre-filter (TD-097 Step 1) fired — rejection happened before the
+    /// pre-filter (Step 1) fired — rejection happened before the
     /// desc-cosine loop ever ran, so no cosine was computed for THIS decision.
     /// `Some` when rejected via the description-cosine threshold instead (Step 2).
     Redundant {
@@ -119,9 +119,9 @@ pub enum GateOutcome {
         desc_cosine: Option<f32>,
     },
     /// Proposal's best desc-cosine match against an existing type falls in the
-    /// AMBIGUOUS band (ADR-063 spec §4.3 sibling table, Site #2): either
-    /// `[0.70, 0.85)`, or `≥0.85` with zero name-lemma overlap (SYNTHESIS §2 row 1
-    /// / EDC's over-generalization finding — a hard 0.85 cutoff alone would
+    /// AMBIGUOUS band (Site #2): either
+    /// `[0.70, 0.85)`, or `≥0.85` with zero name-lemma overlap (a hard 0.85
+    /// cutoff alone would
     /// silently reject a distinct-but-similar type like `LegalPrecedent` vs
     /// `LegalRuling`). The caller (`discover_types`) decides whether to adjudicate
     /// via the shared `write_gate`, gated by `DreamOpts::include_type_novelty_llm_verify`.
@@ -131,17 +131,17 @@ pub enum GateOutcome {
     },
 }
 
-/// Description-cosine threshold per ADR-037 §9.4.
+/// Description-cosine threshold.
 ///
-/// TD-097 (Site #1 of ADR-063): the former `NAME_COSINE_THRESHOLD` (0.70) was
+/// Site #1: the former `NAME_COSINE_THRESHOLD` (0.70) was
 /// REMOVED — bare-label cosine is a degenerate identity signal (`cos(Person,Date)
 /// =1.0000`). The name signal is now a deterministic normalized exact-match
 /// pre-filter (see `check_proposal`), and the description-cosine gate below is the
 /// primary + sufficient near-duplicate detector.
 pub const DESC_COSINE_THRESHOLD: f32 = 0.85;
 
-/// Lower band edge for the Site #2 LLM-verify ambiguous zone (ADR-063 spec §4.3
-/// sibling table). PROVISIONAL — spike-gated S3 (spec §8), carried by analogy from
+/// Lower band edge for the Site #2 LLM-verify ambiguous zone.
+/// PROVISIONAL — spike-gated S3, carried by analogy from
 /// Site #3's `TYPE_COLLAPSE_LOWER_BAND_COSINE`; NOT independently derived for the
 /// at-proposal gate here. Gated behind `DreamOpts::include_type_novelty_llm_verify`,
 /// default `false` — when the flag is off, this constant is inert (the default
@@ -149,7 +149,7 @@ pub const DESC_COSINE_THRESHOLD: f32 = 0.85;
 /// pre-Site-#2 behaviour).
 pub const TYPE_NOVELTY_LOWER_BAND: f32 = 0.70;
 
-/// Bundled parameters for [`check_proposal`] — args-as-object per TD-042
+/// Bundled parameters for [`check_proposal`] — args-as-object
 /// (rust-conventions §too_many_arguments).
 ///
 /// `pub` + `#[doc(hidden)]` (not `pub(crate)`) — same MNT-002 test-utils
@@ -159,11 +159,11 @@ pub const TYPE_NOVELTY_LOWER_BAND: f32 = 0.70;
 pub struct CheckProposalParams<'a> {
     /// The proposal's raw type name. Compared via `normalize_name` against each
     /// existing type name as a free, deterministic, embedder-independent pre-filter
-    /// (TD-097: bare-NAME cosine is degenerate, so the name signal is exact-match).
+    /// (bare-NAME cosine is degenerate, so the name signal is exact-match).
     pub proposal_name: &'a str,
     pub proposal_desc_emb: &'a [f32],
     /// `(spec, description_embedding)` per existing type. The name embedding was
-    /// removed with the name-cosine gate (TD-097); `spec.name` supplies the name for
+    /// removed with the name-cosine gate; `spec.name` supplies the name for
     /// the exact-match pre-filter.
     pub existing_type_embeddings: &'a [(EntityTypeSpec, Vec<f32>)],
     pub namespace: &'a str,
@@ -171,7 +171,7 @@ pub struct CheckProposalParams<'a> {
 }
 
 /// Case-insensitive-normalized exact match OR a naive singular/plural lemma match
-/// (strip a trailing `s`) between two type names (ADR-063 spec §4.2).
+/// (strip a trailing `s`) between two type names.
 ///
 /// Duplicated from `type_registry_collapse.rs::names_share_lemma_or_exact` with
 /// attribution, per spec §4.5's explicit "duplication with attribution is
@@ -198,7 +198,7 @@ fn strip_trailing_s(s: &str) -> &str {
 
 /// Check a single proposal against all existing types.
 ///
-/// Classification order (ADR-063 spec §4.3 sibling table, Site #2):
+/// Classification order (Site #2):
 ///
 /// 1. Proposal name normalizes-EQUAL (exact) to an existing type name →
 ///    `Redundant` (unambiguous — free deterministic pre-filter, unchanged from
@@ -214,11 +214,11 @@ fn strip_trailing_s(s: &str) -> &str {
 /// 4. Best desc-cosine match in `[0.70, 0.85)` → `NeedsLlmVerify` (ambiguous zone).
 /// 5. Otherwise → `Pass`.
 ///
-/// TD-097 (Site #1 of ADR-063): the former bare-NAME cosine gate (≥0.70) was
+/// Site #1: the former bare-NAME cosine gate (≥0.70) was
 /// removed — `cos(Person, Date) = 1.0000` under `nomic-embed-text`, so it falsely
 /// rejected distinct proposals. Near-duplicate (non-exact) names are caught by the
 /// description-cosine gate, which embeds definitional prose (a stable signal), not a
-/// bare label. See SYNTHESIS §2 row 1 + the surface-dependent signal table (ADR-063).
+/// bare label.
 ///
 /// This function is PURE — no LLM call, no I/O — mirroring `write_gate`'s
 /// counter-free discipline for the classification step. `discover_types` (the
@@ -241,7 +241,7 @@ pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
     } = params;
     let proposal_name_norm = crate::core::resolver::normalize_name(proposal_name);
 
-    // Step 1: free deterministic pre-filter (TD-097) — a normalized EXACT name
+    // Step 1: free deterministic pre-filter — a normalized EXACT name
     // match is a real duplicate ("Person"/"person") — reject with no embedding.
     for (spec, _desc_emb) in existing_type_embeddings {
         if crate::core::resolver::normalize_name(&spec.name) == proposal_name_norm {
@@ -258,7 +258,7 @@ pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
                 proposal_name = %proposal_name,
                 "anti-redundancy: proposal name normalizes-equal to an existing type — rejecting"
             );
-            // TD-210: no desc-cosine loop has run yet at this point — the
+            // No desc-cosine loop has run yet at this point — the
             // exact-name pre-filter decided this outcome BEFORE any embedding
             // comparison, so `desc_cosine: None` here means "genuinely no
             // comparison happened", not "a comparison happened and was dropped".
@@ -281,7 +281,7 @@ pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
     }
 
     let Some((best_spec, best_cosine)) = best else {
-        // TD-210: no existing (non-catch-all) type in this namespace at all —
+        // No existing (non-catch-all) type in this namespace at all —
         // genuinely nothing to compare against, so both fields are `None`, not
         // just omitted. See `GateOutcome::Pass` doc comment.
         return GateOutcome::Pass {
@@ -339,7 +339,7 @@ pub fn check_proposal(params: CheckProposalParams<'_>) -> GateOutcome {
         };
     }
 
-    // TD-210: a real comparison happened (an existing type was found and its
+    // A real comparison happened (an existing type was found and its
     // cosine computed) — it just didn't clear the lower band. Carry the
     // best-match evidence through even on accept, so the caller can persist
     // WHY this proposal passed, not just THAT it passed.
@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn gate_passes_distinct_proposal() {
         // Distinct name (no normalized match) + orthogonal desc embedding → Pass.
-        // TD-210: one existing type WAS compared (best_cosine=0.0) — a real
+        // One existing type WAS compared (best_cosine=0.0) — a real
         // comparison happened even though the outcome is Pass — so the outcome
         // must carry it (Some), not drop it.
         let existing = vec![(spec(1, "Person"), unit_vec(4, 0))]; // desc emb at dim 0
@@ -458,7 +458,7 @@ mod tests {
             } => {
                 assert_eq!(existing_name, "Organization");
                 let cosine = desc_cosine
-                    .expect("rejected via the desc-cosine gate — cosine must be Some (TD-210)");
+                    .expect("rejected via the desc-cosine gate — cosine must be Some");
                 assert!((cosine - 1.0).abs() < 1e-5);
             }
             other => panic!("expected Redundant, got {other:?}"),
@@ -522,7 +522,7 @@ mod tests {
 
     #[test]
     fn gate_passes_below_lower_band() {
-        // Best desc-cosine below 0.70 → Pass (step 5). TD-210: a real comparison
+        // Best desc-cosine below 0.70 → Pass (step 5). A real comparison
         // happened (an existing type WAS found and compared) — must be carried.
         let existing = vec![(spec(1, "Vehicle"), unit_vec(4, 0))];
         let proposal_desc = unit_vec(4, 1);
@@ -548,12 +548,12 @@ mod tests {
 
     #[test]
     fn gate_rejects_on_name_exact_match() {
-        // TD-097: the name signal is a normalized EXACT match, not cosine. A
+        // The name signal is a normalized EXACT match, not cosine. A
         // case/whitespace variant of an existing type name → Redundant, with NO name
         // embedding. Orthogonal description embedding proves the rejection came from
         // the name pre-filter, not the description gate.
         //
-        // TD-210: `desc_cosine` must be `None` here — the exact-name pre-filter
+        // `desc_cosine` must be `None` here — the exact-name pre-filter
         // fires BEFORE the desc-cosine loop ever runs, so no comparison happened
         // for this decision. A `Some` value here would mean the field was
         // populated even when nothing was actually computed.
@@ -573,7 +573,7 @@ mod tests {
                 assert_eq!(existing_name, "Organisation");
                 assert_eq!(
                     desc_cosine, None,
-                    "exact-name pre-filter fired before any cosine was computed (TD-210)"
+                    "exact-name pre-filter fired before any cosine was computed"
                 );
             }
             other => panic!("expected Redundant (exact name match), got {other:?}"),
@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn gate_passes_unrelated_short_names_no_degenerate_reject() {
-        // TD-097 regression (Site #1 DoD): two UNRELATED short type names ("Person"
+        // Regression (Site #1 DoD): two UNRELATED short type names ("Person"
         // vs "Date") whose bare-name embeddings would DEGENERATELY cosine ≈ 1.0 must
         // NOT be rejected — distinct names (no exact match) + orthogonal descriptions
         // → Pass. Pre-fix the name-cosine gate (≥0.70) falsely rejected this pair.
@@ -603,14 +603,14 @@ mod tests {
                 assert!(desc_cosine.expect("comparison happened").abs() < 1e-5);
             }
             other => {
-                panic!("unrelated short names must not be falsely rejected (TD-097), got {other:?}")
+                panic!("unrelated short names must not be falsely rejected, got {other:?}")
             }
         }
     }
 
     #[test]
     fn gate_passes_with_empty_existing_types() {
-        // TD-210: the registry-empty early return — genuinely NO comparison
+        // The registry-empty early return — genuinely NO comparison
         // happened, so both fields must be `None` (not merely omitted).
         let desc = unit_vec(4, 0);
         let outcome = check_proposal(CheckProposalParams {

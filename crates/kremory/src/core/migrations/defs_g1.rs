@@ -1,9 +1,9 @@
 // ─── Migration 016 ─────────────────────────────────────────────────────────────
 
-/// Migration 016 (ADR-050 v0.2.4): dream-pass crash-safety schema cluster.
+/// Migration 016: dream-pass crash-safety schema cluster.
 ///
 /// Adds three new tables and two additive PRAGMA-guarded columns required by
-/// ADR-050's crash-safety + idempotency design:
+/// the crash-safety + idempotency design:
 ///
 /// ## New tables
 ///
@@ -66,7 +66,7 @@ pub async fn migrate_016_crash_safety_schema(
     tracing::info!(
         target: "kremory::migrations",
         migration = "016",
-        "migrate_016: starting crash-safety schema migration (ADR-050)"
+        "migrate_016: starting crash-safety schema migration"
     );
 
     // ── Table 1: dream_idempotency_keys ─────────────────────────────────────
