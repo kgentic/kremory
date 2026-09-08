@@ -72,6 +72,38 @@
 
 ---
 
+## Why Not an Existing Graph Engine?
+
+The table above compares kremory to other **agent-memory systems**. A different question comes up
+just as often from engineers: *SQLite already has graph engines — why did kremory build its own
+storage layer instead of using one?*
+
+Each of these was evaluated at source level. The short answer is that every one of them **owns its
+own tables**, so none can be layered under kremory's schema, and none carries the two properties
+kremory exists to provide.
+
+| Engine | What it is | Why kremory does not use it |
+|---|---|---|
+| **GraphQLite** (colliery-io) | openCypher as a loadable SQLite extension. C, MIT, actively developed. | Creates and owns fixed-name `nodes`/`edges`/property tables — there is no mapping layer to point it at an existing schema. Requires `load_extension`, which is disabled by default in many hosts. No temporal model, no embeddings, no text search. |
+| **sqlite-graph** (agentflare-ai) | Cypher subset as a SQLite virtual table. C, MIT. | Owns its backing tables. Self-declared alpha, *"not recommended for production use"*, no release since 2025-10. Missing `WITH` and `UNWIND`, so queries cannot be chained; no variable-length paths. |
+| **simple-graph** (dpapathanasiou) | A two-table SQL schema template consumed by community language ports. | Not a library — SQL templates with no code. No node labels, no typed relationships, and its traversal has no depth bound, so any walk returns the entire connected component. |
+| **Kuzu** | Embedded columnar property-graph database. | Repository archived; the on-disk format was never stabilised. |
+| **Apache AGE** | openCypher on PostgreSQL. | Requires a PostgreSQL server, which defeats the embeddable, zero-process deployment kremory targets. |
+| **CozoDB** | Datalog engine with a SQLite backend option. | Its "SQLite backend" is a single opaque key-value blob table, unreadable and unindexable with ordinary SQL tooling. |
+
+**What none of them provide, and kremory does:**
+
+- **Two-clock bi-temporal history.** kremory tracks *when a fact was recorded* (immutable) separately
+  from *when it was true in the world* (mutable), with an active contradiction resolver. None of the
+  engines above has any temporal model at all — not valid time, not transaction time.
+- **Building the graph from text.** kremory reads episodes and extracts entities and relationships
+  itself. Every engine above is a query layer over a graph *you* construct.
+- **Hybrid semantic recall.** Vector search and full-text search fused over the same store, with
+  bring-your-own embeddings. None of the engines above has an embedding or retrieval surface.
+
+A Cypher-style query language over kremory's schema is feasible and remains an open design
+question — the storage model is deliberately compatible with one. It is not currently scheduled.
+
 ## Migration Paths
 
 ### Migrating from codemem to kremory
