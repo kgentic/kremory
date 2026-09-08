@@ -120,7 +120,7 @@ RUST_LOG=warn,kremory=info,kremory.l5=debug,kremory.graph.provenance=debug
 
 **Why this is called out so loudly.** The wrong-looking filter produces an *empty result*,
 and an empty result is indistinguishable from "the thing did not happen". On 2026-08-05 that
-cost three failed diagnoses of one bug (V1-CANONICAL §0b-sexies, E2E-1) and — worse —
+cost three failed diagnoses of one bug (V1-CANONICAL section 0b-sexies, E2E-1) and — worse —
 produced a *recorded* "hypothesis eliminated" note about what turned out to be the **correct**
 root cause. A filter that captures nothing looks exactly like a system that did nothing.
 

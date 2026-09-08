@@ -43,8 +43,8 @@ a real, captured transcript of `cargo add kremory` against the published crate t
 ## Learn more
 
 - **[Getting Started](./getting-started.md)** — install the published crate and run a real program.
-- **[API Reference](./api.md)** — the complete surface: builder customization, namespaces,
-  dream/consolidation, undo, feature flags, the Node binding.
+- **[API Reference](./api/index.md)** — the complete surface: builder customization,
+  namespaces, dream/consolidation, undo, feature flags, the Node binding.
 - **[Comparison](./comparison.md)** — how kremory differs from Graphiti/Zep, Mem0, codemem, and
   friends.
 - **[Benchmarks](./benchmarks.md)** — the LoCoMo results and methodology.
