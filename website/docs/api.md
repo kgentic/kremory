@@ -479,8 +479,8 @@ result sets by hand — mainly test fixtures and advanced substrate consumers, n
 ```rust
 use chrono::{Utc, Duration};
 
-// v0.1.0: emits tracing::warn — filter wiring lands in v0.1.1
-// Caller code is forward-compatible — same syntax works in v0.1.1
+// Valid-time filter: what was TRUE in the world at t.
+// It never gates on recorded_at — see the bi-temporal notes below.
 let ctx = mem.recall("what was the policy last week?")
     .as_of(Utc::now() - Duration::days(7))
     .await?;
