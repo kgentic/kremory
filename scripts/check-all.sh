@@ -52,6 +52,19 @@ run migration-idempotency "" bash scripts/check-migration-idempotency.sh
 run td-id-uniqueness     "" bash scripts/check-td-id-uniqueness.sh
 run file-size-ratchet    "" bash scripts/check-file-size-ratchet.sh
 
+# e2e-consumer lives OUTSIDE the workspace with its own Cargo.lock, because its
+# job is to consume the crate as an external user would. That is correct and it
+# is also why it rots: `cargo build --workspace` cannot see it. The workspace
+# Cargo.toml already carries a comment about this exact failure class for a
+# sibling crate ("10 compile errors accrued invisibly while excluded").
+#
+# It rotted on 2026-09-08: the 0.8.0 DreamRequest breaking change shipped a
+# CHANGELOG migration note, and the repo's own consumer was never migrated, so
+# it failed to COMPILE. The full behavioural gate (run-e2e-consumer.sh) catches
+# it but costs ~4min/run and needs Ollama. The compile half is free and
+# deterministic, so it belongs here — in seconds, not minutes.
+run e2e-consumer-compiles "" bash -c 'cd e2e-consumer && cargo build --quiet'
+
 if [[ -n "$RESULTS" ]]; then
   run eval-floor "" bash scripts/check-eval-floor.sh "$RESULTS"
 else

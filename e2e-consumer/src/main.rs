@@ -94,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("[smoke] remember() completed in {:?}", t1.elapsed());
 
         let t2 = Instant::now();
-        let summary = mem.dream().in_namespace(ns.clone()).await?;
+        let summary = mem.dream().in_namespace(ns.clone()).execute().await?;
         eprintln!(
             "[smoke] dream() completed in {:?} — duration_ms={} ops_ran={:?}",
             t2.elapsed(),
@@ -133,7 +133,7 @@ async fn main() -> anyhow::Result<()> {
     // Step 3 — dream with all consolidation ON (shipped default). Assert the
     // honest DreamSummary fields exist + are self-consistent.
     let td = Instant::now();
-    let summary = mem.dream().in_namespace(ns.clone()).await?;
+    let summary = mem.dream().in_namespace(ns.clone()).execute().await?;
     eprintln!("[step3] dream() in {:?}", td.elapsed());
     eprintln!(
         "[step3] DreamSummary: types_discovered={} entities_reclassified={} aliases_resolved={} \
