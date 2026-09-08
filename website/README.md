@@ -19,7 +19,8 @@ Everything theme-related lives in three places:
 | Where | What |
 |---|---|
 | `src/css/custom.css` | The whole theme — Infima variable overrides plus the rules that enforce the design system's three load-bearing constraints (planar depth, milled corners, carbon code surfaces). Each block cites the design-system section it implements. |
-| `src/pages/` + `src/components/HomepageFeatures/` | Homepage hero and feature panels. Copy is unchanged from the scaffold; only presentation was rewritten. |
+| `src/pages/index.tsx` | Hero (editorial column + the canonical quickstart) and the specification strip. |
+| `src/components/HomepageSections/` | Four narrative sections and the closing call to action. Every claim is checked against `docs/`; the code samples are copied from the pages that own them, so the homepage cannot drift into being a second, contradictory tutorial. |
 | `static/img/` | Derived brand assets. |
 
 **Brand master:** `static/brand/kremory-logo.png` (1254x1254, transparent). Everything in

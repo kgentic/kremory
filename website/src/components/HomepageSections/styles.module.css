@@ -1,0 +1,214 @@
+/**
+ * Homepage narrative sections — the mock's alternating full-width layout.
+ *
+ * Zones are closed by a continuous 1px drafting rule rather than separated by
+ * whitespace alone, and every panel is a bounded technical frame with a mono
+ * utility bar. No shadows anywhere; depth is planar.
+ */
+
+.section {
+  padding: var(--krem-space-4xl) 0;
+  border-bottom: 1px solid var(--krem-border);
+}
+
+.sectionLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--krem-muted);
+  padding-bottom: var(--krem-space-sm);
+  margin-bottom: var(--krem-space-xl);
+  border-bottom: 1px solid var(--krem-border);
+}
+
+.sectionRow {
+  align-items: flex-start;
+}
+
+/* Alternation. Only above the breakpoint — stacked mobile order must stay
+   prose-then-panel regardless of which side the panel sits on at desktop. */
+@media screen and (min-width: 997px) {
+  .reversed {
+    flex-direction: row-reverse;
+  }
+}
+
+.sectionTitle {
+  font-size: 1.875rem;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 600;
+  margin: 0 0 var(--krem-space-md);
+  color: var(--ifm-heading-color);
+}
+
+.prose p {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--krem-muted);
+  margin-bottom: var(--krem-space-md);
+}
+
+.prose p:last-child {
+  margin-bottom: 0;
+}
+
+.asideCol {
+  display: flex;
+}
+
+/* ── Bounded technical frame ─────────────────────────────────────────────── */
+.panel {
+  width: 100%;
+  border: 1px solid var(--krem-border);
+  border-radius: 0.375rem;
+  overflow: hidden;
+  background: var(--krem-panel);
+}
+
+.panelHeader {
+  padding: var(--krem-space-xs) var(--krem-space-sm);
+  border-bottom: 1px solid var(--krem-border);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--krem-muted);
+}
+
+/* The code block inside a panel is already a bounded carbon frame, so it
+   drops its own border and radius rather than double-framing. */
+.panelBody :global(.theme-code-block) {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+}
+
+.panelBody :global(pre) {
+  margin: 0;
+}
+
+/* ── Shape comparison ────────────────────────────────────────────────────── */
+.matrix {
+  width: 100%;
+  border: 1px solid var(--krem-border);
+  border-radius: 0.375rem;
+  overflow: hidden;
+  background: var(--krem-panel);
+}
+
+.matrixRow {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.8fr) 1fr 1fr;
+  gap: var(--krem-space-sm);
+  padding: var(--krem-space-sm) var(--krem-space-md);
+  border-bottom: 1px solid var(--krem-border);
+  align-items: baseline;
+}
+
+.matrixRow:last-child {
+  border-bottom: none;
+}
+
+.matrixHead {
+  background: var(--ifm-table-head-background);
+}
+
+.matrixAxis {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--krem-muted);
+}
+
+.matrixCol {
+  font-size: 14px;
+  color: var(--krem-muted);
+}
+
+.matrixHead .matrixCol {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* Own column: a 1px gold left rule — the design system's active-plane marker,
+   used here instead of a fill so the row stays planar. */
+.matrixColOwn {
+  color: var(--ifm-heading-color);
+  border-left: 1px solid var(--krem-gold);
+  padding-left: var(--krem-space-sm);
+  font-weight: 500;
+}
+
+/* ── Closing call to action — the last zone on the page, so no closing rule
+   (the footer's own top border supplies it). ─────────────────────────────── */
+.cta {
+  background: var(--krem-panel);
+  border-bottom: none;
+}
+
+.ctaInner {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--krem-space-2xl);
+  align-items: center;
+}
+
+.ctaText {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--krem-muted);
+  margin-bottom: var(--krem-space-xl);
+}
+
+.ctaButtons {
+  display: flex;
+  gap: var(--krem-space-sm);
+  flex-wrap: wrap;
+}
+
+.ctaPanel :global(.theme-code-block) {
+  margin: 0;
+}
+
+@media screen and (max-width: 996px) {
+  .section {
+    padding: var(--krem-space-2xl) 0;
+  }
+
+  .sectionTitle {
+    font-size: 1.5rem;
+  }
+
+  .asideCol {
+    margin-top: var(--krem-space-xl);
+  }
+
+  /* Two columns stay side by side on mobile — collapsing to one would strand
+     each value with no indication of which side it belongs to, which is the
+     whole content of a comparison. The axis label spans the pair instead. */
+  .matrixRow {
+    grid-template-columns: 1fr 1fr;
+    gap: var(--krem-space-2xs) var(--krem-space-sm);
+  }
+
+  .matrixAxis {
+    grid-column: 1 / -1;
+  }
+
+  .matrixHead .matrixAxis {
+    display: none;
+  }
+
+  .ctaInner {
+    grid-template-columns: 1fr;
+  }
+}
