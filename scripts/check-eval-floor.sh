@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
-# check-recall-floor.sh — the recall regression guard TD-242 exists to provide.
+# check-eval-floor.sh — the eval regression guard TD-242 exists to provide.
+#
+# NAMING: this gates the eval harness's per-question PASS RATE (the `correct`
+# field a QA judge writes), NOT retrieval recall@k. The repo's own note is
+# explicit that the eval is QA-gen, not a retrieval proxy, so calling this a
+# "recall floor" would conflate two different numbers. `eval` is the repo's
+# established word for this harness (`kremory-eval`, docs/eval.md), so it is
+# borrowed rather than a third vocabulary being minted.
 #
 # kremory has recall benchmarks and, until this script, NO committed floor that
 # anything could fail on. ADR-078 demonstrated the cost: a default-feature flip
@@ -33,8 +40,8 @@
 #   overall >= floor + NAG_THRESHOLD                  -> PASS + re-baseline nag
 #
 # ── USAGE ────────────────────────────────────────────────────────────────────
-#   bash scripts/check-recall-floor.sh results/run-<stamp>.jsonl
-#   bash scripts/check-recall-floor.sh --update results/run-<stamp>.jsonl
+#   bash scripts/check-eval-floor.sh results/run-<stamp>.jsonl
+#   bash scripts/check-eval-floor.sh --update results/run-<stamp>.jsonl
 #
 # No CI exists in this project (org Actions billing suspended). Run it manually
 # before a push, like `check-dual-emit.sh` and `check-file-size-ratchet.sh`.
@@ -45,7 +52,7 @@
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)" || exit 1
-BASELINE="scripts/recall-floor-baseline.json"
+BASELINE="scripts/eval-floor-baseline.json"
 NAG_THRESHOLD=2.0   # percentage points above floor before it asks to re-baseline
 
 UPDATE=0
@@ -113,7 +120,7 @@ for c, v in cats.items():
 # ── --update: write the floor ────────────────────────────────────────────────
 if update:
     payload = {
-        "_comment": "Recall floor for scripts/check-recall-floor.sh (TD-242). "
+        "_comment": "Recall floor for scripts/check-eval-floor.sh (TD-242). "
                     "A RATCHET, not a target. Re-baseline deliberately after a "
                     "measured improvement and COMMIT IT — an unrefreshed floor "
                     "is a green gate enforcing nothing (see GraphQLite, teardown "
@@ -141,7 +148,7 @@ try:
         base = json.load(fh)
 except FileNotFoundError:
     print(f"FAIL: {baseline_path} missing. Create it with:\n"
-          f"  bash scripts/check-recall-floor.sh --update <results.jsonl>", file=sys.stderr)
+          f"  bash scripts/check-eval-floor.sh --update <results.jsonl>", file=sys.stderr)
     sys.exit(1)
 
 if not base.get("populated", False):
@@ -149,7 +156,7 @@ if not base.get("populated", False):
           f"  This is deliberate: the mechanism ships without a floor because\n"
           f"  generating one requires a benchmark run, which is a standing HITL\n"
           f"  gate (paid extraction model). Populate it with:\n"
-          f"      bash scripts/check-recall-floor.sh --update <results.jsonl>\n"
+          f"      bash scripts/check-eval-floor.sh --update <results.jsonl>\n"
           f"  It fails rather than passes so an unset floor can never be mistaken\n"
           f"  for a green gate.", file=sys.stderr)
     sys.exit(1)
@@ -193,6 +200,6 @@ if overall >= floor_overall + nag:
           f"    An unrefreshed floor stops protecting anything — GraphQLite's sits 442\n"
           f"    scenarios below its own advertised number and therefore cannot fire.\n"
           f"    Refresh it, on the record:\n"
-          f"        bash scripts/check-recall-floor.sh --update {results_path}")
+          f"        bash scripts/check-eval-floor.sh --update {results_path}")
 sys.exit(0)
 PY

@@ -28,6 +28,14 @@ two disagree, THIS wins.**
 | consumer E2E | **5 passed / 0 failed of 5** (real Ollama). Extended 2026-08-06 with `.content()` / `.as_of()` / `supersede`-reachability — all three ran in **all 5** runs, and `as_of(−10y) → 0 facts` vs `as_of(+1d) → 10–15` held **every** run |
 | parity skip-list | **90 / cap 90 — AT the cap, raised deliberately 2026-09-06 (ADR-080).** Measured, not read: `grep -c '^\[\[skip\]\]' crates/kremory-napi/parity-skip.toml` = 90, and the enforced assert is `skip_count <= 90` at `api_parity.rs:494`. Raised 89 -> 90 for ONE entry (`MemoryBuilder::prior_turn_replay_depth`, the eleventh per-knob override setter, same ADR-030 Form B deferral as its ten siblings). ⚠️ **When raising this cap, grep the gate file for the OLD number — it is written in THREE places (lead comment, the assert, and a 'now both N' note) and I missed the third on the first pass, which is exactly how this row rotted before.** Historical, kept for provenance: ~~88 / cap 88~~ ~~89 / cap 89~~ (`parity-skip.toml` holds exactly 89 `[[skip]]` entries; the enforced assert is `skip_count <= 89` at `api_parity.rs:493`, raised 88 -> 89 on 2026-09-02 for TD-231). **This is the FOURTH time this row has been wrong** — the gate file's own comment says the note there "ROTTED TWICE", and this doc then rotted again behind it. The operational conclusion has never changed and is the only part worth trusting: it is AT the cap, so the next added skip fails the gate. Historical: **88 / cap 88 — AT the cap**; the next added skip fails the gate. ~~86 / cap 86~~ corrected 2026-08-12: the enforced assert is `skip_count <= 88` (`api_parity.rs:484`) and `parity-skip.toml` holds exactly 88 `[[skip]]` entries. The operational conclusion is unchanged — it is AT the cap — only the numbers were wrong, for the **third** time on this row. |
 
+**Guards — one entry point:** `bash scripts/check-all.sh [--results results/run-<stamp>.jsonl]`
+runs all six repo guards and reports **PASS / FAIL / SKIP separately** (a skip is never folded into
+a pass). There is no CI, no git hook and no other aggregator, so this is the only thing that makes
+the guards more than scripts nobody remembers. **It exits 1 today** — `check-file-size-ratchet.sh`
+is red on 100 files against a 2026-08-12 baseline; tracked as **TD-243**, and it must NOT be
+silenced with `--update`. The eval floor SKIPS unless you pass `--results`, because producing a
+results file is a HITL gate.
+
 **🛑 Standing HITL gates — no autonomous action on any of these:** `cargo publish` · `git push` ·
 release tags · **any paid benchmark run, which INCLUDES re-ingesting the bench corpora** (that
 path uses the paid Groq extraction model, not local Ollama).
@@ -135,7 +143,7 @@ Every phase commit MUST satisfy these gates in order — they apply to any sprin
    that did not.** "Gate green" collapses five tiers into one word and has been wrong in both
    directions on this repo.
 
-5. **RECALL FLOOR — `bash scripts/check-recall-floor.sh results/run-<stamp>.jsonl` — MANDATORY
+5. **EVAL FLOOR (the eval harness's per-question pass rate — NOT retrieval recall@k) — `bash scripts/check-eval-floor.sh results/run-<stamp>.jsonl` — MANDATORY
    BEFORE ANY RELEASE, AND THE REFRESH IS PART OF THE GATE.**
 
    Not per-commit (it needs a results file, and producing one is a **standing HITL gate** — the
@@ -150,7 +158,7 @@ Every phase commit MUST satisfy these gates in order — they apply to any sprin
    mechanism is modelled on GraphQLite's `check-tck-baseline.sh`, whose floor sits **442 scenarios
    below its own advertised number**, so their gate cannot fire: a green control enforcing nothing.
    Ours nags in-tool when the current number drifts >2pt above the floor. **When it nags, re-baseline
-   and commit it in the same change** — `bash scripts/check-recall-floor.sh --update <results.jsonl>`.
+   and commit it in the same change** — `bash scripts/check-eval-floor.sh --update <results.jsonl>`.
 
    ⚠️ **Never re-baseline to make a failure pass.** Downward re-baselining is how a ratchet becomes
    decoration. The floor moves UP on measured improvement, never down to accommodate a regression.
