@@ -26,7 +26,7 @@ Supporting capabilities: **bi-temporal** facts (ask "what was true at time t" vi
 
 ```toml
 [dependencies]
-kremory = "0.7"
+kremory = "0.8"
 
 # kremory's API is async and returns errors, so a runtime and an error type are
 # needed to run the Quickstart below.
@@ -438,7 +438,7 @@ kremory emits structured metrics + tracing spans for every LLM and embedding cal
 **Optional OTLP export** — enable the `otel` cargo feature:
 
 ```toml
-kremory = { version = "0.7", features = ["otel"] }
+kremory = { version = "0.8", features = ["otel"] }
 ```
 
 ```rust
@@ -530,7 +530,7 @@ been observed to FAIL against the un-fixed code, not merely to pass. What 1.0 st
 freeze, a cross-provider model matrix, and **load/concurrency** testing.
 
 **API stability:** on the pre-1.0 lane, minor releases (e.g. `0.5 → 0.6`) may contain breaking
-changes — pin a minor (`kremory = "0.7"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
+changes — pin a minor (`kremory = "0.8"`) and read the [CHANGELOG](CHANGELOG.md) before bumping.
 
 ## Node.js / MCP — not yet published
 

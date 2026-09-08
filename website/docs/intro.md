@@ -29,7 +29,7 @@ Supporting capabilities: **bi-temporal** facts (ask "what was true at time t" vi
 
 ```toml
 [dependencies]
-kremory = "0.7"
+kremory = "0.8"
 ```
 
 No model weights bundled. No server process. No API key required to ship.
@@ -52,7 +52,7 @@ a real, captured transcript of `cargo add kremory` against the published crate t
 ## Status
 
 **Pre-1.0 (`0.7.x`), used in earnest but still evolving.** On the pre-1.0 lane, minor releases may
-contain breaking changes — pin a minor (`kremory = "0.7"`) and read the
+contain breaking changes — pin a minor (`kremory = "0.8"`) and read the
 [CHANGELOG](https://github.com/kgentic/kremory/blob/main/CHANGELOG.md) before bumping. See the
 [Getting Started guide](./getting-started.md) for what's ready today, including the current state
 of the Node binding and MCP server (neither is published yet — build from source).

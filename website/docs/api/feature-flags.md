@@ -21,7 +21,7 @@ empty). Opt into the surfaces below as needed:
 # `content-search` is listed explicitly for clarity, but it is ON by default
 # since ADR-078 (2026-07-28) — you only need to name it if you have set
 # `default-features = false`.
-kremory = { version = "0.7", features = ["content-search", "otel"] }
+kremory = { version = "0.8", features = ["content-search", "otel"] }
 ```
 
 ### Advanced tuning knobs (`MemoryBuilder`)

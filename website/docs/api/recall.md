@@ -80,7 +80,7 @@ since ADR-078 (2026-07-28) — so the terminal and the `ContentPassage` type exi
 If you have disabled default features, re-enable it explicitly:
 
 ```toml
-kremory = { version = "0.7", default-features = false, features = ["content-search"] }
+kremory = { version = "0.8", default-features = false, features = ["content-search"] }
 ```
 
 ⚠️ Disabling it does **not** just remove `.content()` — it also removes the BM25 content arm and the

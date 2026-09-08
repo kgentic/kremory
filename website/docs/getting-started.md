@@ -59,14 +59,14 @@ assumed) as part of writing this guide:
 
   ```toml
   [dependencies]
-  kremory = "0.7.0"
+  kremory = "0.8.0"
   ```
 
   and `Cargo.lock` confirms the source:
 
   ```
   name = "kremory"
-  version = "0.7.0"
+  version = "0.8.0"
   source = "registry+https://github.com/rust-lang/crates.io-index"
   ```
 
