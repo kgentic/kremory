@@ -3,7 +3,38 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
-## [Unreleased]
+## [0.8.0] - 2026-09-08
+
+### Changed — BREAKING: `DreamRequest` now requires an explicit `.execute()` terminal
+
+`mem.dream()` no longer implements `IntoFuture` — awaiting the builder
+directly no longer compiles. It now matches every other destructive/mutating
+request (`forget()`, `undo()`, `supersede()`, …), which already required a
+terminal call. `execute_blocking` is renamed to `execute` (`pub async fn`).
+
+```rust
+// Before
+mem.dream().await?;
+// After
+mem.dream().execute().await?;
+```
+
+### Changed — BREAKING: `NoEmb`/`WithEmb` renamed to `NoEmbedder`/`WithEmbedder`
+
+Consistency with the existing `NoLlm`/`WithLlm` marker-type pair. Anything
+naming these types explicitly (rather than relying on inference through
+`MemoryBuilder::new()`) needs the new names.
+
+### Added — `Memory::with_ollama_at_model(url, model, path)`
+
+Inherent constructor alongside the existing free function
+`facade::providers::with_ollama_at_model`, which remains unchanged.
+
+### Added — hand-written `Debug` for `Memory` and `MemoryBuilder<L, E>`
+
+Presence-only for opaque `Arc<dyn Trait>` fields, verbatim for everything
+else, `finish_non_exhaustive()` — the same shape as `tokio::runtime::Runtime`
+and `reqwest::Client`. Previously neither type implemented `Debug` at all.
 
 ### Added — prior-turn replay into the extraction prompt (ADR-080)
 
