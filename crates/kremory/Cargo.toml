@@ -32,6 +32,11 @@ include = [
     # Omitting these shipped 0.7.0 without a licence file.
     "LICENSE",
     "NOTICE",
+    # NAMED examples only — never `examples/**`. The exclusion above exists because
+    # 0.3.0 shipped ~181 internal files; `alias_probe.rs` and `graph_health.rs` are
+    # internal diagnostics and MUST stay out.
+    "examples/offline_remember_recall.rs",
+    "examples/remembers_across_sessions.rs",
 ]
 
 # docs.rs builds the public API surface with all stable features + the docsrs cfg

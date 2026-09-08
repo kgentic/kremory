@@ -21,6 +21,19 @@ const sidebars: SidebarsConfig = {
     'getting-started',
     {
       type: 'category',
+      label: 'Examples',
+      collapsed: false,
+      // GENERATED pages — `website/scripts/sync-examples.mjs` derives these from
+      // the runnable `.rs` files under `crates/kremory/examples/` at prebuild, and
+      // `docs/examples/` is gitignored. Editing the markdown is a mistake; edit the
+      // example. Ordered by reading order (offline basics first), not alphabetically.
+      items: [
+        'examples/offline-remember-recall',
+        'examples/remembers-across-sessions',
+      ],
+    },
+    {
+      type: 'category',
       label: 'API Reference',
       collapsed: false,
       link: {type: 'doc', id: 'api/index'},

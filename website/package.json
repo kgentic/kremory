@@ -14,8 +14,9 @@
     "write-heading-ids": "docusaurus write-heading-ids",
     "typecheck": "tsc",
     "sync:changelog": "node scripts/sync-changelog.mjs",
-    "prebuild": "npm run sync:changelog",
-    "prestart": "npm run sync:changelog"
+    "prebuild": "npm run sync:changelog && npm run sync:examples",
+    "prestart": "npm run sync:changelog && npm run sync:examples",
+    "sync:examples": "node scripts/sync-examples.mjs"
   },
   "dependencies": {
     "@docusaurus/core": "3.10.2",
