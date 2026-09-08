@@ -135,6 +135,30 @@ Every phase commit MUST satisfy these gates in order — they apply to any sprin
    that did not.** "Gate green" collapses five tiers into one word and has been wrong in both
    directions on this repo.
 
+5. **RECALL FLOOR — `bash scripts/check-recall-floor.sh results/run-<stamp>.jsonl` — MANDATORY
+   BEFORE ANY RELEASE, AND THE REFRESH IS PART OF THE GATE.**
+
+   Not per-commit (it needs a results file, and producing one is a **standing HITL gate** — the
+   ingest path uses the PAID extraction model). But no release is cut without it.
+
+   **Why it exists.** ADR-078's `content-search` default flip moved recall by **32.2pt** and not
+   one of ~1,800 deterministic tests noticed, because no test can see recall quality. TD-099 (CSR
+   traversal) and TD-100 (`graph_edges` view) both change how the graph arm is read. This is their
+   safety net.
+
+   **The refresh is not optional bookkeeping — it is the half that keeps the gate real.** The
+   mechanism is modelled on GraphQLite's `check-tck-baseline.sh`, whose floor sits **442 scenarios
+   below its own advertised number**, so their gate cannot fire: a green control enforcing nothing.
+   Ours nags in-tool when the current number drifts >2pt above the floor. **When it nags, re-baseline
+   and commit it in the same change** — `bash scripts/check-recall-floor.sh --update <results.jsonl>`.
+
+   ⚠️ **Never re-baseline to make a failure pass.** Downward re-baselining is how a ratchet becomes
+   decoration. The floor moves UP on measured improvement, never down to accommodate a regression.
+
+   The baseline currently ships **UNPOPULATED and the script FAILS on that state by design** — an
+   unset floor must never be mistaken for a green gate. It stays that way until a benchmark run is
+   authorised.
+
 **The orchestrator MAY NOT make Quinn optional.** Quinn is automatic between phases per `feedback_quinn_review_mandatory_between_phases_never_optional`. The orchestrator MAY decide HOW to triage Quinn's findings AFTER receiving the verdict, but the review itself is unconditional.
 
 ### When the next sprint is launched

@@ -1,0 +1,6 @@
+{
+  "_comment": "Recall floor for scripts/check-recall-floor.sh (TD-242). A RATCHET, not a target. Re-baseline deliberately after a measured improvement and COMMIT IT — an unrefreshed floor is a green gate enforcing nothing (see GraphQLite, teardown 2026-09-08).",
+  "populated": false,
+  "_unpopulated_because": "Generating a floor requires a benchmark run, which is a standing HITL gate in CLAUDE.md (the ingest path uses the PAID extraction model). The mechanism ships without a floor rather than with a fabricated one. check-recall-floor.sh FAILS while this is false, so an unset floor can never be mistaken for a green gate.",
+  "_populate_with": "bash scripts/check-recall-floor.sh --update results/run-<stamp>.jsonl"
+}
