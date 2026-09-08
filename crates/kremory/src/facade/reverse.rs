@@ -6,7 +6,8 @@
 //! `ForgetRequest`'s "no accidental `.await`" discipline for a mutating op), each
 //! delegating to the deterministic substrate reversal
 //! (`core::dream::provenance::reversal`) and returning the HONEST outcome type
-//! (§3.1) — never a bare `Applied`. The two SEE builders (`MutationHistory` /
+//! (e.g. `already_undone`/`already_live`/`NotSuperseded`) — never a bare
+//! `Applied`. The two SEE builders (`MutationHistory` /
 //! `ListMutations`) are read-only and `IntoFuture` (await directly, like
 //! `RecallRequest`), returning `Vec<MutationRecord>`. The napi mirror is
 //! mechanical (Tier-0, not built here).
@@ -25,12 +26,12 @@ use crate::memory::engine_handle::namespace_to_group_id;
 
 // ── UnmergeRequest ─────────────────────────────────────────────────────────
 
-/// Reverse a prior entity-merge by its `mutation_id` (§4.2). Obtain via
+/// Reverse a prior entity-merge by its `mutation_id`. Obtain via
 /// `mem.unmerge(mutation_id)`.
 ///
 /// Fully restores the loser entity, its facts, its episodic edges, and the
 /// keeper's overwritten `access_count` / `ner_confidence`, then records a merge
-/// NOGOOD so the next `dream()` will NOT re-merge the split pair (§6.2).
+/// NOGOOD so the next `dream()` will NOT re-merge the split pair.
 /// Idempotent: a second `.execute()` returns `already_undone = true`.
 ///
 /// Must call `.execute()` — this is a mutating operation.
@@ -65,7 +66,7 @@ impl UnmergeRequest<'_> {
 // ── RestoreArchivedRequest ─────────────────────────────────────────────────
 
 /// Restore a fact previously moved to `facts_archive` (P2 archival) back into
-/// `facts` (§3.2 / §4.4). Obtain via `mem.restore_archived_fact(archived_fact_id)`.
+/// `facts`. Obtain via `mem.restore_archived_fact(archived_fact_id)`.
 ///
 /// Idempotent: if the fact is already live, returns `already_live = true` and
 /// writes nothing. Must call `.execute()`.
@@ -98,7 +99,7 @@ impl RestoreArchivedRequest<'_> {
 // ── UnsupersedeRequest ─────────────────────────────────────────────────────
 
 /// Clear a supersession bound (`valid_to` / `expired_at`) set by
-/// `supersede(...)`, re-opening the fact as currently-true (§4.5). Obtain via
+/// `supersede(...)`, re-opening the fact as currently-true. Obtain via
 /// `mem.unsupersede(fact_id)`.
 ///
 /// Idempotent: a fact with no bound set returns `NotSuperseded` (an honest
@@ -129,10 +130,10 @@ impl UnsupersedeRequest<'_> {
     }
 }
 
-// ── EditEntityRequest (§4.3 — the diarization rename/retype cascade) ─────────
+// ── EditEntityRequest (the diarization rename/retype cascade) ────────────────
 
-/// Edit an entity (retype or rename/rekey) with full FK-propagation + provenance
-/// (§4.3). Obtain via `mem.edit_entity(entity_id)`, then set exactly one of
+/// Edit an entity (retype or rename/rekey) with full FK-propagation + provenance.
+/// Obtain via `mem.edit_entity(entity_id)`, then set exactly one of
 /// `.rename(new_id)` / `.retype(type_id)`. Must call `.execute()`.
 pub struct EditEntityRequest<'a> {
     pub(super) memory: &'a Memory,
@@ -229,9 +230,9 @@ impl<'a> EditEntityRequest<'a> {
     }
 }
 
-// ── UndoEntityEditRequest (§4.3 — reverse a prior edit) ─────────────────────
+// ── UndoEntityEditRequest (reverse a prior edit) ──────────────────────────────
 
-/// Reverse a prior `edit_entity` from its provenance snapshot (§4.3). Obtain via
+/// Reverse a prior `edit_entity` from its provenance snapshot. Obtain via
 /// `mem.undo_entity_edit(mutation_id)`. Idempotent: a second call is a zero-count
 /// no-op. Must call `.execute()`.
 pub struct UndoEntityEditRequest<'a> {
@@ -261,9 +262,9 @@ impl UndoEntityEditRequest<'_> {
     }
 }
 
-// ── DeleteEntityRequest (§4.4 — reversible delete cascade) ──────────────────
+// ── DeleteEntityRequest (reversible delete cascade) ───────────────────────────
 
-/// Delete an entity, reversibly (§4.4). Obtain via `mem.delete_entity(entity_id)`.
+/// Delete an entity, reversibly. Obtain via `mem.delete_entity(entity_id)`.
 /// Archives the entity's facts (recoverable — never hard-deleted), removes its edges
 /// / community membership / FTS / row, and retracts the DERIVED artifacts of
 /// neighbours whose live-fact support drops to zero. Undoable via
@@ -309,9 +310,9 @@ impl<'a> DeleteEntityRequest<'a> {
     }
 }
 
-// ── DeleteFactRequest (§4.5 — reversible fact delete) ───────────────────────
+// ── DeleteFactRequest (reversible fact delete) ────────────────────────────────
 
-/// Delete a single fact, reversibly (§4.5). Obtain via `mem.delete_fact(fact_id)`.
+/// Delete a single fact, reversibly. Obtain via `mem.delete_fact(fact_id)`.
 /// The fact is archived (recoverable via `restore_archived_fact`) and the DERIVED
 /// artifacts of either endpoint whose support drops to zero are retracted. Undoable
 /// via `undo_delete_fact(mutation_id)`. A fact id is global (not namespace-scoped).
@@ -342,9 +343,9 @@ impl DeleteFactRequest<'_> {
     }
 }
 
-// ── UndoDeleteEntityRequest / UndoDeleteFactRequest (§4.4 / §4.5) ────────────
+// ── UndoDeleteEntityRequest / UndoDeleteFactRequest ───────────────────────────
 
-/// Reverse a prior `delete_entity` from its provenance snapshot (§4.4). Obtain via
+/// Reverse a prior `delete_entity` from its provenance snapshot. Obtain via
 /// `mem.undo_delete_entity(mutation_id)`. Idempotent: a second call is a zero-count
 /// no-op. Must call `.execute()`.
 pub struct UndoDeleteEntityRequest<'a> {
@@ -374,7 +375,7 @@ impl UndoDeleteEntityRequest<'_> {
     }
 }
 
-/// Reverse a prior `delete_fact` from its provenance snapshot (§4.5). Obtain via
+/// Reverse a prior `delete_fact` from its provenance snapshot. Obtain via
 /// `mem.undo_delete_fact(mutation_id)`. Idempotent. Must call `.execute()`.
 pub struct UndoDeleteFactRequest<'a> {
     pub(super) memory: &'a Memory,
@@ -403,9 +404,9 @@ impl UndoDeleteFactRequest<'_> {
     }
 }
 
-// ── MutationHistoryRequest (§3 inspect surface — SEE) ───────────────────────
+// ── MutationHistoryRequest (inspect surface — SEE) ────────────────────────────
 
-/// Inspect the mutations that touched one entity (§3 "Inspect surface"). Obtain
+/// Inspect the mutations that touched one entity. Obtain
 /// via `mem.mutation_history(entity_id)`. Read-only — `.await` it for a
 /// newest-first `Vec<MutationRecord>` (includes already-undone mutations).
 ///
@@ -452,9 +453,9 @@ impl<'a> IntoFuture for MutationHistoryRequest<'a> {
     }
 }
 
-// ── ListMutationsRequest (§3 inspect surface — SEE) ─────────────────────────
+// ── ListMutationsRequest (inspect surface — SEE) ──────────────────────────────
 
-/// List logged graph mutations, newest-first (§3 "Inspect surface"). Obtain via
+/// List logged graph mutations, newest-first. Obtain via
 /// `mem.list_mutations()`. Read-only — `.await` it for a `Vec<MutationRecord>`.
 ///
 /// Knobs (all optional): `.in_namespace(ns)` scopes to one namespace (else the
@@ -531,11 +532,11 @@ impl<'a> IntoFuture for ListMutationsRequest<'a> {
     }
 }
 
-// ── UndoOutcome / UndoRequest (§3.1 — the unified reversal dispatcher, R1/R2) ──
+// ── UndoOutcome / UndoRequest (the unified reversal dispatcher) ───────────────
 
 /// What a unified [`Memory::undo`](super::Memory::undo) call ACTUALLY reversed —
 /// one variant per log-dispatchable [`MutationKind`], each wrapping that kind's
-/// HONEST per-op outcome type (§3.1, never a bare `Applied`). This is the return
+/// HONEST per-op outcome type, never a bare `Applied`. This is the return
 /// of the ONE umbrella undo a consumer reaches for after iterating
 /// [`list_mutations`](super::Memory::list_mutations): match the variant when you
 /// need the per-kind counts, or ignore it for fire-and-forget reversal.
@@ -670,7 +671,7 @@ impl<'a> UndoRequest<'a> {
             }
         }
 
-        // parse-loudly (§2.1): an unrecognised kind tag is a hard error, never
+        // Parse-loudly: an unrecognised kind tag is a hard error, never
         // silently skipped — a log row we cannot classify must surface.
         let kind = MutationKind::from_tag(&kind_tag).map_err(MemoryError::Core)?;
 
