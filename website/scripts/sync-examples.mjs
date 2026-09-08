@@ -34,6 +34,12 @@ const PUBLISHED = [
     title: 'Remembering when things changed',
     position: 2,
   },
+  {
+    file: 'agent_memory_with_ollama.rs',
+    slug: 'agent-memory-with-ollama',
+    title: 'Building a graph from prose (needs Ollama)',
+    position: 3,
+  },
 ];
 
 mkdirSync(OUT_DIR, {recursive: true});

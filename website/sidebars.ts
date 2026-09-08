@@ -30,6 +30,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'examples/offline-remember-recall',
         'examples/remembers-across-sessions',
+        'examples/agent-memory-with-ollama',
       ],
     },
     {
