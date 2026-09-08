@@ -127,7 +127,7 @@ Against every production agent-memory deployment that already has an embedding m
 
 This maps to the "Sub-headline: Pure Rust. BYOM. Single binary. Apache-2.0." positioning in the marketing strategy.
 
-The BYOM choice directly enables the "Embeddable library" framing in ADR-005 §4: kremory is infrastructure that embeds inside other people's products. Infrastructure that auto-downloads a 440 MB model on first use cannot credibly call itself embeddable.
+The BYOM choice directly enables the "Embeddable library" framing in ADR-005 section 4: kremory is infrastructure that embeds inside other people's products. Infrastructure that auto-downloads a 440 MB model on first use cannot credibly call itself embeddable.
 
 ---
 

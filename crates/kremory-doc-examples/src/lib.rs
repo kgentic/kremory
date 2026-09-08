@@ -27,17 +27,58 @@
 //!
 //! Adding a new doc file: add it to `DOC_FILES` in `generate_docs.py`, add a
 //! matching `mod` below pointing at the new `generated/<name>.generated.md`.
-//! RULE-002's `>= 60` extracted-block guard (in `generate_docs.py`) is the
-//! safety net if this list ever silently drifts out of sync with the real
-//! doc tree.
+//! `check_doc_files_complete()` in `generate_docs.py` asserts this module list
+//! against `DOC_FILES` and `DOC_FILES` against the real doc tree, so a file
+//! missing from either place fails loudly instead of silently dropping out of
+//! the compile set. RULE-002's `>= 60` block floor is a separate, weaker check
+//! — it catches a broken extractor, not a single dropped file.
 
 #![allow(unused)]
 
 #[doc = include_str!("../generated/README.md.generated.md")]
 mod readme_md {}
 
-#[doc = include_str!("../generated/docs__api.md.generated.md")]
-mod docs_api_md {}
+#[doc = include_str!("../generated/docs__api__index.md.generated.md")]
+mod docs_api_index_md {}
+
+#[doc = include_str!("../generated/docs__api__setup.md.generated.md")]
+mod docs_api_setup_md {}
+
+#[doc = include_str!("../generated/docs__api__namespaces.md.generated.md")]
+mod docs_api_namespaces_md {}
+
+#[doc = include_str!("../generated/docs__api__ingest.md.generated.md")]
+mod docs_api_ingest_md {}
+
+#[doc = include_str!("../generated/docs__api__recall.md.generated.md")]
+mod docs_api_recall_md {}
+
+#[doc = include_str!("../generated/docs__api__bi-temporal.md.generated.md")]
+mod docs_api_bi_temporal_md {}
+
+#[doc = include_str!("../generated/docs__api__dream.md.generated.md")]
+mod docs_api_dream_md {}
+
+#[doc = include_str!("../generated/docs__api__reversibility.md.generated.md")]
+mod docs_api_reversibility_md {}
+
+#[doc = include_str!("../generated/docs__api__async-and-events.md.generated.md")]
+mod docs_api_async_and_events_md {}
+
+#[doc = include_str!("../generated/docs__api__advanced.md.generated.md")]
+mod docs_api_advanced_md {}
+
+#[doc = include_str!("../generated/docs__api__feature-flags.md.generated.md")]
+mod docs_api_feature_flags_md {}
+
+#[doc = include_str!("../generated/docs__api__node-binding.md.generated.md")]
+mod docs_api_node_binding_md {}
+
+#[doc = include_str!("../generated/docs__releases__upgrade-guide.md.generated.md")]
+mod docs_releases_upgrade_guide_md {}
+
+#[doc = include_str!("../generated/docs__getting-started.md.generated.md")]
+mod docs_getting_started_md {}
 
 #[doc = include_str!("../generated/docs__benchmarks.md.generated.md")]
 mod docs_benchmarks_md {}

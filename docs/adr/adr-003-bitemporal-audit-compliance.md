@@ -128,8 +128,8 @@ kremory's contradiction resolver is an active algorithm, not a passive label. Th
 | Project | Time model | Source |
 |---|---|---|
 | **kremory** | **Two-clock: transaction_time + valid_time** | This ADR; D.6 architecture spec |
-| cogniplex/codemem | One clock: `valid_from`/`valid_to` on edges and nodes only (migrations 003+015); no contradiction resolution engine | `codemem-2026-05-22.md` §3.6–3.7 |
-| CodeGraph-rust | Operational timestamps only; no temporal graph model | `codegraph-rust-2026-05-22.md` §2.5 |
+| cogniplex/codemem | One clock: `valid_from`/`valid_to` on edges and nodes only (migrations 003+015); no contradiction resolution engine | `codemem-2026-05-22.md` section 3.6–3.7 |
+| CodeGraph-rust | Operational timestamps only; no temporal graph model | `codegraph-rust-2026-05-22.md` section 2.5 |
 | Mem0 | No temporal graph (graph layer removed in v2 migration) | internal competitor research, 2026-05-19 (unpublished) |
 | Letta | No temporal model | internal competitor research, 2026-05-19 (unpublished) |
 | Zep/Graphiti | Partial: entity/fact timestamps, supersession edges, one clock | internal competitor research, 2026-05-19 (unpublished) |
@@ -148,7 +148,7 @@ The bi-temporal model is kremory's most technically defensible differentiator. I
 **Marketing positioning**:
 - **Headline**: "Embed agent memory in your app. Pure Rust. BYOM. Apache-2.0."
 - **Sub-headline**: "Pure Rust agent memory engine. Single binary. No server process. No subscription required to ship."
-- **Deep feature disclosure** (§4 of the comparison doc, §4 of the Show HN body): bi-temporal model as audit features for regulated industries
+- **Deep feature disclosure** (section 4 of the comparison doc, section 4 of the Show HN body): bi-temporal model as audit features for regulated industries
 
 The bi-temporal model is the feature that matters most to developers in regulated industries (legal, healthcare, fintech) who need immutable audit history and retroactive correction. It is disclosed in the comparison doc and the architecture doc as a deep technical capability — not in the 10-word marketing headline.
 

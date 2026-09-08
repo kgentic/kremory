@@ -5,7 +5,7 @@
 > crate on crates.io (not this repo's source), and a program written using
 > only what `cargo doc` / [docs.rs](https://docs.rs/kremory) show — the same
 > path a brand-new user takes. Every command and every line of output below
-> is real, not smoothed over. See [`api.md`](./api.md) for the full reference
+> is real, not smoothed over. See [the API reference](./api/index.md) for the full reference
 > once you're past this page.
 
 ## Prerequisites
@@ -13,7 +13,7 @@
 - Rust + Cargo (this was run against `rustc 1.93.1` / `cargo 1.93.1`; kremory's
   stated MSRV is 1.86).
 - For the worked example below specifically (not for kremory in general —
-  kremory lets you bring your own LLM and embedder, see [§2 of `api.md`](./api.md)): a local
+  kremory lets you bring your own LLM and embedder, see [Setup](./api/setup.md)): a local
   [Ollama](https://ollama.com) server with two models pulled:
 
   ```sh
@@ -54,7 +54,7 @@ assumed) as part of writing this guide:
   every other optional feature with a `-`. A bare `cargo add kremory` gives
   you the fused BM25/FTS5 + dense-episode recall arms out of the box — you do
   not need to opt in to get kremory's real recall quality (see
-  [`api.md`](./api.md), §13 "Feature flags", for what each flag does).
+  [Feature flags](./api/feature-flags.md) for what each flag does).
 - **`Cargo.toml` resolves to the real published crate**, not this repo:
 
   ```toml
@@ -177,13 +177,13 @@ verified:
 - **`Memory::open(path).with_llm(...).with_embedder(...).await?`** — Tier 2,
   fully custom BYOM (bring your own chat provider) plus your own embedder.
   This is what you want for a production deployment or a
-  non-Ollama/OpenAI/Anthropic backend. See [`api.md` §2](./api.md) for the
+  non-Ollama/OpenAI/Anthropic backend. See [Setup](./api/setup.md) for the
   full builder walkthrough — it needs more setup than this guide's minimal
   path, which is why it isn't the first thing shown here.
 
 ## Next steps
 
-- [`api.md`](./api.md) — the full API reference (builder customization,
+- [The API reference](./api/index.md) — the full reference (builder customization,
   namespaces, dream/consolidation, undo, error handling, feature flags).
 - [`observability.md`](./observability.md) — metrics + tracing if you want
   to see what kremory is doing under the hood.
@@ -191,5 +191,5 @@ verified:
   returns as an `Err` vs. what it treats as an invariant violation
   (`panic!`).
 - The Node binding (`@kgentic-ai/kremory-node`) is **not yet published** —
-  see [`api.md` §14](./api.md) if you're evaluating it, but `npm install`
+  see [the Node binding](./api/node-binding.md) if you're evaluating it, but `npm install`
   will not work today.

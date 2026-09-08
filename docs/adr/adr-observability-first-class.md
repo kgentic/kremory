@@ -67,12 +67,12 @@ refs:
 
 rql-core/rql-memory v0.1.0 ships with **0/113 dual-emit compliance** — 113 production `metrics::counter!/histogram!/gauge!` sites paired with **zero** `tracing::*` calls. `crates/rqlm/src/graph.rs` (dream-phase orchestrator) is completely dark. No OTel integration. No BYOM cost observability. No SLO file. No consumer-facing observability API.
 
-Full inventory + verification in companion research doc `rql-core-memory-observability-first-class-research-2026-05-20.md`. Headline findings re-stated in §10 below.
+Full inventory + verification in companion research doc `rql-core-memory-observability-first-class-research-2026-05-20.md`. Headline findings re-stated in section 10 below.
 
 ### Constraints driving this ADR
 
 1. **CLAUDE.md `.claude/rules/observability.md`** — dual-emit (`metrics::` + `tracing::`) is mandatory project-wide. rql-core/rql-memory currently violates this in 100% of metric sites.
-2. **`feedback_no_shortcuts_zero_tech_debt`** — observability documented in SCOPE-003 / SCOPE-303 / spec §841 but unimplemented = tech debt. Must fix in scope.
+2. **`feedback_no_shortcuts_zero_tech_debt`** — observability documented in SCOPE-003 / SCOPE-303 / spec section 841 but unimplemented = tech debt. Must fix in scope.
 3. **rql-core is OSS Apache-2.0** — published independently. External consumers (BYOM customers, future cloud) need a stable observability contract. Library cannot install global exporters.
 4. **rql-memory = Zep-equivalent paid SDK** — multi-tenant; cost attribution per provider per tenant is a first-class product feature, not a debugging affordance.
 5. **Cross-layer correlation** — rql-core must be join-able to the host application's `CycleMetrics` JSONL for end-to-end traceability.
@@ -85,7 +85,7 @@ Full inventory + verification in companion research doc `rql-core-memory-observa
 
 Every `metrics::counter!/histogram!/gauge!` site in rql-core + rql-memory production code MUST have a paired `tracing::info!/warn!/error!` within 5 source lines. The pair is co-located, single-source-of-truth — no separate "logging strategy" that drifts from metrics.
 
-**Enforcement**: `scripts/check-dual-emit.sh` runs in PR CI per test-strategy §11. Body of script per runbook §6.3 lines 885–901. Allowlist for explicit exceptions (e.g. test helpers) lives at `monitoring/dual-emit-allowlist.txt` with one path per line + justification comment.
+**Enforcement**: `scripts/check-dual-emit.sh` runs in PR CI per test-strategy section 11. Body of script per runbook section 6.3 lines 885–901. Allowlist for explicit exceptions (e.g. test helpers) lives at `monitoring/dual-emit-allowlist.txt` with one path per line + justification comment.
 
 **Exception process**: removal from gate requires a one-line allowlist entry with comment + reviewer ack in PR description. Permanent removal blocked.
 
@@ -99,7 +99,7 @@ rql-core emits only via `tracing` macros + `metrics::*!` macros. rql-core MUST N
 
 rql-memory wraps rql-core and exposes `init_telemetry(config: RqlmTelemetryConfig)` for cloud/BYOM consumers. the host application installs its own recorder + subscriber in `main.rs` per existing ADR-observability-prometheus-facade.
 
-**Rationale**: confirmed via `metrics-rs` and `tracing` canonical docs (research doc §4.2). Universal pattern across tokio, axum, hyper, sea-orm, sqlx.
+**Rationale**: confirmed via `metrics-rs` and `tracing` canonical docs (research doc section 4.2). Universal pattern across tokio, axum, hyper, sea-orm, sqlx.
 
 ### D3 — OTel integration behind `otel` feature flag; default build OTel-free
 
@@ -158,7 +158,7 @@ Consumer-side worker: `let _guard = event.trace_cx.as_ref().map(|cx| cx.attach()
 
 When `otel` feature disabled, `trace_cx` field is cfg-omitted (zero overhead).
 
-**Rationale**: `tracing`'s thread-local span context does NOT cross `tokio::sync::mpsc` channel sends. Pattern B from research doc §4.3 — verified canonical.
+**Rationale**: `tracing`'s thread-local span context does NOT cross `tokio::sync::mpsc` channel sends. Pattern B from research doc section 4.3 — verified canonical.
 
 ### D6 — Cross-crate `trace_id` field on `IngestResult`
 
@@ -254,7 +254,7 @@ Read at startup. `kremory_core_cost_usd_total{provider, model, operation}` count
 ### D10 — `TokenTrackingEmbedder` wrapper enforces emission (anti-langchain-rust pattern)
 
 ```rust
-pub struct TokenTrackingEmbedder<E: EmbeddingProvider> { /* per research doc §5.6 */ }
+pub struct TokenTrackingEmbedder<E: EmbeddingProvider> { /* per research doc section 5.6 */ }
 
 impl<E: EmbeddingProvider> EmbeddingProvider for TokenTrackingEmbedder<E> {
     async fn embed(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbedError> {
@@ -291,7 +291,7 @@ threshold   = <number>
 description = "..."
 ```
 
-Full SLO list per research doc §5.3. `MetricsReport::assert_slos()` reader gets one new filter pass to match label subsets. Aligns with ADR-observability-slo-toml; not a parallel surface.
+Full SLO list per research doc section 5.3. `MetricsReport::assert_slos()` reader gets one new filter pass to match label subsets. Aligns with ADR-observability-slo-toml; not a parallel surface.
 
 ### D12 — Span name convention `{domain}.{operation}` lowercase dot-separated
 
@@ -306,13 +306,13 @@ Matches Graphiti's verified convention (`search.embed_query_vector`, `execute_sc
 
 Existing `rql.db.entity.insert_ms` → rename to `kremory_core_db_entity_insert_seconds` (Prometheus convention: dots cause issues in some PromQL contexts; `_seconds` is the canonical time unit suffix; histograms record in seconds-as-f64, not ms-as-u64).
 
-Migration in Phase C.3 — one mechanical commit per crate. Update test-strategy §11 grep gate to match new names. Document old→new mapping in commit body for downstream consumer migration.
+Migration in Phase C.3 — one mechanical commit per crate. Update test-strategy section 11 grep gate to match new names. Document old→new mapping in commit body for downstream consumer migration.
 
 ### D14 — Anti-pattern enforcement via grep gates
 
 Three CI grep gates run in PR CI:
 
-1. **Dual-emit gate** (`scripts/check-dual-emit.sh`): every `metrics::` paired with `tracing::` within 5 lines. Body per runbook §6.3.
+1. **Dual-emit gate** (`scripts/check-dual-emit.sh`): every `metrics::` paired with `tracing::` within 5 lines. Body per runbook section 6.3.
 2. **Cardinality gate** (`scripts/check-cardinality.sh`): no `"<uuid|name|prompt|user>"` substring in `metrics::*` macro calls.
 3. **`.enter()`-across-`.await` gate** (`scripts/check-span-enter.sh`): no `.enter()` calls inside `async` functions in rql-core/rql-memory source (use `.instrument()` instead).
 
@@ -389,7 +389,7 @@ pub fn init_telemetry(config: RqlmTelemetryConfig) -> Result<TelemetryHandle> {
 
 ### Alt 5 — Per-entity child spans (one span per entity per tick)
 
-**Rejected.** Universal anti-pattern observed across bevy / tokio / ractor / sqlx. Bevy explicitly: one outer-boundary span, entity identity as field. Confirmed by DAG landscape research §4 (universal absence). Aligns with cardinality discipline — entity UUIDs are span fields, not span names.
+**Rejected.** Universal anti-pattern observed across bevy / tokio / ractor / sqlx. Bevy explicitly: one outer-boundary span, entity identity as field. Confirmed by DAG landscape research section 4 (universal absence). Aligns with cardinality discipline — entity UUIDs are span fields, not span names.
 
 ## References
 

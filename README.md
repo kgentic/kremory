@@ -291,7 +291,7 @@ Both clocks are stored on every fact, retroactive correction never overwrites hi
 
 `.as_of(t)` filters the **valid-time** axis server-side: *"what was true in the world at t"*.
 The transaction-time axis is **returned but not queryable** — you filter `recorded_at`
-yourself on the results. See [the audit-query section](docs/api.md#audit-query) for the worked
+yourself on the results. See [the audit-query section](docs/api/bi-temporal.md#audit-query) for the worked
 example and its limits.
 
 > **Known limitation — `valid_to` is not extracted automatically.** Automatic extraction fills
@@ -334,7 +334,7 @@ let ctx = mem.recall("user preferences")
 
 ## Full API reference
 
-See [docs/api.md](https://github.com/kgentic/kremory/blob/main/docs/api.md) for the complete reference:
+See [the API reference](https://github.com/kgentic/kremory/blob/main/docs/api/index.md) for the complete surface:
 
 1. Quickstart
 2. Customizing the LLM/embedder

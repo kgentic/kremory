@@ -48,12 +48,33 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 CRATE_DIR = Path(__file__).resolve().parent
 OUT_DIR = CRATE_DIR / "generated"
 
-# Every markdown file in scope for RULE-001 (docs/*.md + README.md). Adding a
-# new doc file requires adding it here AND wiring a matching `mod` in
-# src/lib.rs — RULE-002's >=60-block guard is the safety net if this list
-# silently drifts out of sync with the real doc tree.
+# Every markdown file in scope for RULE-001 (the published doc corpus +
+# README.md). Adding a new doc file requires adding it here AND wiring a
+# matching `mod` in src/lib.rs.
+#
+# Both of those are places you can silently forget, which is why
+# `check_doc_files_complete()` below asserts this list against the real tree
+# rather than trusting it. RULE-002's `>= 60`-block floor is NOT that check:
+# it catches a broken extractor, but a single dropped file whose fences leave
+# the remaining count above 60 sails straight past it.
 DOC_FILES = [
-    REPO_ROOT / "docs" / "api.md",
+    REPO_ROOT / "docs" / "api" / "index.md",
+    REPO_ROOT / "docs" / "api" / "setup.md",
+    REPO_ROOT / "docs" / "api" / "namespaces.md",
+    REPO_ROOT / "docs" / "api" / "ingest.md",
+    REPO_ROOT / "docs" / "api" / "recall.md",
+    REPO_ROOT / "docs" / "api" / "bi-temporal.md",
+    REPO_ROOT / "docs" / "api" / "dream.md",
+    REPO_ROOT / "docs" / "api" / "reversibility.md",
+    REPO_ROOT / "docs" / "api" / "async-and-events.md",
+    REPO_ROOT / "docs" / "api" / "advanced.md",
+    REPO_ROOT / "docs" / "api" / "feature-flags.md",
+    REPO_ROOT / "docs" / "api" / "node-binding.md",
+    REPO_ROOT / "docs" / "releases" / "upgrade-guide.md",
+    # NOTE: getting-started.md was absent from this list until 2026-09-08 —
+    # its worked example had never been compiled. Found by the completeness
+    # check below on its first run.
+    REPO_ROOT / "docs" / "getting-started.md",
     REPO_ROOT / "docs" / "benchmarks.md",
     REPO_ROOT / "docs" / "comparison.md",
     REPO_ROOT / "docs" / "error-handling-policy.md",
@@ -63,6 +84,68 @@ DOC_FILES = [
     REPO_ROOT / "docs" / "testing.md",
     REPO_ROOT / "README.md",
 ]
+
+# Directories under docs/ that are NOT part of the published corpus and are
+# therefore deliberately absent from DOC_FILES. Each needs a reason; anything
+# not listed here and not in DOC_FILES makes the completeness check fail.
+DOC_DIRS_EXCLUDED = {
+    "specs": "process artefacts for the docs audit — not published to consumers",
+    "adr": "architecture decision records — internal rationale, not consumer docs",
+    "decisions": "decision records — internal, not consumer docs",
+    "research": "research artefacts — internal, not consumer docs",
+}
+
+
+def check_doc_files_complete() -> None:
+    """Fail loudly when DOC_FILES has drifted from the real doc tree.
+
+    A file dropped from DOC_FILES stops being compiled while the harness keeps
+    reporting green, so absence has to be an error rather than something a
+    reader is expected to notice. Checks BOTH places a file can go missing:
+    this list, and the hand-wired `mod` block in src/lib.rs.
+    """
+    on_disk = set()
+    for md in (REPO_ROOT / "docs").rglob("*.md"):
+        top = md.relative_to(REPO_ROOT / "docs").parts[0]
+        if top in DOC_DIRS_EXCLUDED:
+            continue
+        on_disk.add(md.resolve())
+    on_disk.add((REPO_ROOT / "README.md").resolve())
+
+    listed = {f.resolve() for f in DOC_FILES}
+
+    def rel(paths):
+        return sorted(str(x.relative_to(REPO_ROOT)) for x in paths)
+
+    missing, stale = on_disk - listed, listed - on_disk
+    problems = []
+    if missing:
+        problems.append(
+            "these doc files exist but are NOT in DOC_FILES, so their ```rust "
+            f"blocks are not being compiled: {rel(missing)}"
+        )
+    if stale:
+        problems.append(
+            f"these DOC_FILES entries no longer exist on disk: {rel(stale)}"
+        )
+
+    # src/lib.rs wires one `mod` per generated file by hand — a second place to
+    # forget, with the same silent-green failure mode.
+    lib_rs = (CRATE_DIR / "src" / "lib.rs").read_text()
+    for f in DOC_FILES:
+        stem = f.relative_to(REPO_ROOT).as_posix().replace("/", "__")
+        if f'generated/{stem}.generated.md' not in lib_rs:
+            problems.append(
+                f"{f.relative_to(REPO_ROOT)} is in DOC_FILES but has no "
+                f"`#[doc = include_str!]` module in src/lib.rs, so it will not "
+                f"be compiled"
+            )
+
+    if problems:
+        raise SystemExit(
+            "doc-compile harness is out of sync with the doc tree:\n  - "
+            + "\n  - ".join(problems)
+        )
 
 # RULE-002: 60 ~= 87% of the 69-block count measured 2026-09-06/07. Vacuous-
 # pass guard — if the extractor breaks (or the doc surface shrinks a lot),
@@ -483,6 +566,9 @@ def generate() -> tuple[list[Unit], list[Block], int]:
 
 
 def main() -> int:
+    # Before anything else: a file missing from DOC_FILES silently stops being
+    # compiled, and every downstream number would still look healthy.
+    check_doc_files_complete()
     units, rust_blocks, excluded_count = generate()
     total = len(rust_blocks)
     print(f"Extracted {total} rust code blocks across {len(DOC_FILES)} doc files.")
