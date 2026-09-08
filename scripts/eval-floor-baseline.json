@@ -1,6 +1,27 @@
 {
-  "_comment": "Eval floor for scripts/check-eval-floor.sh (TD-242). A RATCHET, not a target. Re-baseline deliberately after a measured improvement and COMMIT IT — an unrefreshed floor is a green gate enforcing nothing (see GraphQLite, teardown 2026-09-08).",
-  "populated": false,
-  "_unpopulated_because": "Generating a floor requires a benchmark run, which is a standing HITL gate in CLAUDE.md (the ingest path uses the PAID extraction model). The mechanism ships without a floor rather than with a fabricated one. check-eval-floor.sh FAILS while this is false, so an unset floor can never be mistaken for a green gate.",
-  "_populate_with": "bash scripts/check-eval-floor.sh --update results/run-<stamp>.jsonl"
+  "_comment": "Eval floor for scripts/check-eval-floor.sh (TD-242). A RATCHET, not a target. Re-baseline deliberately after a measured improvement and COMMIT IT \u2014 an unrefreshed floor is a green gate enforcing nothing (see GraphQLite, teardown 2026-09-08).",
+  "populated": true,
+  "generated_from": "results/floor/eval-floor-20260908.slim.json",
+  "generated_at": "2026-09-08T14:51:46Z",
+  "headline": "1373/1540 = 89.2% (446 adversarial NOT SCORED for correctness; 1986 questions asked \u2014 their RETRIEVAL is scored by evidence_eval.py)",
+  "scored_questions": 1540,
+  "unscored_questions": 446,
+  "overall_correct_pct": 89.16,
+  "by_category_correct_pct": {
+    "multi-hop": 63.54,
+    "open-domain": 95.6,
+    "single-hop": 80.85,
+    "temporal": 87.23
+  },
+  "provenance": {
+    "rrf_k": 1,
+    "content_stream_weight": 1.0,
+    "graph_degree_weight": 0.05000000074505806,
+    "temporal_weight": 0.0,
+    "rerank_enabled": false,
+    "features": "content-search",
+    "git_sha": "db29b3bd53f2ea6dd963a1727bc79550f8592466",
+    "scorer": "substring",
+    "server_mode": "hybrid"
+  }
 }

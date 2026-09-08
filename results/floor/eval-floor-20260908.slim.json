@@ -1,0 +1,70 @@
+{
+  "mode": "codemem",
+  "scorer": "substring",
+  "server_mode": "hybrid",
+  "capture_text_block": false,
+  "provenance": {
+    "git_sha": "db29b3bd53f2ea6dd963a1727bc79550f8592466",
+    "harness_git_sha": "db29b3bd53f2ea6dd963a1727bc79550f8592466",
+    "binary": {
+      "available": true,
+      "crate_version": "0.1.0",
+      "exe": "target/release/kremory-http",
+      "exe_mtime_unix": 1788878599,
+      "exe_size_bytes": 12398608,
+      "features": {
+        "content_search": true,
+        "prometheus": false,
+        "rerank": false
+      }
+    },
+    "content_stream_weight": 1.0,
+    "rrf_k": 1,
+    "graph_degree_weight": 0.05000000074505806,
+    "temporal_weight": 0.0,
+    "rerank_enabled": false,
+    "features": "content-search",
+    "provenance_source": "health"
+  },
+  "total_questions": 1986,
+  "o11y": {
+    "metrics_endpoint_present": false,
+    "tokens_total": null,
+    "cost_usd_total": null,
+    "recall_latency_ms_p50": 42.4,
+    "recall_latency_ms_p95": 51.7,
+    "recall_latency_ms_mean": 44.0,
+    "raw_metric_totals": {}
+  },
+  "category_stats": {
+    "temporal": {
+      "correct": 280,
+      "total": 321
+    },
+    "multi-hop": {
+      "correct": 61,
+      "total": 96
+    },
+    "single-hop": {
+      "correct": 228,
+      "total": 282
+    },
+    "open-domain": {
+      "correct": 804,
+      "total": 841
+    }
+  },
+  "unscored_stats": {
+    "adversarial": 446
+  },
+  "scored_questions": 1540,
+  "unscored_questions": 446,
+  "headline": "1373/1540 = 89.2% (446 adversarial NOT SCORED for correctness; 1986 questions asked \u2014 their RETRIEVAL is scored by evidence_eval.py)",
+  "graph_integrity": {
+    "status": "skipped",
+    "reason": "no --graph-db and no KREMORY_MCP_DB_PATH; cannot verify the graph survived consolidation"
+  },
+  "ingest_aborted": [],
+  "ingest_attempted": 0,
+  "_slim_note": "Per-question `results` (recalled_memories payloads, 26MB) stripped for committability. Everything scripts/check-eval-floor.sh derives from is retained: category_stats, scored_questions, headline, provenance, scorer, server_mode. The per-question record lives beside this as run-*.jsonl. Full artefact kept locally only."
+}

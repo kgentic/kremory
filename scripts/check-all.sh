@@ -22,7 +22,7 @@
 #
 # ── USAGE ────────────────────────────────────────────────────────────────────
 #   bash scripts/check-all.sh
-#   bash scripts/check-all.sh --results results/run-<stamp>.jsonl
+#   bash scripts/check-all.sh --results results/floor/<run>.json
 #
 # `--results` is what enables the eval floor. It is opt-in on purpose: silently
 # scoring whatever results file happens to be newest would compare an unrelated
