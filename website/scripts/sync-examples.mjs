@@ -35,10 +35,16 @@ const PUBLISHED = [
     position: 2,
   },
   {
+    file: 'multi_tenant_isolation.rs',
+    slug: 'multi-tenant-isolation',
+    title: 'One database, many customers',
+    position: 3,
+  },
+  {
     file: 'agent_memory_with_ollama.rs',
     slug: 'agent-memory-with-ollama',
     title: 'Building a graph from prose (needs Ollama)',
-    position: 3,
+    position: 4,
   },
 ];
 

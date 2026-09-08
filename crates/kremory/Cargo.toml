@@ -37,6 +37,7 @@ include = [
     # internal diagnostics and MUST stay out.
     "examples/offline_remember_recall.rs",
     "examples/remembers_across_sessions.rs",
+    "examples/multi_tenant_isolation.rs",
     "examples/agent_memory_with_ollama.rs",
 ]
 
