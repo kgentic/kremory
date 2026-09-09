@@ -65,6 +65,11 @@ run file-size-ratchet    "" bash scripts/check-file-size-ratchet.sh
 # deterministic, so it belongs here — in seconds, not minutes.
 run e2e-consumer-compiles "" bash -c 'cd e2e-consumer && cargo build --quiet'
 
+# The 14 offline examples SHIP INSIDE the published crate, and each one asserts
+# its own behaviour rather than merely compiling. Nothing ran them until now —
+# the same gap that let e2e-consumer rot against 0.8.0 for a release. ~15s total.
+run examples-run "" bash scripts/check-examples.sh
+
 if [[ -n "$RESULTS" ]]; then
   run eval-floor "" bash scripts/check-eval-floor.sh "$RESULTS"
 else

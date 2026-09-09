@@ -28,6 +28,7 @@ const sidebars: SidebarsConfig = {
       // `docs/examples/` is gitignored. Editing the markdown is a mistake; edit the
       // example. Ordered by reading order (offline basics first), not alphabetically.
       items: [
+        'examples/index',
         'examples/offline-remember-recall',
         'examples/remembers-across-sessions',
         'examples/multi-tenant-isolation',

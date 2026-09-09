@@ -116,6 +116,45 @@ const PUBLISHED = [
 
 mkdirSync(OUT_DIR, {recursive: true});
 
+// ── Index page, single-sourced from the crate's own examples/README.md ───────
+//
+// `docs/examples/` is gitignored because it is generated, so a hand-written
+// index here would be lost. Generating it from the README keeps ONE copy of the
+// routing table — the one a reader of the repo sees — instead of two that drift.
+//
+// Bare `example_name` references in the README become links to the generated
+// pages, so the same table works in both places.
+{
+  const readme = readFileSync(
+    resolve(HERE, '../../crates/kremory/examples/README.md'),
+    'utf8',
+  );
+
+  const slugFor = new Map(
+    PUBLISHED.map((e) => [e.file.replace(/\.rs$/, ''), e.slug]),
+  );
+
+  const linked = readme
+    // `example_name` -> [`example_name`](./slug)
+    .replace(/`([a-z0-9_]+)`/g, (whole, name) =>
+      slugFor.has(name) ? `[\`${name}\`](./${slugFor.get(name)})` : whole,
+    )
+    // the repo-relative run command is meaningless on the site
+    .replace(/^# Examples — start here$/m, '# Examples');
+
+  const indexPage = `---
+sidebar_position: 0
+title: Examples
+description: Fifteen runnable programs, single-sourced from the crate.
+---
+
+${linked}
+`;
+
+  writeFileSync(resolve(OUT_DIR, 'index.md'), indexPage);
+  console.log('sync-examples: examples/README.md -> docs/examples/index.md');
+}
+
 for (const {file, slug, title, position} of PUBLISHED) {
   const src = resolve(EXAMPLES_DIR, file);
 
