@@ -42,6 +42,10 @@ include = [
     "examples/searching_documents.rs",
     "examples/bulk_import.rs",
     "examples/gdpr_erasure_by_source.rs",
+    "examples/undoing_a_bad_change.rs",
+    "examples/append_only_namespace.rs",
+    "examples/a_long_document.rs",
+    "examples/two_handles_one_database.rs",
     "examples/agent_memory_with_ollama.rs",
 ]
 

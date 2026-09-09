@@ -38,7 +38,7 @@ const PUBLISHED = [
     file: 'multi_tenant_isolation.rs',
     slug: 'multi-tenant-isolation',
     title: 'One database, many customers',
-    position: 3,
+    position: 7,
   },
   {
     file: 'correcting_the_record.rs',
@@ -56,19 +56,43 @@ const PUBLISHED = [
     file: 'bulk_import.rs',
     slug: 'bulk-import',
     title: 'Importing data you already have',
-    position: 5,
+    position: 6,
   },
   {
     file: 'gdpr_erasure_by_source.rs',
     slug: 'gdpr-erasure-by-source',
     title: 'Right to erasure, scoped to a source',
-    position: 6,
+    position: 8,
   },
   {
     file: 'agent_memory_with_ollama.rs',
     slug: 'agent-memory-with-ollama',
     title: 'Building a graph from prose (needs Ollama)',
-    position: 7,
+    position: 12,
+  },
+  {
+    file: 'undoing_a_bad_change.rs',
+    slug: 'undoing-a-bad-change',
+    title: 'Undoing a change that was wrong',
+    position: 10,
+  },
+  {
+    file: 'append_only_namespace.rs',
+    slug: 'append-only-namespace',
+    title: 'A namespace that refuses to be rewritten',
+    position: 9,
+  },
+  {
+    file: 'a_long_document.rs',
+    slug: 'a-long-document',
+    title: 'A document longer than the embedding window',
+    position: 5,
+  },
+  {
+    file: 'two_handles_one_database.rs',
+    slug: 'two-handles-one-database',
+    title: 'Two processes, one database',
+    position: 11,
   },
 ];
 

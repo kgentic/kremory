@@ -13,8 +13,14 @@
 //! all of them.
 //!
 //! `recall(..).content()` answers that directly: it returns `ContentPassage`
-//! values — an `episode_id`, the matching `snippet`, and a `score` — instead of
-//! the entity-and-fact shape the graph surface returns.
+//! values — an `episode_id`, the matching text, and a `score` — instead of the
+//! entity-and-fact shape the graph surface returns.
+//!
+//! ⚠️ **`snippet` is the whole episode body, not an extract.** The crate
+//! documents this and a rename is tracked. It matters for how you INGEST: this
+//! example stores one handbook entry per episode, so a result is
+//! paragraph-sized. Store a whole PDF as one episode and a "passage" is the
+//! whole PDF. Chunk at ingest if you want passage-sized results.
 //!
 //! ## This is the DEFAULT path, which is exactly why it has an example
 //!
@@ -173,8 +179,13 @@ async fn main() -> anyhow::Result<()> {
         top.snippet.chars().take(60).collect::<String>()
     );
 
-    println!("\nYou get the PASSAGE and its episode id, not the whole document — so you");
-    println!("can put the relevant paragraph in a prompt and cite where it came from.");
+    println!("\n⚠️  `snippet` is the WHOLE EPISODE, not an extract. The field name is");
+    println!("    misleading and the crate says so — a rename is a tracked follow-up.");
+    println!("    Here each entry is a paragraph, so a passage IS paragraph-sized. Ingest");
+    println!("    one 80-page PDF as ONE episode and you get 80 pages back.");
+    println!("\n    So for retrieval-augmented prompting, CHUNK AT INGEST: one episode per");
+    println!("    section, not per document. The producer decides passage size, not the");
+    println!("    query. See `a_long_document.rs` for what happens when you do not.");
     println!("No graph was built here: `.skip_extraction()` means these are documents,");
     println!("not entities. Searching text and building a knowledge graph are separate");
     println!("capabilities, and you can use either on its own.");
