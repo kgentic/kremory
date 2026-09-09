@@ -25,9 +25,13 @@
 #
 # THE OLLAMA EXAMPLE IS DELIBERATELY EXCLUDED
 # -------------------------------------------
-# `agent_memory_with_ollama` needs a running daemon and a pulled model, and takes
+# TWO are excluded, for different reasons:
+#   agent_memory_with_ollama — needs a running daemon and a pulled model, and takes
 # ~65s. A guard that fails on a laptop without Ollama would fire on ordinary work
-# and get switched off, taking the other 14 with it.
+# and get switched off, taking the rest with it.
+#   hosted_providers — calls a PAID API. A guard that spends money every time it
+#   runs is a guard people disable, and it would charge CI (if there were CI) on
+#   every commit.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
@@ -47,6 +51,9 @@ OFFLINE=(
   undoing_a_bad_change
   changing_embedding_model
   two_handles_one_database
+  undoing_a_correction
+  domain_entity_types
+  dream_on_a_schedule
 )
 
 # Guard against the list drifting from what actually ships. A new example added
@@ -57,7 +64,7 @@ while IFS= read -r line; do SHIPPED+=("$line"); done < <(
   grep -oE '"examples/[a-z0-9_]+\.rs"' crates/kremory/Cargo.toml \
     | sed -E 's|"examples/([a-z0-9_]+)\.rs"|\1|' | sort
 )
-EXPECTED=$(printf '%s\n' "${OFFLINE[@]}" agent_memory_with_ollama | sort)
+EXPECTED=$(printf '%s\n' "${OFFLINE[@]}" agent_memory_with_ollama hosted_providers | sort)
 ACTUAL=$(printf '%s\n' "${SHIPPED[@]}")
 if [[ "$EXPECTED" != "$ACTUAL" ]]; then
   echo "FAIL: this script's list has drifted from Cargo.toml's published examples." >&2
@@ -83,4 +90,6 @@ if (( fails )); then
   exit 1
 fi
 echo "All ${#OFFLINE[@]} offline examples ran and their assertions held."
-echo "(agent_memory_with_ollama excluded — needs a running Ollama; run it by hand.)"
+echo "Two are excluded and must be run by hand:"
+echo "  agent_memory_with_ollama — needs a running Ollama"
+echo "  hosted_providers         — calls a PAID API"

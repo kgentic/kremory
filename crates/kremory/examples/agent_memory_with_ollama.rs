@@ -27,9 +27,14 @@
 //! ## About extraction quality
 //!
 //! This runs `gemma4:e4b`, a small model that fits on a laptop. It will produce
-//! duplicate facts under different casing and the occasional nonsense triple — you
-//! will see both in the output. That is honest and expected; a larger extraction
-//! model produces a cleaner graph. The example also runs `dream()`, the
+//! duplicate facts under different casing and the occasional nonsense triple —
+//! you will see both in the output.
+//!
+//! ⚠️ The casing duplicates are NOT a small-model artefact, which is what an
+//! earlier draft of this file claimed. `hosted_providers.rs`, run against
+//! OpenAI's `gpt-4o-mini`, produced `Ines works_at lysfjord` AND
+//! `ines works_at Lysfjord` from one sentence. A bigger model gives you better
+//! triples; it does not give you canonical casing. The example also runs `dream()`, the
 //! consolidation pass — and honestly reports that on a graph this small it merges
 //! nothing, because it requires real evidence before merging. That conservatism is
 //! the point.

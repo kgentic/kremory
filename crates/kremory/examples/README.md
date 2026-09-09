@@ -1,11 +1,11 @@
 # Examples — start here
 
-Fifteen runnable programs. Every one is real code that compiles against the
+Nineteen runnable programs. Every one is real code that compiles against the
 published crate and asserts its own behaviour, so if kremory changes and an
 example stops being true, it stops passing.
 
-**Fourteen of the fifteen need nothing but `cargo`.** Only the last one needs a
-model running locally.
+**Seventeen of the nineteen need nothing but `cargo`.** One needs a model running
+locally; one calls a paid API and is the only thing here that costs anything.
 
 ```sh
 cargo run --example offline_remember_recall
@@ -29,7 +29,11 @@ cargo run --example offline_remember_recall
 | An automated job changed something wrongly. | `undoing_a_bad_change` |
 | I switched embedding model. Now what? | `changing_embedding_model` |
 | A web process AND a worker both need this. | `two_handles_one_database` |
+| The correction I made was itself wrong. | `undoing_a_correction` |
+| My entities are courts and statutes, not people. | `domain_entity_types` |
+| Can consolidation just run by itself? | `dream_on_a_schedule` |
 | Show me it building a graph from plain English. | `agent_memory_with_ollama` ⚠️ needs Ollama |
+| I want to use OpenAI or Claude instead. | `hosted_providers` ⚠️ costs money |
 
 ## The three that surprise people
 
@@ -46,11 +50,15 @@ loud.
 - **`changing_embedding_model`** — after a model change, `backfill_*` reports
   success having done nothing, because no vector is *missing*; they are merely
   wrong. `reembed_all_*` is the one you want.
+- **`hosted_providers`** — `Memory::with_anthropic` gives you Claude and **no
+  embedding model**, because Anthropic has no embedding API. Recall silently
+  becomes structural rather than semantic. Pair Claude with a real embedder
+  yourself.
 
 ## Running them all
 
 ```sh
-bash scripts/check-examples.sh      # all 14 offline ones, ~15s
+bash scripts/check-examples.sh      # all 17 offline ones, ~20s
 ```
 
 This runs in `scripts/check-all.sh` too. The examples ship inside the published
