@@ -38,7 +38,7 @@ const PUBLISHED = [
     file: 'multi_tenant_isolation.rs',
     slug: 'multi-tenant-isolation',
     title: 'One database, many customers',
-    position: 7,
+    position: 8,
   },
   {
     file: 'correcting_the_record.rs',
@@ -62,25 +62,43 @@ const PUBLISHED = [
     file: 'gdpr_erasure_by_source.rs',
     slug: 'gdpr-erasure-by-source',
     title: 'Right to erasure, scoped to a source',
-    position: 8,
+    position: 9,
+  },
+  {
+    file: 'ingest_without_blocking.rs',
+    slug: 'ingest-without-blocking',
+    title: 'Ingesting without blocking your handler',
+    position: 7,
+  },
+  {
+    file: 'deleting_and_restoring.rs',
+    slug: 'deleting-and-restoring',
+    title: 'Deleting one fact, and putting it back',
+    position: 11,
+  },
+  {
+    file: 'changing_embedding_model.rs',
+    slug: 'changing-embedding-model',
+    title: 'Changing embedding model without re-ingesting',
+    position: 13,
   },
   {
     file: 'agent_memory_with_ollama.rs',
     slug: 'agent-memory-with-ollama',
     title: 'Building a graph from prose (needs Ollama)',
-    position: 12,
+    position: 15,
   },
   {
     file: 'undoing_a_bad_change.rs',
     slug: 'undoing-a-bad-change',
     title: 'Undoing a change that was wrong',
-    position: 10,
+    position: 12,
   },
   {
     file: 'append_only_namespace.rs',
     slug: 'append-only-namespace',
     title: 'A namespace that refuses to be rewritten',
-    position: 9,
+    position: 10,
   },
   {
     file: 'a_long_document.rs',
@@ -92,7 +110,7 @@ const PUBLISHED = [
     file: 'two_handles_one_database.rs',
     slug: 'two-handles-one-database',
     title: 'Two processes, one database',
-    position: 11,
+    position: 14,
   },
 ];
 

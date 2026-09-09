@@ -46,6 +46,9 @@ include = [
     "examples/append_only_namespace.rs",
     "examples/a_long_document.rs",
     "examples/two_handles_one_database.rs",
+    "examples/ingest_without_blocking.rs",
+    "examples/deleting_and_restoring.rs",
+    "examples/changing_embedding_model.rs",
     "examples/agent_memory_with_ollama.rs",
 ]
 
