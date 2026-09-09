@@ -41,10 +41,16 @@ const PUBLISHED = [
     position: 3,
   },
   {
+    file: 'gdpr_erasure_by_source.rs',
+    slug: 'gdpr-erasure-by-source',
+    title: 'Right to erasure, scoped to a source',
+    position: 4,
+  },
+  {
     file: 'agent_memory_with_ollama.rs',
     slug: 'agent-memory-with-ollama',
     title: 'Building a graph from prose (needs Ollama)',
-    position: 4,
+    position: 5,
   },
 ];
 

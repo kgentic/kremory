@@ -104,6 +104,13 @@ pub use memory::events::BatchPhase2Complete;
 pub use memory::events::EnrichmentEventSink;
 // BYOM provider traits
 pub use core::provider::{ArcEmbedder, DynEmbeddingProvider, EmbeddingProvider};
+// The third BYOM trait. `MemoryBuilder` REQUIRES an extractor to reach a
+// buildable state without an LLM (`.with_extractor(..)` is the only path to
+// `WithLlm` for an offline consumer), so a trait a caller MUST implement
+// belongs beside the other two rather than behind `core::intelligence::`.
+// TD-245: writing the first offline example is what surfaced it — the example
+// had to reach through a module path no doc mentions.
+pub use core::intelligence::{EntityExtractor, ExtractionContext, ExtractionResult};
 
 // Convenience re-exports from core::config (ADR D15)
 pub use core::config::Config as CoreConfig;

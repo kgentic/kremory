@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
         'examples/offline-remember-recall',
         'examples/remembers-across-sessions',
         'examples/multi-tenant-isolation',
+        'examples/gdpr-erasure-by-source',
         'examples/agent-memory-with-ollama',
       ],
     },

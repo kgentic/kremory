@@ -219,6 +219,50 @@ impl<'a> ForgetRequest<'a> {
                 // also drop any remaining episodic_edges pointing to these
                 // episodes first (entities sharing with other sources stayed
                 // pinned, but their edges to THIS source's episodes go).
+                // TD-246 — `facts.source_episode_id` is the THIRD foreign key into
+                // `episodes(id)` (`core/schema.rs:709`), alongside
+                // `episodic_edges.episode_id` handled below. This cascade never
+                // touched it, so deleting the episode while a fact still pointed
+                // at it raised `FOREIGN KEY constraint failed`.
+                //
+                // It only fired on the case that matters. With ONE source the
+                // entity is unshared, `batch_forget` deletes it, and the facts go
+                // with it — the bug is invisible. With TWO sources naming the same
+                // subject the entity is PINNED by the shared-entity preservation
+                // above, its fact survives, and its dangling `source_episode_id`
+                // breaks the constraint. A single-source graph is a demo; the
+                // multi-source one is every real deployment.
+                //
+                // Deleting the fact is the GDPR-correct outcome, not collateral: a
+                // fact extracted from the erased conversation IS that person's
+                // data. Facts carry exactly one `source_episode_id`, so a fact from
+                // this source belongs solely to it — no sharing question arises, and
+                // facts from OTHER sources about the same subject are untouched.
+                //
+                // Purge the FTS shadow row FIRST. `facts_fts` is keyed on `facts.id`
+                // (`dream/consolidation/archive.rs` — the sole inbound reference),
+                // so once the fact row is gone the subquery can no longer resolve
+                // which shadow rows to drop, orphaning FTS hits. Exactly the trap
+                // documented for `episodes_fts` above, in the same cascade.
+                #[cfg(feature = "content-search")]
+                conn.execute(
+                    "DELETE FROM facts_fts WHERE fact_id IN \
+                     (SELECT f.id FROM facts f \
+                      JOIN episodes e ON e.id = f.source_episode_id \
+                      WHERE e.source_id = ?1 AND e.group_id = ?2)",
+                    libsql::params![sid.clone(), group_id.clone()],
+                )
+                .await
+                .map_err(CoreError::Database)?;
+
+                conn.execute(
+                    "DELETE FROM facts WHERE source_episode_id IN \
+                     (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
+                    libsql::params![sid.clone(), group_id.clone()],
+                )
+                .await
+                .map_err(CoreError::Database)?;
+
                 conn.execute(
                     "DELETE FROM episodic_edges WHERE episode_id IN \
                      (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",

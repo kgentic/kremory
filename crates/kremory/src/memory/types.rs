@@ -458,6 +458,18 @@ pub struct RetrievedFact {
     pub expired_at: Option<DateTime<Utc>>,
     /// Extraction/caller confidence in `[0, 1]`.
     pub confidence: f64,
+    /// Row id of the underlying fact, when this came from one.
+    ///
+    /// This is the handle [`crate::Memory::supersede`] takes. Without it,
+    /// `supersede` was documented but UNREACHABLE: nothing on the public recall
+    /// path returned an id, so a caller could not name the fact it wanted to
+    /// supersede (TD-244 — surfaced by writing the first offline example, not
+    /// by review).
+    ///
+    /// `None` when the item did not come from a fact row. A content passage
+    /// retrieved by content-search has no fact id, and inventing one would be
+    /// worse than admitting the absence.
+    pub fact_id: Option<i64>,
     /// Source episode id(s) this fact was asserted from.
     pub source_episode_ids: Vec<i64>,
     /// Relevance score inherited from the anchoring entity's recall score.
@@ -518,6 +530,9 @@ impl RetrievedFact {
             invalid_at: None,
             recorded_at,
             expired_at: None,
+            // Defaults to None, set via `with_fact_id` — mirroring the
+            // invalid_at / expired_at split directly above.
+            fact_id: None,
             confidence,
             source_episode_ids,
             score,
@@ -533,6 +548,13 @@ impl RetrievedFact {
 
     /// Set the system-clock expiry time (when the fact row was
     /// superseded/expired). Default `None` (not superseded).
+    /// Set the underlying fact row id — the handle `supersede` takes.
+    /// Default `None` (not from a fact row, e.g. a content passage).
+    pub fn with_fact_id(mut self, fact_id: i64) -> Self {
+        self.fact_id = Some(fact_id);
+        self
+    }
+
     pub fn with_expired_at(mut self, expired_at: DateTime<Utc>) -> Self {
         self.expired_at = Some(expired_at);
         self

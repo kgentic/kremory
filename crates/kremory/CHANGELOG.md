@@ -3,6 +3,40 @@
 All notable changes to the `kremory` crate. Format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); this crate uses semver.
 
+## [Unreleased]
+
+### Fixed — right-to-erasure was broken on any multi-source graph
+
+`mem.forget().by_source_id(..)` raised `FOREIGN KEY constraint failed` whenever the
+erased subject also appeared in another source — which is the normal case, since the
+same person appears in several documents. `facts.source_episode_id` is a third foreign
+key into `episodes(id)` and the delete cascade never handled it. With one source the
+entity is unshared and gets deleted, taking its facts with it, so the bug was invisible;
+with two, shared-entity preservation pins the entity, its fact survives, and the dangling
+reference breaks the constraint. Facts sourced from the erased episode are now deleted
+(with their `facts_fts` shadow rows purged first), which is also the GDPR-correct
+outcome — a fact extracted from the erased conversation is that person's data.
+
+### Added — `RetrievedFact::fact_id`, which makes `supersede` reachable
+
+`Memory::supersede` takes a `fact_id` that nothing on the public surface returned, so it
+was documented and impossible for a consumer to call. `RetrievedFact` now carries
+`fact_id: Option<i64>`, populated on the recall path. Additive: `RetrievedFact` is
+`#[non_exhaustive]`. `None` for content-search passages, which have no fact row.
+
+### Added — `EntityExtractor` at the crate root
+
+`EntityExtractor`, `ExtractionContext` and `ExtractionResult` are now re-exported from
+the crate root beside the other two bring-your-own-model traits. An extractor is
+REQUIRED to build a `Memory` without an LLM, so a trait callers must implement no longer
+sits behind an undocumented module path.
+
+### Note — `forget().execute()` returns an entity count
+
+It counts entities deleted, so a complete erasure returns `0` whenever the subject is
+shared (and therefore correctly pinned). Do not branch on `removed > 0`. A richer return
+shape is a breaking change and is deferred.
+
 ## [0.8.0] - 2026-09-08
 
 ### Changed — BREAKING: `DreamRequest` now requires an explicit `.execute()` terminal

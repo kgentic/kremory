@@ -886,6 +886,10 @@ impl GraphHandle for EngineGraphHandle {
                         recorded_at: f.recorded_at,
                         expired_at: f.expired_at,
                         confidence: f.confidence,
+                        // TD-244: carry the row id out to the consumer. This is
+                        // the ONLY place a caller can obtain the handle that
+                        // `supersede` requires.
+                        fact_id: Some(f.id),
                         source_episode_ids: f.source_episode_id.into_iter().collect(),
                         score,
                     }
