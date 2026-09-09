@@ -293,6 +293,12 @@ pub(super) struct PendingEpisode {
     namespace: Option<Namespace>,
     published_at: Option<DateTime<Utc>>,
     facts: Vec<StructuredFact>,
+    /// Mirrors `RememberRequest::skip_extraction`. TD-249: the batch path
+    /// hard-coded `enrich_per_episode: true`, so bulk import REQUIRED an LLM
+    /// even when the caller pinned every triple with `.with_facts(..)` — the
+    /// exact combination the single-episode path supports and the error
+    /// message itself recommends.
+    skip_extraction: bool,
 }
 
 impl<'a> RememberBatchBuilder<'a> {
@@ -301,6 +307,7 @@ impl<'a> RememberBatchBuilder<'a> {
         EpisodeEntryBuilder {
             batch: self,
             pending: PendingEpisode {
+                skip_extraction: false,
                 content: content.into(),
                 source_ref: None,
                 namespace: None,
@@ -344,7 +351,10 @@ impl<'a> RememberBatchBuilder<'a> {
                 namespace: ns,
                 batch_id: self.batch_id.clone(),
                 opts: SubmitOpts {
-                    enrich_per_episode: true,
+                    // Was hard-coded `true`. Same gate as the single-episode
+                    // path: `false` propagates into `SourceParams.skip_extraction`
+                    // so the engine bails after the caller-pin step.
+                    enrich_per_episode: !ep.skip_extraction,
                     run_in_background: false,
                 },
                 sink,
@@ -417,6 +427,17 @@ impl<'a> EpisodeEntryBuilder<'a> {
     }
 
     /// Finish this entry and return to the batch builder for chaining or terminal.
+    /// Pin this entry's triples without calling an LLM — the batch counterpart
+    /// of [`RememberRequest::skip_extraction`]. Pair with `.with_facts(..)`.
+    ///
+    /// Without this, a batch always attempts entity resolution and therefore
+    /// requires an LLM provider, which made offline bulk import impossible
+    /// (TD-249, found by writing the bulk-import example).
+    pub fn skip_extraction(mut self) -> Self {
+        self.pending.skip_extraction = true;
+        self
+    }
+
     pub fn done(mut self) -> RememberBatchBuilder<'a> {
         self.batch.episodes.push(self.pending);
         self.batch

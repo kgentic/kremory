@@ -41,16 +41,34 @@ const PUBLISHED = [
     position: 3,
   },
   {
+    file: 'correcting_the_record.rs',
+    slug: 'correcting-the-record',
+    title: 'Correcting the record',
+    position: 3,
+  },
+  {
+    file: 'searching_documents.rs',
+    slug: 'searching-documents',
+    title: 'Searching documents, not building a graph',
+    position: 4,
+  },
+  {
+    file: 'bulk_import.rs',
+    slug: 'bulk-import',
+    title: 'Importing data you already have',
+    position: 5,
+  },
+  {
     file: 'gdpr_erasure_by_source.rs',
     slug: 'gdpr-erasure-by-source',
     title: 'Right to erasure, scoped to a source',
-    position: 4,
+    position: 6,
   },
   {
     file: 'agent_memory_with_ollama.rs',
     slug: 'agent-memory-with-ollama',
     title: 'Building a graph from prose (needs Ollama)',
-    position: 5,
+    position: 7,
   },
 ];
 

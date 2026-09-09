@@ -192,3 +192,4 @@ mod whole_project_e2e;
 mod with_facts_integration;
 mod td244_supersede_is_reachable;
 mod td246_forget_multi_source;
+mod td249_batch_skip_extraction;
