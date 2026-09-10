@@ -5,8 +5,11 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [Unreleased]
 
-> ⚠️ **The next release is 0.9.0, not 0.8.1** — `forget().execute()`'s return type changed
-> (see below), which is a breaking change to a published surface.
+## [0.9.0] — 2026-09-10
+
+> ⚠️ **BREAKING** — `forget().execute()`'s return type changed, so this is 0.9.0 rather
+> than the 0.8.1 patch previously planned. One migration, one line: replace
+> `count > 0` with `!outcome.is_empty()`.
 
 ### Fixed — BREAKING — erasing a namespace left the source text behind
 
@@ -26,6 +29,37 @@ where you had `count > 0`. `TemporalGraph::batch_forget` likewise returns `Batch
 
 The Node binding and the HTTP endpoint keep their existing return shapes for now; widening
 them is part of the Node parity pass, not this release.
+
+### Fixed — a dream's fact archival is now nameable, so it can be restored
+
+`restore_archived_fact(archived_fact_id)` took an identifier no public read returned:
+`DreamSummary` reports `facts_archived` as a COUNT, so nothing said WHICH facts a dream
+retired. The archival now writes a `fact_archive` row to the mutation log, which
+`list_mutations().kind(MutationKind::FactArchive)` already knew how to return — no new
+public surface was needed — and `undo(mutation_id)` reverses it like every other mutation.
+Five of the eight mutation kinds are now logged and undoable, up from four.
+
+### Fixed — cancelling a batched episode no longer wedges `await_batch()`
+
+A cancel and the task it cancelled could each record the same episode against the batch
+accumulator, and `BatchStatus::is_done()` compares with `==`, so the over-count meant the
+batch never reached terminal and `await_batch()` blocked until its timeout.
+
+### Changed — `Memory` has documentation again
+
+Its doc comment had drifted onto an unrelated tally struct, leaving the crate's primary
+public type undocumented on docs.rs. Found by splitting `facade/mod.rs` (3,337 → 1,367
+lines); no behaviour change.
+
+### Docs — two traps that cost real debugging time
+
+- **A cross-episode merge only commits under `.cross_episode(Apply)`.** `dream()` defaults
+  to shadow, where `cross_episode_merged` is `0` however good the evidence is and the
+  decision lives in `cross_episode_would_merge`. Reading the wrong field is how this project
+  spent a day believing `unmerge` had no reachable handle.
+- **`DreamOpts` is `#[non_exhaustive]`**, so `..Default::default()` — the form everyone
+  reaches for — does not compile outside the crate. `with_opts` now carries a runnable
+  example of the field-assignment idiom.
 
 ### Fixed — a dream's fact archival is now nameable, and undoable
 
