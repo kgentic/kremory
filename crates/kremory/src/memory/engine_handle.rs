@@ -92,6 +92,14 @@ pub struct EngineGraphHandle {
     pub(crate) ingest_runs: Arc<DashMap<Uuid, IngestStatus>>,
     /// Maps ingest `run_id` → `AbortHandle` for the background tokio task.
     pub(crate) ingest_abort: Arc<DashMap<Uuid, tokio::task::AbortHandle>>,
+    /// `run_id` → `batch_id`, for runs that belong to a batch.
+    ///
+    /// TD-251: cancelling aborts the spawned task, which is precisely the task
+    /// that would otherwise have recorded its own batch outcome. Without this
+    /// map `graph_cancel` knows the run but not the batch, so the batch
+    /// accumulator never reaches `is_terminal()` and `await_batch` blocks until
+    /// its timeout — on every batch containing a cancelled member.
+    pub(crate) ingest_batch: Arc<DashMap<Uuid, String>>,
     /// Maps dream `run_id` → `DreamStatus`. Unpopulated at v0.1.0 (dream = NotImplemented).
     pub(crate) dream_runs: Arc<DashMap<Uuid, DreamStatus>>,
     /// Maps dream `run_id` → `AbortHandle`. Unpopulated at v0.1.0.
@@ -124,6 +132,7 @@ impl EngineGraphHandle {
             engine: Arc::new(engine),
             ingest_runs: Arc::new(DashMap::new()),
             ingest_abort: Arc::new(DashMap::new()),
+            ingest_batch: Arc::new(DashMap::new()),
             dream_runs: Arc::new(DashMap::new()),
             dream_abort: Arc::new(DashMap::new()),
             batch_status: Arc::new(DashMap::new()),
@@ -265,6 +274,7 @@ impl GraphHandle for EngineGraphHandle {
             let ingest_runs = Arc::clone(&self.ingest_runs);
             let ingest_abort = Arc::clone(&self.ingest_abort);
             let batch_status = Arc::clone(&self.batch_status);
+            let ingest_batch = Arc::clone(&self.ingest_batch);
             let content_owned = content.to_owned();
             let group_id_owned = group_id.clone();
             let batch_id_owned = batch_id.clone();
@@ -283,6 +293,13 @@ impl GraphHandle for EngineGraphHandle {
 
             // Record pending status before spawning so callers can poll immediately.
             ingest_runs.insert(run_id, IngestStatus::Pending);
+            // TD-251: register run→batch BEFORE the spawn. Inserting after would
+            // reintroduce the race the abort-handle comment below describes — a
+            // fast task could remove the entry before this insert fired, leaving
+            // a stale mapping and a batch that never terminates.
+            if let Some(ref bid) = batch_id_owned {
+                self.ingest_batch.insert(run_id, bid.clone());
+            }
 
             // Initialise / update batch counter if batch_id is provided.
             if let Some(ref bid) = batch_id_owned {
@@ -343,6 +360,11 @@ impl GraphHandle for EngineGraphHandle {
                 }
                 // Remove abort handle once the task has reached a terminal state.
                 ingest_abort.remove(&run_id);
+                // TD-251: the task has recorded its OWN batch outcome above, so
+                // the run→batch mapping has done its job. Dropping it here keeps
+                // the map bounded and makes a later cancel a no-op rather than a
+                // double-count.
+                ingest_batch.remove(&run_id);
             });
 
             // Capture the abort handle immediately after spawn (before any yield point)
@@ -541,6 +563,17 @@ impl GraphHandle for EngineGraphHandle {
             handle.abort();
             self.ingest_runs
                 .insert(run_id, IngestStatus::Failed("cancelled by caller".into()));
+            // TD-251: mirror what the aborted task would have done for itself.
+            // The episode's OWN status is terminal above, but the batch
+            // accumulator is separate — leaving it unincremented means
+            // `is_terminal()` (succeeded + skipped + failed >= total) is never
+            // satisfied and `await_batch` blocks for its full timeout. Cancelling
+            // one member wedged the whole batch.
+            if let Some((_, bid)) = self.ingest_batch.remove(&run_id) {
+                self.batch_status.entry(bid).and_modify(|s| {
+                    s.failed += 1;
+                });
+            }
             return Ok(CancelOutcome {
                 cancelled_phase: CancelledPhase::Enrichment,
                 rolled_back: false,

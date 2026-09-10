@@ -1,10 +1,10 @@
 # Examples — start here
 
-Nineteen runnable programs. Every one is real code that compiles against the
+Twenty-two runnable programs. Every one is real code that compiles against the
 published crate and asserts its own behaviour, so if kremory changes and an
 example stops being true, it stops passing.
 
-**Seventeen of the nineteen need nothing but `cargo`.** One needs a model running
+**Twenty of the twenty-two need nothing but `cargo`.** One needs a model running
 locally; one calls a paid API and is the only thing here that costs anything.
 
 ```sh
@@ -33,6 +33,9 @@ cargo run --example offline_remember_recall
 | My entities are courts and statutes, not people. | `domain_entity_types` |
 | Can consolidation just run by itself? | `dream_on_a_schedule` |
 | Show me it building a graph from plain English. | `agent_memory_with_ollama` ⚠️ needs Ollama |
+| Something is running and I need it to stop. | `cancelling_in_flight_work` |
+| Prove to an auditor what happened to this record. | `who_touched_this_record` |
+| Which of these changes can I take back? | `what_can_be_undone` |
 | I want to use OpenAI or Claude instead. | `hosted_providers` ⚠️ costs money |
 
 ## The three that surprise people
@@ -50,6 +53,12 @@ loud.
 - **`changing_embedding_model`** — after a model change, `backfill_*` reports
   success having done nothing, because no vector is *missing*; they are merely
   wrong. `reembed_all_*` is the one you want.
+- **`what_can_be_undone`** — two reversal operations (`unmerge`,
+  `restore_archived_fact`) are public but have **no reachable handle** from the
+  API today (TD-250). The example asserts that limitation, so it will start
+  failing when the gap closes.
+- **`cancelling_in_flight_work`** — `await_batch()` after a cancel hangs until
+  its timeout on some runs (TD-251). Poll `status_of` per episode instead.
 - **`hosted_providers`** — `Memory::with_anthropic` gives you Claude and **no
   embedding model**, because Anthropic has no embedding API. Recall silently
   becomes structural rather than semantic. Pair Claude with a real embedder
@@ -58,7 +67,7 @@ loud.
 ## Running them all
 
 ```sh
-bash scripts/check-examples.sh      # all 17 offline ones, ~20s
+bash scripts/check-examples.sh      # all 20 offline ones, ~25s
 ```
 
 This runs in `scripts/check-all.sh` too. The examples ship inside the published

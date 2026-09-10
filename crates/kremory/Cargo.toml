@@ -53,6 +53,9 @@ include = [
     "examples/domain_entity_types.rs",
     "examples/dream_on_a_schedule.rs",
     "examples/hosted_providers.rs",
+    "examples/cancelling_in_flight_work.rs",
+    "examples/who_touched_this_record.rs",
+    "examples/what_can_be_undone.rs",
     "examples/agent_memory_with_ollama.rs",
 ]
 

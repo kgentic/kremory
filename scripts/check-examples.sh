@@ -54,6 +54,9 @@ OFFLINE=(
   undoing_a_correction
   domain_entity_types
   dream_on_a_schedule
+  cancelling_in_flight_work
+  who_touched_this_record
+  what_can_be_undone
 )
 
 # Guard against the list drifting from what actually ships. A new example added
