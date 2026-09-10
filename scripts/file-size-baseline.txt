@@ -37,7 +37,7 @@
 330 crates/kremory-mcp/tests/dogfood_live.rs
 885 crates/kremory-mcp/tests/handler_roundtrip.rs
 255 crates/kremory-mcp/tests/subprocess_jsonrpc.rs
-246 crates/kremory-mcp/tests/surface_decisions.rs
+315 crates/kremory-mcp/tests/surface_decisions.rs
 91 crates/kremory-mcp/tests/td066_increment1_recall_fusion.rs
 5 crates/kremory-napi/build.rs
 891 crates/kremory-napi/src/bridge.rs
@@ -151,8 +151,8 @@
 103 crates/kremory/src/core/ingest/helpers.rs
 1366 crates/kremory/src/core/ingest/mod.rs
 654 crates/kremory/src/core/ingest/pipeline/deferred.rs
-2704 crates/kremory/src/core/ingest/pipeline/ingest_with.rs pin=TD-045
-14 crates/kremory/src/core/ingest/pipeline/mod.rs
+2542 crates/kremory/src/core/ingest/pipeline/ingest_with.rs pin=TD-045
+15 crates/kremory/src/core/ingest/pipeline/mod.rs
 259 crates/kremory/src/core/ingest/pipeline/phase1.rs
 75 crates/kremory/src/core/ingest/pipeline/types.rs
 1565 crates/kremory/src/core/ingest/tests.rs
@@ -197,9 +197,9 @@
 745 crates/kremory/src/core/speculative_cache.rs
 908 crates/kremory/src/core/text_utils.rs
 1611 crates/kremory/src/facade/builder.rs
-954 crates/kremory/src/facade/dream.rs
+973 crates/kremory/src/facade/dream.rs
 821 crates/kremory/src/facade/forget.rs
-3282 crates/kremory/src/facade/mod.rs pin=TD-043
+1367 crates/kremory/src/facade/mod.rs pin=TD-045
 1210 crates/kremory/src/facade/providers.rs
 2527 crates/kremory/src/facade/recall.rs
 545 crates/kremory/src/facade/remember.rs
@@ -396,6 +396,7 @@
 109 crates/kremory/tests/it/td249_batch_skip_extraction.rs
 224 crates/kremory/tests/it/td250_archived_facts_are_reachable.rs
 101 crates/kremory/tests/it/td251_cancel_wedges_batch.rs
+140 crates/kremory/tests/it/td252_forget_namespace_erases_episodes.rs
 216 crates/kremory/tests/it/td_012_canary.rs
 775 crates/kremory/tests/it/td_028_pull_shape.rs
 305 crates/kremory/tests/it/td_metadata_multirow_patch.rs

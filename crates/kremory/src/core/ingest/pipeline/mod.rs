@@ -4,6 +4,7 @@
 //! continuation files. Originally split from `ingest.rs`.
 
 mod deferred;
+mod deferred_emissions;
 mod ingest_with;
 mod phase1;
 mod types;

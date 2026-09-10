@@ -121,3 +121,14 @@ backfill_fact_embeddings       = { deferred = "operator maintenance: migration-t
 # ── DIAGNOSTIC / INTERNAL ────────────────────────────────────────────────────
 ghost_episodes     = { deferred = "diagnostic query for operators debugging ingest" }
 assert_entity_type = { deferred = "internal type-registry helper, not a memory operation" }
+
+# ── UNDECIDED UNTIL 2026-09-10 — the guard could not see them ────────────────
+# These three shipped with NO decision, and not because anyone skipped the step:
+# the gate read `facade/mod.rs` ALONE, and all three live in sibling files
+# (`facade/recall.rs`, `facade/update.rs`). Splitting `facade/mod.rs` (TD-043)
+# is what exposed it — the walker now walks the whole `facade/` directory, and
+# these were waiting underneath. A guard that reads one file of a growing module
+# is a guard with a blind spot, and this is what was in it.
+recall_by_source_id = { deferred = "retrieval scoped to one source is a FILTER on recall, not a second retrieval verb — a semantically overlapping tool is exactly the disambiguation cost the surface audit collapsed two tools to avoid. If an agent needs it, it belongs as a source_id PARAMETER on kremory_recall." }
+update_episode_metadata = { deferred = "provenance integrity: an agent that can rewrite where a memory came from can launder its own output into a trusted source. Operator-side by design, and the one category where 'the agent could just do it' is the argument AGAINST." }
+update_source_uri = { deferred = "provenance integrity — same reasoning as update_episode_metadata above: the source pointer is the audit trail, and the writing party must not also be the party that can rewrite it." }

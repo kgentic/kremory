@@ -44,53 +44,122 @@ fn repo_root() -> PathBuf {
         .to_path_buf()
 }
 
-/// Public operations on `impl Memory` in `facade/mod.rs` — the tool-shaped entry
-/// points. Builder methods (`RecallRequest::as_of` etc.) are deliberately excluded:
-/// tools map to OPERATIONS, and a builder knob is a parameter on one, not a tool.
+/// Public operations on EVERY `impl Memory` block under `crates/kremory/src/facade/`
+/// — the tool-shaped entry points. Builder methods (`RecallRequest::as_of` etc.) are
+/// deliberately excluded: tools map to OPERATIONS, and a builder knob is a parameter
+/// on one, not a tool.
+///
+/// ⚠️ This walks the whole DIRECTORY, not `facade/mod.rs` alone. It used to read that
+/// one file, which made the guard one refactor away from decoration: splitting
+/// `facade/mod.rs` (TD-043) moved six embedding operations into `facade/embeddings/`
+/// and the guard reported them as REMOVED. That false alarm was the harmless
+/// direction. The silent one is the reason this changed — a NEW `Memory` method added
+/// in any sibling file would never have been required to carry a decision at all, and
+/// nothing would have said so.
 fn facade_operations(root: &Path) -> Vec<String> {
-    let src = std::fs::read_to_string(root.join("crates/kremory/src/facade/mod.rs"))
-        .expect("facade/mod.rs must be readable");
-    let lines: Vec<&str> = src.lines().collect();
-    let start = lines
-        .iter()
-        .position(|l| l.trim_start().starts_with("impl Memory"))
-        .expect("facade/mod.rs must contain an `impl Memory` block");
+    let dir = root.join("crates/kremory/src/facade");
+    let mut files = Vec::new();
+    collect_rs_files(&dir, &mut files);
+    assert!(
+        !files.is_empty(),
+        "no .rs files under {} — the facade moved and this guard is now scanning nothing",
+        dir.display()
+    );
 
     let mut ops = Vec::new();
-    let mut depth: i32 = 0;
-    let mut entered = false;
-    for line in &lines[start..] {
-        depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
-        if !entered {
-            if line.contains('{') {
-                entered = true;
-            }
-            continue;
-        }
-        if depth <= 0 {
-            break;
-        }
-        let t = line.trim_start();
-        if t.starts_with("//") {
-            continue;
-        }
-        // `pub fn foo(` / `pub async fn foo(`
-        let rest = match t.strip_prefix("pub async fn ").or_else(|| t.strip_prefix("pub fn ")) {
-            Some(r) => r,
-            None => continue,
-        };
-        let name: String = rest
-            .chars()
-            .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
-            .collect();
-        // `*_for_test` accessors are `#[cfg(test/test-utils)]`-gated and explicitly
-        // documented as outside the stable public API.
-        if !name.is_empty() && !name.ends_with("_for_test") {
-            ops.push(name);
-        }
+    for file in &files {
+        let src = std::fs::read_to_string(file)
+            .unwrap_or_else(|e| panic!("{} must be readable: {e}", file.display()));
+        ops.extend(memory_impl_ops(&src));
     }
+    assert!(
+        ops.contains(&"remember".to_string()) && ops.contains(&"recall".to_string()),
+        "the walker found no `remember`/`recall` — it is not reading the impl blocks it \
+         thinks it is, and an empty scan passes every assertion below"
+    );
     ops.sort();
     ops.dedup();
+    ops
+}
+
+/// Every `.rs` file under `dir`, recursively.
+fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    let entries = std::fs::read_dir(dir)
+        .unwrap_or_else(|e| panic!("{} must be readable: {e}", dir.display()));
+    for entry in entries {
+        let path = entry.expect("dir entry must be readable").path();
+        if path.is_dir() {
+            collect_rs_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            out.push(path);
+        }
+    }
+}
+
+/// `true` for `impl Memory {` and nothing else.
+///
+/// The prefix test alone (`starts_with("impl Memory")`) also matches
+/// `impl MemoryBuilder<…>`, which is how the first version of this walker reported
+/// `with_llm` / `with_embedder` as undecided facade OPERATIONS — they are builder
+/// knobs, exactly the category the doc above says is excluded.
+fn is_memory_impl_header(line: &str) -> bool {
+    let t = line.trim_start();
+    match t.strip_prefix("impl Memory") {
+        Some(rest) => rest.trim_start().starts_with('{'),
+        None => false,
+    }
+}
+
+/// `pub fn` / `pub async fn` names inside every `impl Memory` block in one file.
+///
+/// `impl Memory` only — `impl std::fmt::Debug for Memory` and the request-builder
+/// impls do not match the prefix, which is the intended exclusion.
+fn memory_impl_ops(src: &str) -> Vec<String> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut ops = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        if !is_memory_impl_header(lines[i]) {
+            i += 1;
+            continue;
+        }
+        let mut depth: i32 = 0;
+        let mut entered = false;
+        while i < lines.len() {
+            let line = lines[i];
+            depth += line.matches('{').count() as i32 - line.matches('}').count() as i32;
+            if !entered {
+                if line.contains('{') {
+                    entered = true;
+                }
+                i += 1;
+                continue;
+            }
+            if depth <= 0 {
+                i += 1;
+                break;
+            }
+            let t = line.trim_start();
+            i += 1;
+            if t.starts_with("//") {
+                continue;
+            }
+            // `pub fn foo(` / `pub async fn foo(`
+            let rest = match t.strip_prefix("pub async fn ").or_else(|| t.strip_prefix("pub fn ")) {
+                Some(r) => r,
+                None => continue,
+            };
+            let name: String = rest
+                .chars()
+                .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_')
+                .collect();
+            // `*_for_test` accessors are `#[cfg(test/test-utils)]`-gated and explicitly
+            // documented as outside the stable public API.
+            if !name.is_empty() && !name.ends_with("_for_test") {
+                ops.push(name);
+            }
+        }
+    }
     ops
 }
 
