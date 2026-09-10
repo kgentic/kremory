@@ -23,21 +23,19 @@
 //!   delete_fact     →    undo_delete_fact(mut_id)     list_mutations()
 //!   supersede       →    unsupersede(fact_id)         recall() → fact_id
 //!   dream() archive →    undo(mut_id)                 list_mutations()
-//!   dream() merge   →    unmerge(mut_id)              ⚠️ see below
+//!   dream() merge   →    unmerge(mut_id)              list_mutations()
 //! ```
 //!
-//! The first four are exercised below, end to end. The last one is **not
-//! reachable from the public API today** and this example proves it rather than
-//! asserting it:
+//! All five are exercised below, end to end.
 //!
-//! - **`unmerge`** — its id is obtainable once a merge exists, but nothing public
-//!   CREATES a merge. Merges happen only inside `dream()`'s canonicalize pass,
-//!   which requires real alias evidence and correctly declines on thin data. The
-//!   assertion below demonstrates that on a deliberately merge-friendly corpus.
-//!
-//! Tracked as TD-250. **If a future change makes it reachable, the assertion at
-//! the end of this file will start failing** — which is the point: this example
-//! is also the tripwire that says "update the map".
+//! **The merge one carries a trap worth reading before you use it.** This example
+//! used to assert that merges were UNREACHABLE from the public API, on the evidence
+//! that `dream()` reported `cross_episode_merged: 0` over a deliberately
+//! merge-friendly corpus. That assertion was wrong, and wrong in an instructive way:
+//! `dream()` defaults to `CrossEpisodeMode::Shadow`, where merges are DECIDED and
+//! never committed, so `cross_episode_merged` is `0` by construction. The decision
+//! was sitting in `cross_episode_would_merge` the whole time. A tripwire watching a
+//! number the default configuration pins at zero can never fire (TD-250).
 //!
 //! `restore_archived_fact` used to be listed here too, for a sharper reason: it
 //! takes an `archived_fact_id` and `DreamSummary` reports `facts_archived` as a
@@ -48,6 +46,8 @@
 use std::sync::Arc;
 
 use chrono::Utc;
+use kremory::facade::MutationKind;
+use kremory::memory::types::CrossEpisodeMode;
 use kremory::{Memory, Namespace, StructuredFact};
 
 /// A stub chat provider. `dream()` REFUSES to run without an LLM wired — even
@@ -194,10 +194,15 @@ async fn main() -> anyhow::Result<()> {
         "unsupersede should reopen it; got {reopened:?}"
     );
 
-    // ── 3. The two you cannot reach ─────────────────────────────────────────
+    // ── 3. dream() merge → unmerge ──────────────────────────────────────────
     //
-    // Not narrated — demonstrated. A corpus built to be as merge-friendly as
-    // possible: one subject in two casings, repeated supporting facts.
+    // Two spellings of one subject, four episodes, and — the part that actually
+    // decides it — an IDENTICAL (predicate, object) fact shared between them.
+    //
+    // The merge gate is structural corroboration, not string similarity: two
+    // entities must share a neighbour or an identical fact, otherwise they are
+    // treated as HOMONYMS and left alone. Two people really can be called
+    // Margarethe Solberg, and merging them would silently corrupt both.
     for (s, p, o) in [
         ("Margarethe Solberg", "works_at", "Nordvik"),
         ("margarethe solberg", "works_at", "Nordvik"),
@@ -211,21 +216,47 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     }
 
-    let summary = mem.dream().in_namespace(ns.clone()).execute().await?;
+    // Default dream: SHADOW. It decides, and commits nothing.
+    let shadow = mem.dream().in_namespace(ns.clone()).execute().await?;
     println!(
-        "\ndream on merge-friendly data: merged={} archived={}",
-        summary.cross_episode_merged, summary.facts_archived
+        "\ndream (default = shadow): would_merge={} merged={}",
+        shadow.cross_episode_would_merge, shadow.cross_episode_merged
+    );
+    assert_eq!(
+        shadow.cross_episode_merged, 0,
+        "shadow mode must not commit a merge"
+    );
+    println!("  → decided, not applied. Read would_merge here, NEVER merged.");
+
+    // Apply: the same decision, committed and logged.
+    let applied = mem
+        .dream()
+        .in_namespace(ns.clone())
+        .cross_episode(CrossEpisodeMode::Apply)
+        .execute()
+        .await?;
+    println!("dream (Apply)            : merged={}", applied.cross_episode_merged);
+    assert_eq!(
+        applied.cross_episode_merged, 1,
+        "Apply must commit the merge shadow already approved"
     );
 
-    // ⚠️ TRIPWIRE. This asserts the CURRENT limitation (TD-250). If it starts
-    // failing, the gap has been closed and the map above is out of date —
-    // update this example rather than deleting the assertion.
-    assert_eq!(
-        summary.cross_episode_merged, 0,
-        "TD-250 tripwire: a merge became reachable offline. That is good news — \
-         `unmerge` can now be exercised end to end. Update the map in this file."
+    let merges = mem
+        .list_mutations()
+        .in_namespace(ns.clone())
+        .kind(MutationKind::EntityMerge)
+        .await?;
+    println!("merge mutation           : {}", merges[0].summary);
+
+    let unmerged = mem.unmerge(merges[0].mutation_id).execute().await?;
+    println!(
+        "merge → unmerge          : restored '{}' ({} facts re-pointed)",
+        unmerged.restored_entity, unmerged.facts_repointed
     );
-    println!("  → no merge, so `unmerge` has nothing to reverse (TD-250).");
+    assert_eq!(
+        unmerged.restored_entity, "margarethe solberg",
+        "the loser must come back"
+    );
 
     // ── 4. dream() archive → undo ───────────────────────────────────────────
     //
@@ -308,9 +339,10 @@ async fn main() -> anyhow::Result<()> {
         "undo + unsupersede should put the fact back in the present; got {back:?}"
     );
 
-    println!("\nFour pairs work end to end. One is public in one direction only.");
-    println!("Assume every reversal has a reachable handle and you will find out");
-    println!("otherwise halfway through building an undo feature.");
+    println!("\nAll five pairs work end to end — but two of them needed something");
+    println!("non-obvious first: a merge only commits under .cross_episode(Apply),");
+    println!("and an archived fact is only nameable because the archival is logged.");
+    println!("Check that a reversal has a reachable handle BEFORE you design around it.");
 
     mem.close().await?;
     Ok(())

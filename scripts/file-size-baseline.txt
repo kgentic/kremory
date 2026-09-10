@@ -70,7 +70,7 @@
 178 crates/kremory/examples/two_handles_one_database.rs
 210 crates/kremory/examples/undoing_a_bad_change.rs
 191 crates/kremory/examples/undoing_a_correction.rs
-317 crates/kremory/examples/what_can_be_undone.rs
+349 crates/kremory/examples/what_can_be_undone.rs
 204 crates/kremory/examples/who_touched_this_record.rs
 27 crates/kremory/src/core/arena.rs
 89 crates/kremory/src/core/background/batch_tracker.rs
@@ -151,6 +151,7 @@
 103 crates/kremory/src/core/ingest/helpers.rs
 1366 crates/kremory/src/core/ingest/mod.rs
 654 crates/kremory/src/core/ingest/pipeline/deferred.rs
+209 crates/kremory/src/core/ingest/pipeline/deferred_emissions.rs
 2542 crates/kremory/src/core/ingest/pipeline/ingest_with.rs pin=TD-045
 15 crates/kremory/src/core/ingest/pipeline/mod.rs
 259 crates/kremory/src/core/ingest/pipeline/phase1.rs
@@ -198,12 +199,17 @@
 908 crates/kremory/src/core/text_utils.rs
 1611 crates/kremory/src/facade/builder.rs
 973 crates/kremory/src/facade/dream.rs
+464 crates/kremory/src/facade/dream_llm_slot_tests.rs
+750 crates/kremory/src/facade/embeddings/mod.rs
+165 crates/kremory/src/facade/embeddings/tests.rs
 821 crates/kremory/src/facade/forget.rs
 1367 crates/kremory/src/facade/mod.rs pin=TD-045
+339 crates/kremory/src/facade/namespaces.rs
 1210 crates/kremory/src/facade/providers.rs
 2527 crates/kremory/src/facade/recall.rs
 545 crates/kremory/src/facade/remember.rs
 1059 crates/kremory/src/facade/reverse.rs
+301 crates/kremory/src/facade/summary.rs
 585 crates/kremory/src/facade/supersede.rs
 1207 crates/kremory/src/facade/update.rs
 139 crates/kremory/src/lib.rs
@@ -303,7 +309,7 @@
 211 crates/kremory/tests/it/llm_extractor.rs
 2216 crates/kremory/tests/it/llm_integration.rs
 52 crates/kremory/tests/it/lock_ordering.rs
-198 crates/kremory/tests/it/main.rs
+199 crates/kremory/tests/it/main.rs
 200 crates/kremory/tests/it/memory_api_surface.rs
 246 crates/kremory/tests/it/memory_builder_compat_matrix.rs
 296 crates/kremory/tests/it/migration_007_idempotency.rs

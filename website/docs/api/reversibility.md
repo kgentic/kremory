@@ -70,6 +70,33 @@ Each honest-outcome struct carries the actual counts reversed and an idempotency
 `UnmergeOutcome { restored_entity, keeper, facts_repointed, edges_restored, entities_reopened,
 nogood_recorded, already_undone }`.
 
+### ⚠️ A merge only COMMITS under `.cross_episode(Apply)`
+
+`dream()` defaults to `CrossEpisodeMode::Shadow`: merges are **decided and not applied**. In shadow
+`DreamSummary::cross_episode_merged` is `0` no matter how good the evidence is, and the decision is
+carried by `cross_episode_would_merge`.
+
+```rust ignore
+let shadow = mem.dream().in_namespace(ns.clone()).execute().await?;
+// would_merge = 1, merged = 0, and NO mutation was logged
+
+let applied = mem.dream()
+    .in_namespace(ns)
+    .cross_episode(CrossEpisodeMode::Apply)
+    .execute()
+    .await?;
+// merged = 1 — now `list_mutations().kind(EntityMerge)` names it and `unmerge` reverses it
+```
+
+Reading `merged` when you meant `would_merge` is how this project spent a day recording that
+`unmerge` had no reachable handle at all. It always had one.
+
+**What the merge gate actually asks for** is structural corroboration, not string similarity: two
+entities must share a neighbour **or** an identical `(predicate, object)` fact. Two spellings with
+entirely different facts are treated as *different people who share a name* — which is the
+conservative and correct default, and the reason a "merge-friendly" test corpus often merges
+nothing.
+
 ### The `merge_nogood` guarantee
 
 `unmerge` (and `undo()` on an `entity_merge`) does more than split the pair back apart: it records
