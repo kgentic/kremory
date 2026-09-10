@@ -62,7 +62,8 @@ pub use core::engine::{engine, engine_init};
 // ── Facade re-exports (Tier 1 / Tier 2 public surface — Story A.8) ───────────
 pub use facade::{
     ConsolidationOpsRan, DreamFireAndForget, DreamRequest, DreamSummary, EpisodeEntryBuilder,
-    ForgetRequest, Memory, MemoryBuilder, NoEmbedder, NoLlm, RecallRawRequest, RecallRequest,
+    ForgetOutcome, ForgetRequest, Memory, MemoryBuilder, NoEmbedder, NoLlm, RecallRawRequest,
+    RecallRequest,
     RecallTemplate, RememberBatchBuilder, RememberRequest, SupersedeOutcome, SupersedeRequest,
     WithEmbedder, WithLlm, WithLlmTrackedParams,
 };

@@ -24,7 +24,7 @@ pub use episodes::{
     EpisodeInsert, InsertEpisodeParams, InsertEpisodicEdgeParams, PriorEpisodesParams,
 };
 pub use facts::{FactInsert, InvalidateFactWithReasonParams};
-pub use queries::GetNeighboursAtParams;
+pub use queries::{BatchForgetCounts, GetNeighboursAtParams};
 
 #[cfg(test)]
 mod tests;

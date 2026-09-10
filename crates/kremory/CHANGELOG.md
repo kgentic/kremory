@@ -5,6 +5,28 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [Unreleased]
 
+> ⚠️ **The next release is 0.9.0, not 0.8.1** — `forget().execute()`'s return type changed
+> (see below), which is a breaking change to a published surface.
+
+### Fixed — BREAKING — erasing a namespace left the source text behind
+
+`mem.forget().in_namespace(ns).execute()` deleted entities, facts and edges and left every
+`episodes` row standing, body and all, still returned verbatim by content search. Measured:
+erase a namespace, then `recall("late delivery").content()` still answered
+`"Dana Fitzwilliam complained about a late delivery."` The episode body IS the personal
+data and the graph is derived from it, so this was not a narrower erasure — it was the
+wrong one, reporting success. The source-scoped path (`by_source_id`) already cascaded
+correctly; the namespace path never did. Both now run the same transaction.
+
+`execute()` returns `ForgetOutcome { entities, facts, episodes, edges }` instead of a bare
+`u64` of entities — **the breaking part**. The old count was a true number about the wrong
+noun: shared-entity preservation pins any subject that also appears in another source, which
+is the normal case, so a complete erasure routinely reported `0`. Use `!outcome.is_empty()`
+where you had `count > 0`. `TemporalGraph::batch_forget` likewise returns `BatchForgetCounts`.
+
+The Node binding and the HTTP endpoint keep their existing return shapes for now; widening
+them is part of the Node parity pass, not this release.
+
 ### Fixed — a dream's fact archival is now nameable, and undoable
 
 `Memory::restore_archived_fact` takes an `archived_fact_id` that no public read

@@ -27,7 +27,7 @@
 116 crates/kremory-eval/src/types.rs
 128 crates/kremory-eval/tests/longmemeval_adapter_test.rs
 272 crates/kremory-eval/tests/scorers_test.rs
-3090 crates/kremory-mcp/src/bin/kremory-http.rs
+3095 crates/kremory-mcp/src/bin/kremory-http.rs
 955 crates/kremory-mcp/src/conversions.rs
 204 crates/kremory-mcp/src/handlers.rs
 132 crates/kremory-mcp/src/health.rs
@@ -42,7 +42,7 @@
 5 crates/kremory-napi/build.rs
 891 crates/kremory-napi/src/bridge.rs
 1904 crates/kremory-napi/src/convert.rs
-1557 crates/kremory-napi/src/lib.rs
+1565 crates/kremory-napi/src/lib.rs
 665 crates/kremory-napi/tests/api_parity.rs
 53 crates/kremory-napi/tests/embedder_bridge.rs
 234 crates/kremory-napi/tests/extractor_selection_compat_matrix.rs
@@ -58,7 +58,7 @@
 198 crates/kremory/examples/domain_entity_types.rs
 164 crates/kremory/examples/dream_on_a_schedule.rs
 57 crates/kremory/examples/fastembed_rerank_spike.rs
-185 crates/kremory/examples/gdpr_erasure_by_source.rs
+197 crates/kremory/examples/gdpr_erasure_by_source.rs
 305 crates/kremory/examples/graph_health.rs
 107 crates/kremory/examples/hosted_providers.rs
 141 crates/kremory/examples/ingest_without_blocking.rs
@@ -140,8 +140,8 @@
 664 crates/kremory/src/core/graph/facts.rs
 198 crates/kremory/src/core/graph/mod.rs
 164 crates/kremory/src/core/graph/namespace.rs
-564 crates/kremory/src/core/graph/queries.rs
-1961 crates/kremory/src/core/graph/tests.rs
+583 crates/kremory/src/core/graph/queries.rs
+1964 crates/kremory/src/core/graph/tests.rs
 108 crates/kremory/src/core/grounding.rs
 600 crates/kremory/src/core/hybrid_extractor.rs
 73 crates/kremory/src/core/hybrid_extractor_helpers.rs
@@ -198,7 +198,7 @@
 908 crates/kremory/src/core/text_utils.rs
 1611 crates/kremory/src/facade/builder.rs
 954 crates/kremory/src/facade/dream.rs
-631 crates/kremory/src/facade/forget.rs
+821 crates/kremory/src/facade/forget.rs
 3282 crates/kremory/src/facade/mod.rs pin=TD-043
 1210 crates/kremory/src/facade/providers.rs
 2527 crates/kremory/src/facade/recall.rs
@@ -206,7 +206,7 @@
 1059 crates/kremory/src/facade/reverse.rs
 585 crates/kremory/src/facade/supersede.rs
 1207 crates/kremory/src/facade/update.rs
-138 crates/kremory/src/lib.rs
+139 crates/kremory/src/lib.rs
 477 crates/kremory/src/memory/background_ingestor_handle.rs
 96 crates/kremory/src/memory/dream_phase.rs
 1582 crates/kremory/src/memory/engine_handle.rs
@@ -274,7 +274,7 @@
 137 crates/kremory/tests/it/facade_event_sink.rs
 225 crates/kremory/tests/it/facade_fact_extraction_e2e.rs
 683 crates/kremory/tests/it/facade_fact_persistence_mock.rs
-84 crates/kremory/tests/it/facade_forget.rs
+89 crates/kremory/tests/it/facade_forget.rs
 132 crates/kremory/tests/it/facade_lifecycle.rs
 103 crates/kremory/tests/it/facade_missing_namespace.rs
 141 crates/kremory/tests/it/facade_open.rs
@@ -303,7 +303,7 @@
 211 crates/kremory/tests/it/llm_extractor.rs
 2216 crates/kremory/tests/it/llm_integration.rs
 52 crates/kremory/tests/it/lock_ordering.rs
-197 crates/kremory/tests/it/main.rs
+198 crates/kremory/tests/it/main.rs
 200 crates/kremory/tests/it/memory_api_surface.rs
 246 crates/kremory/tests/it/memory_builder_compat_matrix.rs
 296 crates/kremory/tests/it/migration_007_idempotency.rs
@@ -394,13 +394,14 @@
 110 crates/kremory/tests/it/td244_supersede_is_reachable.rs
 117 crates/kremory/tests/it/td246_forget_multi_source.rs
 109 crates/kremory/tests/it/td249_batch_skip_extraction.rs
+224 crates/kremory/tests/it/td250_archived_facts_are_reachable.rs
 101 crates/kremory/tests/it/td251_cancel_wedges_batch.rs
 216 crates/kremory/tests/it/td_012_canary.rs
 775 crates/kremory/tests/it/td_028_pull_shape.rs
 305 crates/kremory/tests/it/td_metadata_multirow_patch.rs
 552 crates/kremory/tests/it/type_registry_collapse_lemma_false_merge_safety.rs
 1057 crates/kremory/tests/it/type_registry_collapse_s3_spike.rs
-581 crates/kremory/tests/it/v014a_namespace_policy.rs
+584 crates/kremory/tests/it/v014a_namespace_policy.rs
 471 crates/kremory/tests/it/v015c_multi_namespace_recall.rs
 446 crates/kremory/tests/it/verify_batch_for_candidates.rs
 441 crates/kremory/tests/it/verify_stage_integration.rs

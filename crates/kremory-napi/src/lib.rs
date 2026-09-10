@@ -480,7 +480,15 @@ impl JsMemory {
     /// (no per-call namespace AND no default registered on the handle), the call
     /// rejects with a namespace-required error.
     ///
-    /// Returns the count of episode rows deleted.
+    /// Returns the count of ENTITY rows deleted (the previous doc said "episode
+    /// rows" — wrong).
+    ///
+    /// ⚠️ `0` does NOT mean nothing was erased. Shared-entity preservation pins any
+    /// subject that also appears in another source, which is the normal case, so a
+    /// complete erasure routinely returns `0` while facts, edges and the episode
+    /// itself were removed. The Rust surface now returns the full per-table outcome
+    /// (`ForgetOutcome`); exposing that here is deferred to the Node parity pass —
+    /// this binding keeps its existing `number` contract until then.
     #[napi]
     pub async fn forget(&self, source_id: String, namespace: Option<String>) -> napi::Result<f64> {
         let ns = namespace
@@ -503,7 +511,7 @@ impl JsMemory {
             .map_err(|e| napi::Error::from_reason(format!("kremory forget failed: {e}")))?;
 
         // u64 → f64: safe up to 2^53; delete counts never approach that limit.
-        Ok(deleted as f64)
+        Ok(deleted.entities as f64)
     }
 
     /// Bound a fact's world-time `valid_to` window explicitly — the

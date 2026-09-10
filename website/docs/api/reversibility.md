@@ -188,36 +188,47 @@ This explicit terminal makes the intent visible in code review.
 
 ```rust
 // Forget everything in the default namespace
-let entities_removed: u64 = mem.forget().execute().await?;
+let erased: ForgetOutcome = mem.forget().execute().await?;
+println!("entities={} facts={} episodes={} edges={}",
+         erased.entities, erased.facts, erased.episodes, erased.edges);
 
 // Forget a specific namespace
-let entities_removed = mem.forget()
+let erased = mem.forget()
     .in_namespace(Namespace::new("tenant-acme"))
     .execute()
     .await?;
 
 // Right-to-erasure: everything ONE source contributed, leaving other sources intact
-let entities_removed = mem.forget()
+let erased = mem.forget()
     .in_namespace(ns)
     .by_source_id("support-chat-4417")
     .execute()
     .await?;
 ```
 
-### ⚠️ The return value counts ENTITIES, so a successful erasure often returns `0`
+### What erasure covers
+
+**Both scopes remove the derived graph AND the stored source text** — entities, facts,
+`episodic_edges`, `episodes`, and the full-text shadow rows for each. Erasing the graph while
+leaving the prose that produced it is not erasure: the episode body is the personal data, and it
+stays verbatim-recallable through content search.
+
+### ⚠️ `entities: 0` does NOT mean nothing was erased
 
 Shared-entity preservation pins any subject that also appears in **another** source — the
 normal case, since the same person appears in several documents. So a complete, correct
-`by_source_id` erasure removes that source's facts and returns **0 entities**.
+`by_source_id` erasure removes that source's facts and episode while reporting **0 entities**.
 
 ```rust ignore
-// WRONG — a full erasure legitimately reports 0
-if removed > 0 { println!("erased"); }
+// WRONG — a full erasure legitimately reports 0 entities
+if erased.entities > 0 { println!("erased"); }
+
+// RIGHT — ask about the whole outcome
+if !erased.is_empty() { println!("erased: {erased:?}"); }
 ```
 
-Treat a successful `Ok(_)` as the erasure having happened. The count tells you how many
-entities became orphaned, not whether the operation worked. A richer return shape is
-tracked but would be a breaking change.
+`ForgetOutcome` counts rows actually deleted per table, never a status flag. Treat a successful
+`Ok(_)` as the erasure having happened; use the counts to see what it touched.
 
 Runnable: `cargo run --example gdpr_erasure_by_source` — it asserts both halves, that the
 erased source is gone **and** that another source's facts about the same person survive.

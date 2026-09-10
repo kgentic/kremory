@@ -194,4 +194,5 @@ mod td244_supersede_is_reachable;
 mod td246_forget_multi_source;
 mod td249_batch_skip_extraction;
 mod td250_archived_facts_are_reachable;
+mod td252_forget_namespace_erases_episodes;
 mod td251_cancel_wedges_batch;

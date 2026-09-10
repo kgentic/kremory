@@ -82,7 +82,7 @@ async fn builder_default_namespace_flows_to_forget() {
 
     // ForgetRequest stub returns Ok(0) — no graph call — namespace present = no error.
     let count = mem.forget().execute().await.expect("forget should succeed");
-    assert_eq!(count, 0, "stub forget returns 0 deleted");
+    assert!(count.is_empty(), "nothing to erase; got {count:?}");
 }
 
 /// B1 (public-docs-and-api-surface-audit quality-review) — `Memory` must

@@ -154,12 +154,24 @@ async fn main() -> anyhow::Result<()> {
         .by_source_id(ERASE_ME)
         .execute()
         .await?;
-    // ⚠️ This count is ENTITIES deleted, not facts. It reads 0 here and that is
-    // correct: Dana appears in the surviving contract too, so her entity is
-    // deliberately PINNED while the chat's facts are erased around her. Do not
-    // write `if removed > 0 { ... }` — a successful, complete erasure legitimately
-    // reports 0 whenever the subject is shared, which is the normal case.
-    println!("  entities removed: {removed} (0 is correct — Dana is shared, so pinned)");
+    // The outcome is per TABLE, and reading only one number is how you conclude
+    // nothing happened. `entities: 0` is CORRECT here — Dana appears in the
+    // surviving contract too, so her entity is deliberately PINNED while the
+    // chat's facts and its episode are erased around her. Never write
+    // `if removed > 0 { ... }` against a single count.
+    println!(
+        "  erased: entities={} facts={} episodes={} edges={}",
+        removed.entities, removed.facts, removed.episodes, removed.edges
+    );
+    println!("  (entities=0 is correct — Dana is shared, so she is pinned)");
+    assert_eq!(
+        removed.entities, 0,
+        "Dana is shared with the surviving contract, so her entity must be pinned"
+    );
+    assert!(
+        removed.episodes > 0,
+        "erasure must remove the SOURCE TEXT, not only the graph derived from it"
+    );
 
     let after = predicates_for(&mem, ns.clone()).await?;
     println!("after erasure  : {after:?}");

@@ -1148,7 +1148,12 @@ async fn delete_namespace(
         .execute()
         .await
         .map_err(ToolError::from)?;
-    Ok(Json(serde_json::json!({ "deleted": deleted })))
+    // Response shape unchanged: `deleted` stays the ENTITY count this endpoint has
+    // always returned. The Rust surface now carries the full per-table outcome
+    // (`ForgetOutcome`), and `deleted: 0` on a real erasure is misleading for the
+    // documented reason — but widening this JSON is HTTP-surface work, sequenced
+    // after the crate ships, not smuggled in as a build fix.
+    Ok(Json(serde_json::json!({ "deleted": deleted.entities })))
 }
 
 // ────────────────────────────────────────────────────────────────────────

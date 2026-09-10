@@ -566,7 +566,10 @@ async fn g_v015b_30b_mutable_namespace_forget_and_dream_succeed() {
         .execute()
         .await
         .expect("ForgetRequest on Mutable namespace must succeed");
-    assert_eq!(forget_count, 0, "empty namespace yields zero deletions");
+    assert!(
+        forget_count.is_empty(),
+        "empty namespace yields zero deletions; got {forget_count:?}"
+    );
 
     // Dream on Mutable namespace must NOT return NamespacePolicyViolation.
     // The substrate may fail dream for other reasons (empty episodes, etc.)

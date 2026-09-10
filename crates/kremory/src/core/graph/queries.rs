@@ -11,6 +11,19 @@ use super::{row_to_fact, SubGraph};
 /// Bundled parameters for [`TemporalGraph::get_neighbours_at`] — args-as-object
 /// to satisfy a too-many-arguments lint (the receiver plus 3
 /// positional params trips the project's 3-arg threshold).
+/// What a `batch_forget` actually removed, per table.
+///
+/// `entities` alone is a misleading success signal: shared-entity preservation
+/// pins any subject that also appears elsewhere, so a correct erasure routinely
+/// deletes facts and edges while removing ZERO entities. A caller branching on
+/// `entities > 0` concludes nothing happened (TD-247).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BatchForgetCounts {
+    pub entities: u64,
+    pub facts: u64,
+    pub edges: u64,
+}
+
 pub struct GetNeighboursAtParams<'a> {
     pub entity_id: &'a str,
     pub hops: u32,
@@ -474,10 +487,12 @@ impl TemporalGraph {
     /// It MUST run before the `facts` DELETE so the resolving subquery still
     /// sees the rows about to be removed.
     ///
-    /// Returns the total number of entity rows deleted across all chunks.
-    pub async fn batch_forget(&self, entity_ids: &[String]) -> Result<u64> {
+    /// Returns what was actually deleted, per table — not just the entity count.
+    /// A caller reporting "0 removed" while facts and edges went with them is
+    /// telling a true fact about the wrong noun (TD-247).
+    pub async fn batch_forget(&self, entity_ids: &[String]) -> Result<BatchForgetCounts> {
         const CHUNK_SIZE: usize = 100;
-        let mut total_deleted: u64 = 0;
+        let mut counts = BatchForgetCounts::default();
 
         for chunk in entity_ids.chunks(CHUNK_SIZE) {
             let placeholders = vec!["?"; chunk.len()].join(",");
@@ -508,7 +523,7 @@ impl TemporalGraph {
             );
 
             // 2. Episodic edges.
-            try_delete!(
+            let edges = try_delete!(
                 format!("DELETE FROM episodic_edges WHERE entity_id IN ({placeholders})"),
                 params.clone()
             );
@@ -535,7 +550,7 @@ impl TemporalGraph {
             );
             let mut doubled = params.clone();
             doubled.extend_from_slice(&params);
-            try_delete!(sql_facts, doubled);
+            let facts = try_delete!(sql_facts, doubled);
 
             // 4. Entity rows.
             let n = try_delete!(
@@ -544,15 +559,19 @@ impl TemporalGraph {
             );
 
             guard.commit().await?;
-            total_deleted += n;
+            counts.entities += n;
+            counts.facts += facts;
+            counts.edges += edges;
         }
 
         tracing::info!(
             count = entity_ids.len(),
-            deleted = total_deleted,
+            entities = counts.entities,
+            facts = counts.facts,
+            edges = counts.edges,
             "kremory.db.batch_forget"
         );
-        Ok(total_deleted)
+        Ok(counts)
     }
 
     // ── Namespace policy (v0.1.4) ─────────────────────────────────────────────

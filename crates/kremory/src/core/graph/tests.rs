@@ -1858,7 +1858,10 @@ async fn batch_forget_250_entities_deleted_cleanly() {
     assert_eq!(before.len(), 250);
 
     let deleted = g.batch_forget(&ids).await.unwrap();
-    assert_eq!(deleted, 250, "batch_forget must delete all 250 entities");
+    assert_eq!(
+        deleted.entities, 250,
+        "batch_forget must delete all 250 entities"
+    );
 
     let after = g.list_entities().await.unwrap();
     assert!(
@@ -1871,7 +1874,7 @@ async fn batch_forget_250_entities_deleted_cleanly() {
 async fn batch_forget_empty_slice_is_noop() {
     let g = TemporalGraph::open_in_memory().await.unwrap();
     let deleted = g.batch_forget(&[]).await.unwrap();
-    assert_eq!(deleted, 0);
+    assert_eq!(deleted, crate::core::graph::BatchForgetCounts::default());
 }
 
 #[tokio::test]

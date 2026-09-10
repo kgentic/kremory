@@ -26,8 +26,9 @@ let context: String = mem.recall("what does user prefer?").in_namespace(ns.clone
 let summary = mem.dream().in_namespace(ns.clone()).execute().await?;
 println!("communities updated: {}", summary.communities_updated);
 
-// Forget (GDPR-style delete of everything in this namespace)
-let deleted_count = mem.forget().in_namespace(ns.clone()).execute().await?;
+// Forget (GDPR-style delete of everything in this namespace — graph AND source text)
+let erased = mem.forget().in_namespace(ns.clone()).execute().await?;
+println!("erased {} episodes, {} facts", erased.episodes, erased.facts);
 
 // Explicit close (flushes WAL)
 mem.close().await?;

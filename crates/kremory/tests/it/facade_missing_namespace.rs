@@ -51,7 +51,7 @@ async fn forget_with_explicit_namespace_succeeds() {
         .execute()
         .await
         .expect("should succeed with explicit namespace");
-    assert_eq!(count, 0, "stub returns 0 deleted");
+    assert!(count.is_empty(), "nothing to erase; got {count:?}");
 }
 
 /// `remember()` without namespace → MissingNamespace.

@@ -1,5 +1,41 @@
 use super::*;
 
+// ── ForgetOutcome ─────────────────────────────────────────────────────────────
+
+/// What a [`ForgetRequest`] actually erased, per table.
+///
+/// `execute()` used to return a bare `u64` of ENTITIES deleted, which is a true
+/// number about the wrong noun: shared-entity preservation pins any subject that
+/// also appears in another source — the normal case — so a complete, correct
+/// erasure routinely reports `0` while facts, edges and episodes were removed.
+/// A caller writing `if removed > 0 { /* erased */ }` concluded nothing had
+/// happened (TD-247).
+///
+/// Every field is a count of rows ACTUALLY deleted, never a status flag.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[non_exhaustive]
+pub struct ForgetOutcome {
+    /// Entity rows deleted. `0` is normal and correct when every subject is
+    /// shared with a source that was not erased.
+    pub entities: u64,
+    /// Fact rows deleted — both those whose endpoints went, and (on the
+    /// source-scoped path) those sourced from an erased episode.
+    pub facts: u64,
+    /// Episode rows deleted: the stored source text itself.
+    pub episodes: u64,
+    /// `episodic_edges` rows deleted.
+    pub edges: u64,
+}
+
+impl ForgetOutcome {
+    /// `true` when this erasure removed nothing at all — the only honest way to
+    /// ask "did anything happen?", and the check `entities > 0` was standing in
+    /// for.
+    pub fn is_empty(&self) -> bool {
+        self.entities == 0 && self.facts == 0 && self.episodes == 0 && self.edges == 0
+    }
+}
+
 // ── ForgetRequest ─────────────────────────────────────────────────────────────
 
 /// Forget (delete) request builder. Obtain via `mem.forget()`.
@@ -42,16 +78,29 @@ impl<'a> ForgetRequest<'a> {
         self
     }
 
-    /// Execute the deletion. Returns the count of deleted entity rows.
+    /// Execute the deletion. Returns a [`ForgetOutcome`] — the rows actually
+    /// removed, per table.
     ///
     /// This is the only terminal for `ForgetRequest` — there is no implicit
     /// `.await` to prevent accidental destructive operations.
+    ///
+    /// # What erasure covers
+    ///
+    /// BOTH scopes remove the derived graph (entities, facts, `episodic_edges`)
+    /// AND the stored source text (`episodes`, plus its full-text shadow rows).
+    /// Erasing the graph while leaving the prose that produced it is not erasure:
+    /// the episode body is the personal data, and it stays verbatim-recallable
+    /// through content search.
+    ///
+    /// Shared-entity preservation still applies to the source-scoped path: an
+    /// entity mentioned by another source survives, and so does that other
+    /// source's episode.
     ///
     /// # AppendOnly enforcement
     ///
     /// If the namespace has `AppendOnly` policy, returns
     /// `Err(MemoryError::Core(CoreError::NamespacePolicyViolation))`.
-    pub async fn execute(self) -> Result<u64> {
+    pub async fn execute(self) -> Result<ForgetOutcome> {
         let ns = self.memory.resolve_namespace(self.namespace)?;
         // Lazy population: ensure namespace row exists before read.
         self.memory.ensure_namespace_policy(&ns).await?;
@@ -179,9 +228,9 @@ impl<'a> ForgetRequest<'a> {
                 .begin_immediate_if_needed()
                 .await
                 .map_err(MemoryError::Core)?;
-            let txn_result: Result<(u64, u64)> = async {
-                let entities_deleted = if to_delete.is_empty() {
-                    0
+            let txn_result: Result<(ForgetOutcome, u64)> = async {
+                let batch = if to_delete.is_empty() {
+                    crate::core::graph::BatchForgetCounts::default()
                 } else {
                     tg.batch_forget(&to_delete)
                         .await
@@ -255,37 +304,48 @@ impl<'a> ForgetRequest<'a> {
                 .await
                 .map_err(CoreError::Database)?;
 
-                conn.execute(
-                    "DELETE FROM facts WHERE source_episode_id IN \
-                     (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
-                    libsql::params![sid.clone(), group_id.clone()],
-                )
-                .await
-                .map_err(CoreError::Database)?;
+                let facts_by_source = conn
+                    .execute(
+                        "DELETE FROM facts WHERE source_episode_id IN \
+                         (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
+                        libsql::params![sid.clone(), group_id.clone()],
+                    )
+                    .await
+                    .map_err(CoreError::Database)?;
 
-                conn.execute(
-                    "DELETE FROM episodic_edges WHERE episode_id IN \
-                     (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
-                    libsql::params![sid.clone(), group_id.clone()],
-                )
-                .await
-                .map_err(CoreError::Database)?;
-                conn.execute(
-                    "DELETE FROM episodes WHERE source_id = ?1 AND group_id = ?2",
-                    libsql::params![sid, group_id],
-                )
-                .await
-                .map_err(CoreError::Database)?;
+                let edges_by_episode = conn
+                    .execute(
+                        "DELETE FROM episodic_edges WHERE episode_id IN \
+                         (SELECT id FROM episodes WHERE source_id = ?1 AND group_id = ?2)",
+                        libsql::params![sid.clone(), group_id.clone()],
+                    )
+                    .await
+                    .map_err(CoreError::Database)?;
+                let episodes_deleted = conn
+                    .execute(
+                        "DELETE FROM episodes WHERE source_id = ?1 AND group_id = ?2",
+                        libsql::params![sid, group_id],
+                    )
+                    .await
+                    .map_err(CoreError::Database)?;
 
                 #[cfg(feature = "content-search")]
                 let purged = episodes_fts_purged;
                 #[cfg(not(feature = "content-search"))]
                 let purged = 0u64;
-                Ok((entities_deleted, purged))
+                Ok((
+                    ForgetOutcome {
+                        entities: batch.entities,
+                        facts: batch.facts + facts_by_source,
+                        episodes: episodes_deleted,
+                        edges: batch.edges + edges_by_episode,
+                    },
+                    purged,
+                ))
             }
             .await;
 
-            let (entities_deleted, episodes_fts_purged) = match txn_result {
+            let (outcome, episodes_fts_purged) = match txn_result {
                 Ok(v) => {
                     guard.commit().await.map_err(MemoryError::Core)?;
                     v
@@ -316,19 +376,134 @@ impl<'a> ForgetRequest<'a> {
             metrics::counter!("kremory.content_index.episode_purged_total")
                 .increment(episodes_fts_purged);
 
-            return Ok(entities_deleted);
+            return Ok(outcome);
         }
 
-        // Wire to substrate: list entities in group, then batch_forget.
+        // ── Namespace-wide erasure ──────────────────────────────────────────
+        //
+        // The derived graph AND the source text. `batch_forget` only knows about
+        // entity-keyed rows, so on its own it erased entities, facts and edges and
+        // left every `episodes` row standing — with its full body still returned
+        // verbatim by content search. Measured before the fix: forget a namespace,
+        // then `recall("late delivery").content()` still answered
+        // "Dana Fitzwilliam complained about a late delivery."
+        //
+        // That is not a narrower erasure, it is the wrong one: the episode body is
+        // the personal data, and the graph is a derivative of it. TD-246 built this
+        // cascade for the `by_source_id` path above and it was never brought across
+        // — the two scopes have to mean the same verb.
+        //
+        // One transaction, and the same ordering the source-scoped path documents
+        // at length: FTS shadows BEFORE their base rows, because `episodes_fts` and
+        // `facts_fts` are EXTERNAL-CONTENT FTS5 tables whose resolving subqueries
+        // read THROUGH to the base table. Purge them after the base rows are gone
+        // and nothing can name which shadow rows to drop — the episodes become
+        // unfindable-but-stored, or worse, findable-but-deleted.
         let entities = tg
             .list_entities_in_group(&group_id)
             .await
             .map_err(MemoryError::Core)?;
-        if entities.is_empty() {
-            return Ok(0);
-        }
         let ids: Vec<String> = entities.into_iter().map(|e| e.id).collect();
-        tg.batch_forget(&ids).await.map_err(MemoryError::Core)
+
+        let conn = &tg.conn;
+        let guard = tg
+            .begin_immediate_if_needed()
+            .await
+            .map_err(MemoryError::Core)?;
+        let txn_result: Result<(ForgetOutcome, u64)> = async {
+            let batch = if ids.is_empty() {
+                crate::core::graph::BatchForgetCounts::default()
+            } else {
+                tg.batch_forget(&ids).await.map_err(MemoryError::Core)?
+            };
+
+            #[cfg(feature = "content-search")]
+            let episodes_fts_purged: u64 = conn
+                .execute(
+                    "DELETE FROM episodes_fts WHERE rowid IN \
+                     (SELECT id FROM episodes WHERE group_id = ?1)",
+                    libsql::params![group_id.clone()],
+                )
+                .await
+                .map_err(CoreError::Database)?;
+            #[cfg(not(feature = "content-search"))]
+            let episodes_fts_purged: u64 = 0;
+
+            #[cfg(feature = "content-search")]
+            conn.execute(
+                "DELETE FROM facts_fts WHERE fact_id IN \
+                 (SELECT f.id FROM facts f \
+                  JOIN episodes e ON e.id = f.source_episode_id \
+                  WHERE e.group_id = ?1)",
+                libsql::params![group_id.clone()],
+            )
+            .await
+            .map_err(CoreError::Database)?;
+
+            // Facts sourced from this namespace's episodes but whose endpoints
+            // survived `batch_forget` — e.g. an entity pinned by another
+            // namespace. `facts.source_episode_id` is a foreign key into
+            // `episodes(id)` (TD-246), so these MUST go before the episodes do or
+            // the delete below fails the constraint.
+            let facts_by_source = conn
+                .execute(
+                    "DELETE FROM facts WHERE source_episode_id IN \
+                     (SELECT id FROM episodes WHERE group_id = ?1)",
+                    libsql::params![group_id.clone()],
+                )
+                .await
+                .map_err(CoreError::Database)?;
+
+            let edges_by_episode = conn
+                .execute(
+                    "DELETE FROM episodic_edges WHERE episode_id IN \
+                     (SELECT id FROM episodes WHERE group_id = ?1)",
+                    libsql::params![group_id.clone()],
+                )
+                .await
+                .map_err(CoreError::Database)?;
+
+            let episodes_deleted = conn
+                .execute(
+                    "DELETE FROM episodes WHERE group_id = ?1",
+                    libsql::params![group_id.clone()],
+                )
+                .await
+                .map_err(CoreError::Database)?;
+
+            Ok((
+                ForgetOutcome {
+                    entities: batch.entities,
+                    facts: batch.facts + facts_by_source,
+                    episodes: episodes_deleted,
+                    edges: batch.edges + edges_by_episode,
+                },
+                episodes_fts_purged,
+            ))
+        }
+        .await;
+
+        let (outcome, episodes_fts_purged) = match txn_result {
+            Ok(v) => {
+                guard.commit().await.map_err(MemoryError::Core)?;
+                v
+            }
+            Err(e) => {
+                // Best-effort rollback: if it fails there is nothing further we can
+                // do, and the ORIGINAL error is the one the caller needs.
+                let _ = guard.rollback().await;
+                return Err(e);
+            }
+        };
+
+        // Post-COMMIT: a metric increment cannot be rolled back.
+        #[cfg(feature = "content-search")]
+        metrics::counter!("kremory.content_index.episode_purged_total")
+            .increment(episodes_fts_purged);
+        #[cfg(not(feature = "content-search"))]
+        let _ = episodes_fts_purged;
+
+        Ok(outcome)
     }
 }
 
@@ -479,7 +654,11 @@ mod forget_by_source_id_tests {
             .await
             .expect("forget by_source_id must succeed");
 
-        assert_eq!(deleted, 1, "only entity-alpha must be deleted");
+        assert_eq!(deleted.entities, 1, "only entity-alpha must be deleted");
+        assert_eq!(
+            deleted.episodes, 1,
+            "doc-A's episode — the source text — must go with it"
+        );
         assert!(
             !entity_exists(&mem, "entity-alpha").await,
             "alpha must be gone"
@@ -507,9 +686,17 @@ mod forget_by_source_id_tests {
             .expect("forget by_source_id must succeed");
 
         assert_eq!(
-            deleted, 0,
+            deleted.entities, 0,
             "shared entity must NOT be deleted (shared-entity preservation)"
         );
+        // ...and this is exactly why the bare entity count was a misleading
+        // success signal (TD-247): the erasure DID happen — doc-A's episode is
+        // gone — while the number a caller was given reads zero.
+        assert_eq!(
+            deleted.episodes, 1,
+            "doc-A's episode must still be erased even though its entity is pinned"
+        );
+        assert!(!deleted.is_empty(), "something WAS erased; {deleted:?}");
         assert!(
             entity_exists(&mem, "entity-shared").await,
             "shared entity must remain (still referenced by doc-B)"
@@ -622,7 +809,10 @@ mod forget_by_source_id_tests {
             .await
             .expect("forget by_source_id must succeed even with no matches");
 
-        assert_eq!(deleted, 0, "no match must return 0, not Err");
+        assert!(
+            deleted.is_empty(),
+            "no match must erase nothing, not Err; got {deleted:?}"
+        );
         assert!(
             entity_exists(&mem, "entity-x").await,
             "non-matched entity must remain"
