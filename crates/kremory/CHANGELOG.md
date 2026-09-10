@@ -5,6 +5,22 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed — a dream's fact archival is now nameable, and undoable
+
+`Memory::restore_archived_fact` takes an `archived_fact_id` that no public read
+returned — `DreamSummary` reports `facts_archived` as a COUNT — so it was documented
+and impossible to call. The archive op now writes a `fact_archive` row to the mutation
+log inside the move's own transaction, which makes the archival visible through
+`list_mutations().kind(MutationKind::FactArchive)` and reversible through
+`undo(mutation_id)` like every other mutation. No new public API: the reserved
+`MutationKind::FactArchive` variant and its pre-state record already existed for exactly
+this, and `UndoOutcome` is `#[non_exhaustive]`, so the new `RestoreArchived` variant is
+additive. Tracked-kind boundary moves 4-of-8 to 5-of-8.
+
+Note: un-archiving restores the fact **still closed** — being closed past the grace
+window is what made it archival-eligible — so it is back in the graph and still absent
+from a present-tense `recall()`. Re-opening it is a separate `unsupersede`.
+
 ### Fixed — cancelling a batched episode could wedge `await_batch` forever
 
 A cancel and the episode's own background task could BOTH record a terminal outcome for

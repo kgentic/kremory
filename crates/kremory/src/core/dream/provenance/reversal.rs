@@ -50,8 +50,8 @@ use crate::core::error::{Error, Result};
 use crate::core::schema::TemporalGraph;
 
 use super::{
-    EntityMergePreState, FactEndpoint, MergeInputs, RestoreArchivedOutcome, UnmergeOutcome,
-    UnsupersedeOutcome,
+    EntityMergePreState, FactArchivePreState, FactEndpoint, MergeInputs, RestoreArchivedOutcome,
+    UnmergeOutcome, UnsupersedeOutcome,
 };
 
 // ─── nogood key ─────────────────────────────────────────────────────────────
@@ -559,6 +559,68 @@ pub async fn restore_archived_fact(
         };
         counter!("kremory.graph.restore_archived_total", "outcome" => label).increment(1);
     }
+    Ok(outcome)
+}
+
+/// Reverse a LOGGED `fact_archive` mutation by its `mutation_id` (TD-250).
+///
+/// The domain-id door — `restore_archived_fact(graph, archived_fact_id)` — has
+/// always existed and was always uncallable from outside, because nothing public
+/// returned an `archived_fact_id`. Now that the archive op logs its mutation, a
+/// consumer reaches this the same way it reaches every other reversal: iterate
+/// `list_mutations`, pass the `mutation_id` to `undo`.
+///
+/// Marks `undone_at` on the log row, so the reversal shows up in
+/// `mutation_history` like its four siblings rather than silently succeeding and
+/// leaving the record reading un-reversed. Idempotent: a row already marked
+/// undone returns `already_live = true` and writes nothing.
+///
+/// # Errors
+///
+/// - [`Error::MutationNotFound`] — `mutation_id` names no `fact_archive` row.
+/// - Whatever `restore_archived_fact` returns.
+pub async fn undo_fact_archive(
+    graph: &TemporalGraph,
+    mutation_id: i64,
+) -> Result<RestoreArchivedOutcome> {
+    let (undone_at, pre_state_json): (Option<String>, String) = {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT undone_at, pre_state FROM graph_mutation_log \
+                 WHERE id = ?1 AND kind = 'fact_archive'",
+                libsql::params![mutation_id],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Err(Error::MutationNotFound { mutation_id });
+        };
+        (row.get::<Option<String>>(0)?, row.get::<String>(1)?)
+    };
+
+    let pre: FactArchivePreState = serde_json::from_str(&pre_state_json).map_err(|e| {
+        Error::Other(anyhow::anyhow!(
+            "undo_fact_archive: deserialize pre_state for mutation {mutation_id}: {e}"
+        ))
+    })?;
+
+    if undone_at.is_some() {
+        return Ok(RestoreArchivedOutcome {
+            restored_fact_id: pre.archived_fact_id,
+            // Already reversed → this call restored nothing, and the fact is live.
+            already_live: true,
+        });
+    }
+
+    let outcome = restore_archived_fact(graph, pre.archived_fact_id).await?;
+    let now = chrono::Utc::now().to_rfc3339();
+    graph
+        .conn
+        .execute(
+            "UPDATE graph_mutation_log SET undone_at = ?1 WHERE id = ?2",
+            libsql::params![now, mutation_id],
+        )
+        .await?;
     Ok(outcome)
 }
 

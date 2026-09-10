@@ -78,21 +78,29 @@ pub use inspect::{MutationFilter, MutationRecord};
 ///
 /// # Tracked-kind boundary (4 of 8 are logged today)
 ///
-/// Only FOUR variants are currently PRODUCED into `graph_mutation_log`, and hence
+/// FIVE variants are currently PRODUCED into `graph_mutation_log`, and hence
 /// LOGGED, listable (via `Memory::list_mutations` / `mutation_history`), and
 /// reversible through the unified `Memory::undo` dispatcher:
 /// [`EntityMerge`](Self::EntityMerge), [`EntityEdit`](Self::EntityEdit),
-/// [`EntityDelete`](Self::EntityDelete), [`FactDelete`](Self::FactDelete).
+/// [`EntityDelete`](Self::EntityDelete), [`FactDelete`](Self::FactDelete),
+/// [`FactArchive`](Self::FactArchive).
 ///
-/// The other four — [`FactSupersede`](Self::FactSupersede),
-/// [`FactArchive`](Self::FactArchive), [`CommunityAssign`](Self::CommunityAssign),
-/// [`CanonicalForm`](Self::CanonicalForm) — are RESERVED: they are not written to
-/// the log yet, so `list_mutations(kind = <reserved>)` returns empty BY
+/// [`FactArchive`](Self::FactArchive) joined them on 2026-09-10 (TD-250). It was
+/// RESERVED, which made `Memory::restore_archived_fact` **impossible to call**:
+/// it takes an `archived_fact_id` that no public read returned — `DreamSummary`
+/// reports `facts_archived` as a COUNT. Logging the archival is what surfaces the
+/// id, and it needed no new public surface to do it, because `list_mutations` was
+/// already the read for exactly this.
+///
+/// The other three — [`FactSupersede`](Self::FactSupersede),
+/// [`CommunityAssign`](Self::CommunityAssign),
+/// [`CanonicalForm`](Self::CanonicalForm) — remain RESERVED: they are not written
+/// to the log yet, so `list_mutations(kind = <reserved>)` returns empty BY
 /// CONSTRUCTION, and `Memory::undo` on a would-be row of that kind is a loud
-/// `Error::UndoUnsupportedKind`. (`FactSupersede` / `FactArchive` are still
-/// reversible — via `Memory::unsupersede` / `Memory::restore_archived_fact`, which
-/// take a domain `fact_id` / `archived_fact_id`, not a `mutation_id`.) The runtime
-/// enforcement of this boundary is the `undo` dispatcher's loud error.
+/// `Error::UndoUnsupportedKind`. (`FactSupersede` is still reversible — via
+/// `Memory::unsupersede`, which takes a domain `fact_id`, not a `mutation_id`.)
+/// The runtime enforcement of this boundary is the `undo` dispatcher's loud
+/// error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -328,10 +336,26 @@ pub(crate) struct FactSupersedePreState {
 
 /// `pre_state` for `MutationKind::FactArchive` (§2.3) — the `facts_archive.id`
 /// of the archived row. Undo is the `restore_archived_fact` helper (§3.2).
+///
+/// `facts_archive.id` carries the ORIGINAL `facts.id` (migration 019), so this is
+/// the same number the fact had while live — but a consumer has no way to know a
+/// given fact was archived without this log row, which is the whole reason it is
+/// written (TD-250).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)] // planned consumer: `restore_archived_fact` undo sub-phase (Tier 2, §3.2).
 pub(crate) struct FactArchivePreState {
     pub(crate) archived_fact_id: i64,
+}
+
+/// `inputs` for `MutationKind::FactArchive` — the derivation source for the
+/// consumer INSPECT summary (§3), NOT the undo payload. Our OWN structured emit
+/// (§2.1). Mirrors [`DeleteFactInputs`]: the endpoints are what a consumer
+/// locates the record by, and `object_id` is `None` for a literal object.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FactArchiveInputs {
+    pub(crate) fact_id: i64,
+    pub(crate) subject_id: String,
+    pub(crate) predicate: String,
+    pub(crate) object_id: Option<String>,
 }
 
 /// A presence key for an `episodic_edges` row re-keyed by an entity rename

@@ -22,11 +22,11 @@
 //!   edit_entity     →    undo_entity_edit(mut_id)     list_mutations()
 //!   delete_fact     →    undo_delete_fact(mut_id)     list_mutations()
 //!   supersede       →    unsupersede(fact_id)         recall() → fact_id
+//!   dream() archive →    undo(mut_id)                 list_mutations()
 //!   dream() merge   →    unmerge(mut_id)              ⚠️ see below
-//!   dream() archive →    restore_archived_fact(id)    ⚠️ see below
 //! ```
 //!
-//! The first three are exercised below, end to end. The last two are **not
+//! The first four are exercised below, end to end. The last one is **not
 //! reachable from the public API today** and this example proves it rather than
 //! asserting it:
 //!
@@ -34,12 +34,16 @@
 //!   CREATES a merge. Merges happen only inside `dream()`'s canonicalize pass,
 //!   which requires real alias evidence and correctly declines on thin data. The
 //!   assertion below demonstrates that on a deliberately merge-friendly corpus.
-//! - **`restore_archived_fact`** — takes an `archived_fact_id` that no public
-//!   method returns. `DreamSummary` reports `facts_archived` as a COUNT, not ids.
 //!
-//! Both are tracked as TD-250. **If a future change makes either reachable, the
-//! assertions at the end of this file will start failing** — which is the point:
-//! this example is also the tripwire that says "update the map".
+//! Tracked as TD-250. **If a future change makes it reachable, the assertion at
+//! the end of this file will start failing** — which is the point: this example
+//! is also the tripwire that says "update the map".
+//!
+//! `restore_archived_fact` used to be listed here too, for a sharper reason: it
+//! takes an `archived_fact_id` and `DreamSummary` reports `facts_archived` as a
+//! COUNT, so nothing named WHICH facts a dream retired. Fixed 2026-09-10 — the
+//! archive op logs its mutation, so `list_mutations()` names them and `undo()`
+//! reverses them, which is what section 4 below now demonstrates.
 
 use std::sync::Arc;
 
@@ -77,8 +81,12 @@ fn fact(subject: &str, predicate: &str, object: &str) -> StructuredFact {
 }
 
 async fn predicates(mem: &Memory, ns: &Namespace) -> anyhow::Result<Vec<String>> {
+    predicates_of(mem, ns, "ingrid").await
+}
+
+async fn predicates_of(mem: &Memory, ns: &Namespace, subject: &str) -> anyhow::Result<Vec<String>> {
     let mut v: Vec<String> = mem
-        .recall("ingrid")
+        .recall(subject)
         .in_namespace(ns.clone())
         .raw()
         .await?
@@ -88,6 +96,25 @@ async fn predicates(mem: &Memory, ns: &Namespace) -> anyhow::Result<Vec<String>>
         .collect();
     v.sort();
     Ok(v)
+}
+
+/// The `fact_id` of one of a subject's facts, by predicate. `RetrievedFact` only
+/// started carrying `fact_id` recently (TD-244) — before that, `supersede` had the
+/// same unreachable-handle problem this file is about.
+async fn fact_id_for(
+    mem: &Memory,
+    ns: &Namespace,
+    (subject, predicate): (&str, &str),
+) -> anyhow::Result<i64> {
+    mem.recall(subject)
+        .in_namespace(ns.clone())
+        .raw()
+        .await?
+        .into_iter()
+        .flat_map(|c| c.facts)
+        .find(|f| f.predicate == predicate)
+        .and_then(|f| f.fact_id)
+        .ok_or_else(|| anyhow::anyhow!("expected a `{predicate}` fact for {subject}"))
 }
 
 #[tokio::main]
@@ -190,8 +217,8 @@ async fn main() -> anyhow::Result<()> {
         summary.cross_episode_merged, summary.facts_archived
     );
 
-    // ⚠️ TRIPWIRE. These assert the CURRENT limitation (TD-250). If either
-    // starts failing, the gap has been closed and the map above is out of date —
+    // ⚠️ TRIPWIRE. This asserts the CURRENT limitation (TD-250). If it starts
+    // failing, the gap has been closed and the map above is out of date —
     // update this example rather than deleting the assertion.
     assert_eq!(
         summary.cross_episode_merged, 0,
@@ -199,10 +226,89 @@ async fn main() -> anyhow::Result<()> {
          `unmerge` can now be exercised end to end. Update the map in this file."
     );
     println!("  → no merge, so `unmerge` has nothing to reverse (TD-250).");
-    println!("  → `facts_archived` is a COUNT; no public call returns archived ids,");
-    println!("     so `restore_archived_fact` cannot be given one (TD-250).");
 
-    println!("\nThree pairs work end to end. Two are public in one direction only.");
+    // ── 4. dream() archive → undo ───────────────────────────────────────────
+    //
+    // A dream retires facts that have been closed longer than its grace window.
+    // That is a destructive write, and until 2026-09-10 it reported only a COUNT
+    // — so a consumer could see that three facts had gone and never learn which.
+    // The archival is now logged, which makes it visible AND reversible through
+    // the same list_mutations/undo pair as every other mutation.
+    //
+    // `archive_grace_days: 0` so a fact closed a moment ago is eligible; the
+    // default is 90 days, which no example can wait for.
+    let ns_arch = Namespace::new("archival");
+    for (s, p, o) in [
+        ("Nils Haugerud", "berth", "quay-9"),
+        ("Nils Haugerud", "role", "harbourmaster"),
+    ] {
+        mem.remember(format!("{s} {p} {o}."))
+            .in_namespace(ns_arch.clone())
+            .with_facts(vec![fact(s, p, o)])
+            .skip_extraction()
+            .await?;
+    }
+    // Close ONE of them. The other stays live, so retiring the closed one does
+    // not strand its subject — the archive op refuses to leave an entity with no
+    // facts at all, which is why the second fact is here.
+    let berth_id = fact_id_for(&mem, &ns_arch, ("Nils Haugerud", "berth")).await?;
+    mem.supersede(berth_id)
+        .in_namespace(ns_arch.clone())
+        .at(Utc::now())
+        .close_now()
+        .execute()
+        .await?;
+
+    // `DreamOpts` is `#[non_exhaustive]`, so the struct-literal form
+    // (`DreamOpts { archive_grace_days: Some(0), ..Default::default() }`) does NOT
+    // compile outside the crate. Take the default and assign the field.
+    let mut opts = kremory::memory::types::DreamOpts::default();
+    opts.archive_grace_days = Some(0);
+    let arch_summary = mem
+        .dream()
+        .in_namespace(ns_arch.clone())
+        .with_opts(opts)
+        .execute()
+        .await?;
+    println!("\ndream on a closed fact: archived={}", arch_summary.facts_archived);
+
+    let archived = mem
+        .list_mutations()
+        .in_namespace(ns_arch.clone())
+        .kind(kremory::MutationKind::FactArchive)
+        .await?;
+    println!("  archived, by name:");
+    for record in &archived {
+        println!("    #{} — {}", record.mutation_id, record.summary);
+    }
+    assert!(
+        !archived.is_empty(),
+        "a dream that archived {} fact(s) must name them — a COUNT is not a handle",
+        arch_summary.facts_archived
+    );
+
+    mem.undo(archived[0].mutation_id).execute().await?;
+
+    // Un-archiving restores the fact EXACTLY as it was archived — which means
+    // still CLOSED, because being closed is what made it archival-eligible. So it
+    // is back in the graph and still absent from a present-tense recall. That is
+    // two separate reversals, not one: `undo` returns the row, `unsupersede`
+    // re-opens it. An undo that quietly re-opened the fact as well would be
+    // inventing a decision the caller never made.
+    let still_closed = predicates_of(&mem, &ns_arch, "Nils Haugerud").await?;
+    assert!(
+        !still_closed.iter().any(|p| p == "berth"),
+        "un-archiving must not silently re-open a closed fact; got {still_closed:?}"
+    );
+    mem.unsupersede(berth_id).execute().await?;
+    let back = predicates_of(&mem, &ns_arch, "Nils Haugerud").await?;
+    println!("archive → undo     : {back:?} (after re-opening it too)");
+    assert!(
+        back.iter().any(|p| p == "berth"),
+        "undo + unsupersede should put the fact back in the present; got {back:?}"
+    );
+
+    println!("\nFour pairs work end to end. One is public in one direction only.");
     println!("Assume every reversal has a reachable handle and you will find out");
     println!("otherwise halfway through building an undo feature.");
 

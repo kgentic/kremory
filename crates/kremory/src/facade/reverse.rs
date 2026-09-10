@@ -558,6 +558,8 @@ pub enum UndoOutcome {
     /// The mutation was a `fact_delete`; reversed via
     /// [`undo_delete_fact`](super::Memory::undo_delete_fact).
     DeleteFact(DeleteFactOutcome),
+    /// A dream's fact archival, reversed — the fact is back in `facts`.
+    RestoreArchived(crate::core::dream::provenance::RestoreArchivedOutcome),
 }
 
 /// The unified undo dispatcher. Obtain via
@@ -569,21 +571,24 @@ pub enum UndoOutcome {
 /// `mem.undo(record.mutation_id)` without first switching on the kind by hand.
 /// Returns the honest [`UndoOutcome`] carrying the reversed op's counts.
 ///
-/// # The 4-of-8 honesty boundary
+/// # The 5-of-8 honesty boundary
 ///
-/// Only the four LOGGED, reversible kinds dispatch here: `entity_merge` →
+/// Five LOGGED, reversible kinds dispatch here: `entity_merge` →
 /// [`unmerge`](super::Memory::unmerge), `entity_edit` →
 /// [`undo_entity_edit`](super::Memory::undo_entity_edit), `entity_delete` →
 /// [`undo_delete_entity`](super::Memory::undo_delete_entity), `fact_delete` →
-/// [`undo_delete_fact`](super::Memory::undo_delete_fact). The other four
-/// [`MutationKind`] variants (`fact_supersede` / `fact_archive` /
+/// [`undo_delete_fact`](super::Memory::undo_delete_fact), and `fact_archive` →
+/// the same restore [`restore_archived_fact`](super::Memory::restore_archived_fact)
+/// performs, reached by `mutation_id` instead of by an `archived_fact_id` no
+/// public read returned (TD-250).
+///
+/// The other three [`MutationKind`] variants (`fact_supersede` /
 /// `community_assign` / `canonical_form`) are RESERVED — not produced into the
 /// log today — so a would-be row of that kind returns a LOUD
 /// [`Error::UndoUnsupportedKind`](crate::core::error::Error::UndoUnsupportedKind).
-/// (`fact_supersede` / `fact_archive` are reversible, but via their own domain-id
-/// methods — [`unsupersede`](super::Memory::unsupersede) /
-/// [`restore_archived_fact`](super::Memory::restore_archived_fact) — which take a
-/// `fact_id` / `archived_fact_id`, not a `mutation_id`.)
+/// (`fact_supersede` is reversible, but via its own domain-id method
+/// [`unsupersede`](super::Memory::unsupersede), which takes a `fact_id`, not a
+/// `mutation_id`.)
 ///
 /// Must call `.execute()` (mutating op).
 #[must_use = "UndoRequest must call .execute() to run"]
@@ -697,7 +702,17 @@ impl<'a> UndoRequest<'a> {
                     .execute()
                     .await?,
             )),
-            // The four RESERVED kinds are never produced into the log today; a
+            // TD-250: reached by `mutation_id`, unlike `restore_archived_fact`,
+            // which takes an `archived_fact_id` that no public read returns. Same
+            // restore underneath — this arm exists so the archival is reversible
+            // through the surface a consumer actually has, and so the log row is
+            // marked `undone_at` like every other reversal.
+            MutationKind::FactArchive => Ok(UndoOutcome::RestoreArchived(
+                crate::core::dream::provenance::reversal::undo_fact_archive(tg, self.mutation_id)
+                    .await
+                    .map_err(MemoryError::Core)?,
+            )),
+            // The three RESERVED kinds are never produced into the log today; a
             // would-be row of that kind is loudly unsupported (R3 honesty).
             other => Err(MemoryError::Core(CoreError::UndoUnsupportedKind {
                 mutation_id: self.mutation_id,

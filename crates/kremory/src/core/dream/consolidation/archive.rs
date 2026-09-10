@@ -24,6 +24,7 @@
 use chrono::Utc;
 use metrics::counter;
 
+use crate::core::dream::provenance::{FactArchiveInputs, FactArchivePreState, MutationKind};
 use crate::core::error::Result;
 use crate::core::schema::TemporalGraph;
 
@@ -175,7 +176,7 @@ pub async fn archive(graph: &TemporalGraph, group_id: &str, grace_days: u32) -> 
             continue;
         }
 
-        let moved = move_fact(graph, cand.fact_id, group_id).await?;
+        let moved = move_fact(graph, cand, group_id).await?;
         if moved {
             archived += 1;
             // Name the fact, unconditionally. `emit_decision` below
@@ -299,7 +300,21 @@ async fn live_fact_count_for_entity(
 /// candidate that vanished between the SELECT and this move (concurrent delete)
 /// yields `false` — the INSERT…SELECT copied nothing and the DELETE affected nothing,
 /// so `facts_archive` gains no orphan.
-async fn move_fact(graph: &TemporalGraph, fact_id: i64, group_id: &str) -> Result<bool> {
+///
+/// **TD-250 — the move also writes a `fact_archive` row to `graph_mutation_log`,
+/// inside the SAME transaction.** Without it `Memory::restore_archived_fact` was
+/// impossible to call: it takes an `archived_fact_id`, and the only report of an
+/// archival was `DreamSummary::facts_archived`, a COUNT. Nothing public named
+/// WHICH facts. `list_mutations(kind = FactArchive)` now does, using the read
+/// that already existed — no new public surface was needed to close the gap.
+///
+/// In-transaction is not incidental: a log row committed without the move would
+/// offer a restore of a fact that was never archived, and a move committed
+/// without the log row is exactly the unreachable state this fixes. Only written
+/// when the DELETE actually affected a row, so a vanished candidate logs
+/// nothing.
+async fn move_fact(graph: &TemporalGraph, cand: &ArchiveCandidate, group_id: &str) -> Result<bool> {
+    let fact_id = cand.fact_id;
     let now = Utc::now().to_rfc3339();
     let guard = graph.begin_immediate_if_needed().await?;
     let result: Result<bool> = async {
@@ -333,6 +348,19 @@ async fn move_fact(graph: &TemporalGraph, fact_id: i64, group_id: &str) -> Resul
                 libsql::params![fact_id, group_id],
             )
             .await?;
+        if deleted == 1 {
+            // 4. Log the archival so the archived id is REACHABLE (TD-250). Same
+            //    transaction as the move above, so the two cannot disagree.
+            log_archive_mutation(
+                graph,
+                LogArchiveParams {
+                    cand,
+                    group_id,
+                    archived_at: &now,
+                },
+            )
+            .await?;
+        }
         Ok(deleted == 1)
     }
     .await;
@@ -347,6 +375,63 @@ async fn move_fact(graph: &TemporalGraph, fact_id: i64, group_id: &str) -> Resul
             Err(e)
         }
     }
+}
+
+/// Args for [`log_archive_mutation`] — an object rather than four positional
+/// parameters, which the workspace clippy threshold (3) rejects.
+struct LogArchiveParams<'a> {
+    cand: &'a ArchiveCandidate,
+    group_id: &'a str,
+    /// The `archived_at` stamp the move wrote, reused as the log row's
+    /// `created_at` so the two records agree to the microsecond.
+    archived_at: &'a str,
+}
+
+/// Write the `fact_archive` row to `graph_mutation_log` (TD-250). Caller must
+/// already hold the move's transaction — this is deliberately NOT self-contained,
+/// because a log row that commits independently of the move it describes is worse
+/// than no log row at all.
+///
+/// `pre_state` carries the `facts_archive.id` the undo needs;
+/// `inputs` carries the identity the consumer INSPECT summary renders from.
+/// `facts_archive.id` IS the original `facts.id` (migration 019), so both are
+/// `cand.fact_id`.
+async fn log_archive_mutation(graph: &TemporalGraph, p: LogArchiveParams<'_>) -> Result<()> {
+    let LogArchiveParams {
+        cand,
+        group_id,
+        archived_at,
+    } = p;
+    let pre_state = serde_json::to_string(&FactArchivePreState {
+        archived_fact_id: cand.fact_id,
+    })
+    .map_err(|e| {
+        crate::core::error::Error::Other(anyhow::anyhow!("serialize fact_archive pre_state: {e}"))
+    })?;
+    let inputs = serde_json::to_string(&FactArchiveInputs {
+        fact_id: cand.fact_id,
+        subject_id: cand.subject_id.clone(),
+        predicate: cand.predicate.clone(),
+        object_id: cand.object_id.clone(),
+    })
+    .map_err(|e| {
+        crate::core::error::Error::Other(anyhow::anyhow!("serialize fact_archive inputs: {e}"))
+    })?;
+    graph
+        .conn
+        .execute(
+            "INSERT INTO graph_mutation_log (kind, group_id, created_at, pre_state, inputs) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            libsql::params![
+                MutationKind::FactArchive.as_tag(),
+                group_id,
+                archived_at,
+                pre_state,
+                inputs
+            ],
+        )
+        .await?;
+    Ok(())
 }
 
 /// Emit the source-attributed archival counter (P2.5). The o11y cross-check asserts

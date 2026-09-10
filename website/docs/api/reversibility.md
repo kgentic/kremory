@@ -76,20 +76,47 @@ nogood_recorded, already_undone }`.
 a **merge NOGOOD** for the split pair (`UnmergeOutcome.nogood_recorded == true`), so the **next
 `dream()` will not re-merge them**. Undoing a merge is durable, not a one-cycle reprieve.
 
-### The 4-of-8 tracked-kind boundary
+### The 5-of-8 tracked-kind boundary
 
-There are eight `MutationKind` variants, but only **four are logged today and therefore reversible
-via `undo()`**: `EntityMerge`, `EntityEdit`, `EntityDelete`, `FactDelete`. The other four
-(`FactSupersede`, `FactArchive`, `CommunityAssign`, `CanonicalForm`) are **reserved** — not yet
-produced into the mutation log — so:
+There are eight `MutationKind` variants, and **five are logged and therefore reversible via
+`undo()`**: `EntityMerge`, `EntityEdit`, `EntityDelete`, `FactDelete`, `FactArchive`. The other
+three (`FactSupersede`, `CommunityAssign`, `CanonicalForm`) are **reserved** — not yet produced
+into the mutation log — so:
 
 - `list_mutations().kind(<a reserved kind>)` returns **empty by construction** (not "nothing
   changed").
 - `undo(id)` on a would-be row of a reserved kind returns a loud `Error::UndoUnsupportedKind`.
 
-`FactSupersede` / `FactArchive` are themselves reversible — but through their **domain-id** methods
-`unsupersede(fact_id)` / `restore_archived_fact(archived_fact_id)`, not the `mutation_id`-based
-`undo()` surface.
+`FactSupersede` is itself reversible — but through its **domain-id** method `unsupersede(fact_id)`,
+not the `mutation_id`-based `undo()` surface.
+
+### Finding out WHICH facts a dream archived
+
+`DreamSummary.facts_archived` is a **count**. It tells you three facts were retired and not which
+three, which for a while made `restore_archived_fact` impossible to call — it takes an
+`archived_fact_id` no public read returned. `FactArchive` is logged now, so the archival is named:
+
+```rust
+let archived = mem.list_mutations()
+    .in_namespace(ns.clone())
+    .kind(MutationKind::FactArchive)
+    .await?;
+for record in &archived {
+    println!("#{} — {}", record.mutation_id, record.summary);
+    // e.g. #2 — archived fact 7 ('Nils Haugerud' berth)
+}
+mem.undo(archived[0].mutation_id).execute().await?;
+```
+
+Prefer `undo(mutation_id)` over `restore_archived_fact(archived_fact_id)`: it performs the same
+restore **and** marks the mutation reversed, which the domain-id method cannot do because it is
+never given the log row.
+
+⚠️ **Un-archiving restores the fact exactly as it was archived — still closed**, since being closed
+past the grace window is what made it eligible. It is back in the graph and still absent from a
+present-tense `recall()`. Re-opening it is a second, separate reversal (`unsupersede`); an undo that
+re-opened it for you would be inventing a decision you never made. Worked end to end in
+`examples/what_can_be_undone.rs`.
 
 ### Direct mutations (also reversible)
 

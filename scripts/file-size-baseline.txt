@@ -70,7 +70,7 @@
 178 crates/kremory/examples/two_handles_one_database.rs
 210 crates/kremory/examples/undoing_a_bad_change.rs
 191 crates/kremory/examples/undoing_a_correction.rs
-211 crates/kremory/examples/what_can_be_undone.rs
+317 crates/kremory/examples/what_can_be_undone.rs
 204 crates/kremory/examples/who_touched_this_record.rs
 27 crates/kremory/src/core/arena.rs
 89 crates/kremory/src/core/background/batch_tracker.rs
@@ -93,7 +93,7 @@
 349 crates/kremory/src/core/dream/consistency_check/audit.rs
 499 crates/kremory/src/core/dream/consistency_check/mod.rs
 608 crates/kremory/src/core/dream/consistency_check/verify.rs
-1037 crates/kremory/src/core/dream/consolidation/archive.rs
+1122 crates/kremory/src/core/dream/consolidation/archive.rs
 1157 crates/kremory/src/core/dream/consolidation/communities.rs
 3197 crates/kremory/src/core/dream/consolidation/cross_episode.rs
 592 crates/kremory/src/core/dream/consolidation/mod.rs
@@ -102,13 +102,13 @@
 2886 crates/kremory/src/core/dream/discover_types.rs
 209 crates/kremory/src/core/dream/idempotency.rs
 104 crates/kremory/src/core/dream/metrics_util.rs
-190 crates/kremory/src/core/dream/mod.rs
+192 crates/kremory/src/core/dream/mod.rs
 341 crates/kremory/src/core/dream/proposed_type.rs
 1051 crates/kremory/src/core/dream/provenance/delete.rs
 1085 crates/kremory/src/core/dream/provenance/edit.rs
-303 crates/kremory/src/core/dream/provenance/inspect.rs
-599 crates/kremory/src/core/dream/provenance/mod.rs
-728 crates/kremory/src/core/dream/provenance/reversal.rs
+327 crates/kremory/src/core/dream/provenance/inspect.rs
+623 crates/kremory/src/core/dream/provenance/mod.rs
+790 crates/kremory/src/core/dream/provenance/reversal.rs
 868 crates/kremory/src/core/dream/reclassify.rs
 1758 crates/kremory/src/core/dream/type_registry_collapse.rs
 126 crates/kremory/src/core/embed_prefix.rs
@@ -203,7 +203,7 @@
 1210 crates/kremory/src/facade/providers.rs
 2527 crates/kremory/src/facade/recall.rs
 545 crates/kremory/src/facade/remember.rs
-1044 crates/kremory/src/facade/reverse.rs
+1059 crates/kremory/src/facade/reverse.rs
 585 crates/kremory/src/facade/supersede.rs
 1207 crates/kremory/src/facade/update.rs
 138 crates/kremory/src/lib.rs
@@ -303,7 +303,7 @@
 211 crates/kremory/tests/it/llm_extractor.rs
 2216 crates/kremory/tests/it/llm_integration.rs
 52 crates/kremory/tests/it/lock_ordering.rs
-196 crates/kremory/tests/it/main.rs
+197 crates/kremory/tests/it/main.rs
 200 crates/kremory/tests/it/memory_api_surface.rs
 246 crates/kremory/tests/it/memory_builder_compat_matrix.rs
 296 crates/kremory/tests/it/migration_007_idempotency.rs

@@ -24,7 +24,9 @@ use metrics::counter;
 use crate::core::error::{Error, Result};
 use crate::core::schema::TemporalGraph;
 
-use super::{DeleteEntityInputs, DeleteFactInputs, EditInputs, MergeInputs, MutationKind};
+use super::{
+    DeleteEntityInputs, DeleteFactInputs, EditInputs, FactArchiveInputs, MergeInputs, MutationKind,
+};
 
 // ─── consumer-facing view (§3 inspect surface) ──────────────────────────────
 
@@ -154,6 +156,25 @@ fn derive_view(kind: MutationKind, inputs_json: &str) -> Result<(Vec<String>, St
             );
             Ok((affected, summary))
         }
+        MutationKind::FactArchive => {
+            let inputs: FactArchiveInputs = serde_json::from_str(inputs_json).map_err(|e| {
+                Error::Other(anyhow::anyhow!(
+                    "inspect: deserialize fact_archive inputs (mutation un-classifiable): {e}"
+                ))
+            })?;
+            // Same locate-key shape as `fact_delete`: both endpoints, object absent
+            // for a literal. The predicate goes in the summary because "a fact about
+            // caroline was retired" does not tell a consumer WHICH relation left.
+            let mut affected = vec![inputs.subject_id.clone()];
+            if let Some(obj) = inputs.object_id.clone() {
+                affected.push(obj);
+            }
+            let summary = format!(
+                "archived fact {} ('{}' {})",
+                inputs.fact_id, inputs.subject_id, inputs.predicate
+            );
+            Ok((affected, summary))
+        }
         other => Ok((Vec::new(), format!("{} mutation", other.as_tag()))),
     }
 }
@@ -191,10 +212,13 @@ fn build_record(row: &libsql::Row) -> Result<MutationRecord> {
 /// (the default) adds `undone_at IS NULL` so only still-reversible mutations
 /// surface.
 ///
-/// Tracked-kind boundary: only 4 of the 8 [`MutationKind`]s (`EntityMerge` /
-/// `EntityEdit` / `EntityDelete` / `FactDelete`) are ever written to
-/// `graph_mutation_log`, so a `filter.kind` naming one of the four RESERVED kinds
+/// Tracked-kind boundary: 5 of the 8 [`MutationKind`]s (`EntityMerge` /
+/// `EntityEdit` / `EntityDelete` / `FactDelete` / `FactArchive`) are written to
+/// `graph_mutation_log`, so a `filter.kind` naming one of the three RESERVED kinds
 /// returns EMPTY by construction — see [`MutationKind`] for the full boundary.
+/// `FactArchive` joined the tracked set on 2026-09-10 (TD-250): this read is how a
+/// consumer learns WHICH facts a dream archived, and therefore the only way
+/// `restore_archived_fact` is callable at all.
 #[doc(hidden)]
 pub async fn list_mutations(
     graph: &TemporalGraph,

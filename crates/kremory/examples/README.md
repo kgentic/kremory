@@ -53,10 +53,12 @@ loud.
 - **`changing_embedding_model`** — after a model change, `backfill_*` reports
   success having done nothing, because no vector is *missing*; they are merely
   wrong. `reembed_all_*` is the one you want.
-- **`what_can_be_undone`** — two reversal operations (`unmerge`,
-  `restore_archived_fact`) are public but have **no reachable handle** from the
-  API today (TD-250). The example asserts that limitation, so it will start
-  failing when the gap closes.
+- **`what_can_be_undone`** — `unmerge` is public but has **no reachable handle**:
+  nothing public creates an entity merge, so there is never a merge id to pass it
+  (TD-250). The example asserts that limitation, so it will start failing when the
+  gap closes. It also shows the archival pair now that it works — and that
+  un-archiving a fact returns it **still closed**, because being closed is what
+  made it archival-eligible. Re-opening is a separate `unsupersede`.
 - **`cancelling_in_flight_work`** — a cancel races the work it cancels. Whichever
   of the two gets there first is the one recorded, so a cancelled episode reads
   `Failed("cancelled by caller")` when the cancel landed in time and `Complete`

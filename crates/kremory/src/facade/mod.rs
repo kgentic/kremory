@@ -924,10 +924,11 @@ impl Memory {
     /// [`undo_delete_fact`](Self::undo_delete_fact)) still work and remain the
     /// escape hatch when you already know the kind.
     ///
-    /// Only the four LOGGED kinds dispatch (`entity_merge` / `entity_edit` /
-    /// `entity_delete` / `fact_delete`). The other four [`MutationKind`] variants
-    /// are RESERVED (never produced into the log today), so a would-be row of that
-    /// kind returns a loud `Error::UndoUnsupportedKind` — see [`UndoRequest`].
+    /// Five LOGGED kinds dispatch (`entity_merge` / `entity_edit` /
+    /// `entity_delete` / `fact_delete` / `fact_archive`). The other three
+    /// [`MutationKind`] variants are RESERVED (never produced into the log today),
+    /// so a would-be row of that kind returns a loud `Error::UndoUnsupportedKind`
+    /// — see [`UndoRequest`].
     ///
     /// Optional `.in_namespace(ns)` guards the undo to the mutation's original
     /// namespace. Must call `.execute()` (mutating op).
@@ -994,6 +995,16 @@ impl Memory {
     /// Restore a fact previously moved to `facts_archive` (P2 archival) back into
     /// `facts` (arch-spec §3.2 / §4.4). Idempotent: `already_live = true` when the
     /// fact is already live. Must call `.execute()`.
+    ///
+    /// # Where `archived_fact_id` comes from
+    ///
+    /// [`list_mutations`](Self::list_mutations)`.kind(MutationKind::FactArchive)` —
+    /// each record's `summary` names the archived fact, and its `mutation_id` is
+    /// what [`undo`](Self::undo) takes. Prefer `undo(mutation_id)`: it performs the
+    /// same restore AND marks the mutation reversed, which this method cannot do
+    /// because it is not given the log row. This method stays for the case where
+    /// you already hold the fact's id (it is the fact's ORIGINAL `facts.id` —
+    /// `facts_archive.id` carries it unchanged).
     #[must_use = "RestoreArchivedRequest must call .execute() to run"]
     pub fn restore_archived_fact(&self, archived_fact_id: i64) -> RestoreArchivedRequest<'_> {
         RestoreArchivedRequest {
@@ -1138,10 +1149,10 @@ impl Memory {
     /// Namespace: `.in_namespace(ns)` or a `default_namespace` on the builder is
     /// required (an entity id is namespace-scoped). Read-only — `.await` it.
     ///
-    /// Only the four LOGGED [`MutationKind`]s appear here (`EntityMerge` /
-    /// `EntityEdit` / `EntityDelete` / `FactDelete`); the other four are reserved
-    /// and never surface — see [`list_mutations`](Self::list_mutations) for the
-    /// tracked-kind boundary.
+    /// Only the five LOGGED [`MutationKind`]s appear here (`EntityMerge` /
+    /// `EntityEdit` / `EntityDelete` / `FactDelete` / `FactArchive`); the other
+    /// three are reserved and never surface — see
+    /// [`list_mutations`](Self::list_mutations) for the tracked-kind boundary.
     #[must_use = "MutationHistoryRequest must be .await-ed"]
     pub fn mutation_history<'a>(
         &'a self,
@@ -1163,17 +1174,23 @@ impl Memory {
     /// `default_namespace`, else ALL namespaces). Default view is LIVE
     /// (still-reversible) mutations only. Read-only — `.await` it.
     ///
-    /// # Tracked-kind boundary (4 of 8)
+    /// # Tracked-kind boundary (5 of 8)
     ///
-    /// Only FOUR [`MutationKind`] variants are currently LOGGED (hence listable and
+    /// FIVE [`MutationKind`] variants are currently LOGGED (hence listable and
     /// reversible via [`undo`](Self::undo)): `EntityMerge`, `EntityEdit`,
-    /// `EntityDelete`, `FactDelete`. The other four (`FactSupersede`, `FactArchive`,
-    /// `CommunityAssign`, `CanonicalForm`) are RESERVED — not yet produced into the
-    /// `graph_mutation_log` — so `list_mutations().kind(<a reserved kind>)` returns
-    /// EMPTY by construction (not "nothing changed"). `FactSupersede` / `FactArchive`
-    /// are themselves reversible, but through the domain-id methods
-    /// [`unsupersede`](Self::unsupersede) / [`restore_archived_fact`](Self::restore_archived_fact),
-    /// not this inspect+undo surface.
+    /// `EntityDelete`, `FactDelete`, `FactArchive`. The other three
+    /// (`FactSupersede`, `CommunityAssign`, `CanonicalForm`) are RESERVED — not yet
+    /// produced into the `graph_mutation_log` — so
+    /// `list_mutations().kind(<a reserved kind>)` returns EMPTY by construction
+    /// (not "nothing changed"). `FactSupersede` is itself reversible, but through
+    /// the domain-id method [`unsupersede`](Self::unsupersede), not this
+    /// inspect+undo surface.
+    ///
+    /// **This is where an archived fact's id comes from.** `DreamSummary` reports
+    /// `facts_archived` as a COUNT, so before `FactArchive` was logged nothing named
+    /// WHICH facts a dream retired, and
+    /// [`restore_archived_fact`](Self::restore_archived_fact) took an id no public
+    /// read returned (TD-250).
     #[must_use = "ListMutationsRequest must be .await-ed"]
     pub fn list_mutations(&self) -> ListMutationsRequest<'_> {
         ListMutationsRequest {
