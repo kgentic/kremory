@@ -92,14 +92,26 @@ pub struct EngineGraphHandle {
     pub(crate) ingest_runs: Arc<DashMap<Uuid, IngestStatus>>,
     /// Maps ingest `run_id` → `AbortHandle` for the background tokio task.
     pub(crate) ingest_abort: Arc<DashMap<Uuid, tokio::task::AbortHandle>>,
-    /// `run_id` → `batch_id`, for runs that belong to a batch.
+    /// `run_id` → the run's OUTCOME CLAIM, carrying its `batch_id` when it has
+    /// one. Present for every backgrounded run from before the spawn until its
+    /// outcome has been recorded.
     ///
-    /// TD-251: cancelling aborts the spawned task, which is precisely the task
-    /// that would otherwise have recorded its own batch outcome. Without this
-    /// map `graph_cancel` knows the run but not the batch, so the batch
-    /// accumulator never reaches `is_terminal()` and `await_batch` blocks until
-    /// its timeout — on every batch containing a cancelled member.
-    pub(crate) ingest_batch: Arc<DashMap<Uuid, String>>,
+    /// TD-251, both causes. A backgrounded run has two parties that can want to
+    /// record its terminal outcome — its own task, and `graph_cancel` — and
+    /// `handle.abort()` cannot stop a task already past its last `.await`, so
+    /// both tails can run. Removing this entry is the claim: `DashMap::remove`
+    /// is atomic, so EXACTLY ONE party records, and the batch accumulator moves
+    /// by exactly one per episode.
+    ///
+    /// Neither the loser nor the winner may be the one that knows the batch, so
+    /// the entry carries the `batch_id` itself rather than making the recorder
+    /// look it up — `graph_cancel` has only a `run_id`.
+    ///
+    /// ⚠️ Registered BEFORE the spawn, deliberately. The `AbortHandle` cannot
+    /// be (it does not exist until `spawn` returns), and a claim keyed on a map
+    /// populated after the spawn would let a fast task find nothing to claim,
+    /// decline to record, and lose a count — a hang from the other direction.
+    pub(crate) ingest_claim: Arc<DashMap<Uuid, Option<String>>>,
     /// Maps dream `run_id` → `DreamStatus`. Unpopulated at v0.1.0 (dream = NotImplemented).
     pub(crate) dream_runs: Arc<DashMap<Uuid, DreamStatus>>,
     /// Maps dream `run_id` → `AbortHandle`. Unpopulated at v0.1.0.
@@ -132,7 +144,7 @@ impl EngineGraphHandle {
             engine: Arc::new(engine),
             ingest_runs: Arc::new(DashMap::new()),
             ingest_abort: Arc::new(DashMap::new()),
-            ingest_batch: Arc::new(DashMap::new()),
+            ingest_claim: Arc::new(DashMap::new()),
             dream_runs: Arc::new(DashMap::new()),
             dream_abort: Arc::new(DashMap::new()),
             batch_status: Arc::new(DashMap::new()),
@@ -274,7 +286,7 @@ impl GraphHandle for EngineGraphHandle {
             let ingest_runs = Arc::clone(&self.ingest_runs);
             let ingest_abort = Arc::clone(&self.ingest_abort);
             let batch_status = Arc::clone(&self.batch_status);
-            let ingest_batch = Arc::clone(&self.ingest_batch);
+            let ingest_claim = Arc::clone(&self.ingest_claim);
             let content_owned = content.to_owned();
             let group_id_owned = group_id.clone();
             let batch_id_owned = batch_id.clone();
@@ -293,13 +305,11 @@ impl GraphHandle for EngineGraphHandle {
 
             // Record pending status before spawning so callers can poll immediately.
             ingest_runs.insert(run_id, IngestStatus::Pending);
-            // TD-251: register run→batch BEFORE the spawn. Inserting after would
-            // reintroduce the race the abort-handle comment below describes — a
-            // fast task could remove the entry before this insert fired, leaving
-            // a stale mapping and a batch that never terminates.
-            if let Some(ref bid) = batch_id_owned {
-                self.ingest_batch.insert(run_id, bid.clone());
-            }
+            // TD-251: register the outcome claim BEFORE the spawn, for EVERY
+            // backgrounded run — batched or not. Inserting after would let a
+            // fast task reach the claim before this insert fired, find nothing,
+            // and record nothing.
+            self.ingest_claim.insert(run_id, batch_id_owned.clone());
 
             // Initialise / update batch counter if batch_id is provided.
             if let Some(ref bid) = batch_id_owned {
@@ -320,7 +330,17 @@ impl GraphHandle for EngineGraphHandle {
             // background task so the deferred Engine::ingest fires the callbacks.
             let core_sink_owned = core_sink.clone();
             let task = tokio::task::spawn(async move {
-                ingest_runs.insert(run_id, IngestStatus::Extracting);
+                // Advance Pending → Extracting ONLY. A blind insert here can
+                // land AFTER a cancel has already written its terminal status
+                // and then be aborted at the `.await` below, stranding the run
+                // at `Extracting` forever — non-terminal, so `await_enrichment`
+                // could never return. `and_modify` holds the shard's write lock,
+                // so the read-and-advance is atomic against `graph_cancel`.
+                ingest_runs.entry(run_id).and_modify(|s| {
+                    if matches!(s, IngestStatus::Pending) {
+                        *s = IngestStatus::Extracting;
+                    }
+                });
                 let sp = SourceParams {
                     source_id: Some(source_id_owned),
                     source_uri: source_uri_owned,
@@ -330,7 +350,7 @@ impl GraphHandle for EngineGraphHandle {
                     skip_extraction: skip_extraction_owned,
                     sink: core_sink_owned,
                 };
-                match engine
+                let outcome = engine
                     .ingest(crate::core::ingest::IngestParams {
                         text: &content_owned,
                         reference_time,
@@ -339,32 +359,49 @@ impl GraphHandle for EngineGraphHandle {
                         content_type: None,
                         source_params: sp,
                     })
-                    .await
-                {
-                    Ok(_) => {
-                        ingest_runs.insert(run_id, IngestStatus::Complete);
-                        if let Some(ref bid) = batch_id_owned {
-                            batch_status.entry(bid.clone()).and_modify(|s| {
-                                s.completed += 1;
-                            });
+                    .await;
+
+                // ── TD-251 cause 2: CLAIM THE RUN BEFORE RECORDING IT ────────
+                //
+                // `handle.abort()` is not a kill — it only takes effect at an
+                // `.await`. Past the one immediately above, a concurrent
+                // `graph_cancel` can no longer stop this tail, so BOTH parties
+                // would record a terminal outcome for the SAME run: this task
+                // `completed += 1`, the cancel `failed += 1`. That put
+                // `completed + skipped + failed` one PAST `total`, which
+                // `BatchStatus::is_done()` could never match again — the batch
+                // was wedged permanently and `await_batch` burned its whole
+                // timeout. Measured before the fix: `total=4 completed=4
+                // failed=1`, on 22 of 40 trials.
+                //
+                // The claim is atomic, so the loser records NOTHING — not the
+                // status, not the counter.
+                if let Some((_, claimed_batch)) = ingest_claim.remove(&run_id) {
+                    match outcome {
+                        Ok(_) => {
+                            ingest_runs.insert(run_id, IngestStatus::Complete);
+                            if let Some(bid) = claimed_batch {
+                                batch_status.entry(bid).and_modify(|s| {
+                                    s.completed += 1;
+                                });
+                            }
                         }
-                    }
-                    Err(e) => {
-                        ingest_runs.insert(run_id, IngestStatus::Failed(e.to_string()));
-                        if let Some(ref bid) = batch_id_owned {
-                            batch_status.entry(bid.clone()).and_modify(|s| {
-                                s.failed += 1;
-                            });
+                        Err(e) => {
+                            ingest_runs.insert(run_id, IngestStatus::Failed(e.to_string()));
+                            if let Some(bid) = claimed_batch {
+                                batch_status.entry(bid).and_modify(|s| {
+                                    s.failed += 1;
+                                });
+                            }
                         }
                     }
                 }
-                // Remove abort handle once the task has reached a terminal state.
+                // else: `graph_cancel` won the claim and has already recorded
+                // this run on both the status and the batch accumulator.
+
+                // Cleanup, not a claim: drop the abort handle unconditionally so
+                // a finished run leaves nothing abortable behind.
                 ingest_abort.remove(&run_id);
-                // TD-251: the task has recorded its OWN batch outcome above, so
-                // the run→batch mapping has done its job. Dropping it here keeps
-                // the map bounded and makes a later cancel a no-op rather than a
-                // double-count.
-                ingest_batch.remove(&run_id);
             });
 
             // Capture the abort handle immediately after spawn (before any yield point)
@@ -558,18 +595,27 @@ impl GraphHandle for EngineGraphHandle {
     // ── 3. graph_cancel ──────────────────────────────────────────────────────
 
     async fn graph_cancel(&self, run_id: Uuid) -> Result<CancelOutcome> {
-        // Abort background ingest task if still running.
-        if let Some((_, handle)) = self.ingest_abort.remove(&run_id) {
-            handle.abort();
+        // TD-251: CLAIM the run's outcome before recording anything. The claim
+        // is shared with the run's own task (see `ingest_claim`'s doc comment)
+        // and `DashMap::remove` is atomic, so exactly one of the two records —
+        // never both, which is what wedged the batch accumulator, and never
+        // neither, which would wedge it the other way.
+        //
+        // Claim FIRST, abort second. The abort handle is registered after the
+        // spawn, so its absence proves nothing about whether the run is still
+        // outstanding; the claim is registered before the spawn and does.
+        if let Some((_, claimed_batch)) = self.ingest_claim.remove(&run_id) {
+            if let Some((_, handle)) = self.ingest_abort.remove(&run_id) {
+                handle.abort();
+            }
             self.ingest_runs
                 .insert(run_id, IngestStatus::Failed("cancelled by caller".into()));
-            // TD-251: mirror what the aborted task would have done for itself.
-            // The episode's OWN status is terminal above, but the batch
-            // accumulator is separate — leaving it unincremented means
-            // `is_terminal()` (succeeded + skipped + failed >= total) is never
-            // satisfied and `await_batch` blocks for its full timeout. Cancelling
-            // one member wedged the whole batch.
-            if let Some((_, bid)) = self.ingest_batch.remove(&run_id) {
+            // Record for the batch exactly what the aborted task would have
+            // recorded for itself. The episode's OWN status is terminal above,
+            // but the batch accumulator is separate — leaving it unincremented
+            // means `is_done()` is never satisfied and `await_batch` blocks for
+            // its full timeout. Cancelling one member wedged the whole batch.
+            if let Some(bid) = claimed_batch {
                 self.batch_status.entry(bid).and_modify(|s| {
                     s.failed += 1;
                 });

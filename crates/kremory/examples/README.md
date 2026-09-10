@@ -57,8 +57,11 @@ loud.
   `restore_archived_fact`) are public but have **no reachable handle** from the
   API today (TD-250). The example asserts that limitation, so it will start
   failing when the gap closes.
-- **`cancelling_in_flight_work`** — `await_batch()` after a cancel hangs until
-  its timeout on some runs (TD-251). Poll `status_of` per episode instead.
+- **`cancelling_in_flight_work`** — a cancel races the work it cancels. Whichever
+  of the two gets there first is the one recorded, so a cancelled episode reads
+  `Failed("cancelled by caller")` when the cancel landed in time and `Complete`
+  when it did not. Both leave the batch terminal, so `await_batch()` is safe
+  after a cancel.
 - **`hosted_providers`** — `Memory::with_anthropic` gives you Claude and **no
   embedding model**, because Anthropic has no embedding API. Recall silently
   becomes structural rather than semantic. Pair Claude with a real embedder

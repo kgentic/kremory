@@ -939,7 +939,20 @@ pub struct BatchStatus {
 impl BatchStatus {
     /// `true` when every episode has reached a terminal status.
     pub fn is_done(&self) -> bool {
-        self.completed + self.skipped + self.failed == self.total
+        // `>=`, not `==`. Equality on a concurrently-updated accumulator is a
+        // one-way trapdoor: a single over-count puts the sum permanently past
+        // `total` and the batch can NEVER read done again, so every
+        // `await_batch` on it burns its full timeout (TD-251 cause 2 — measured
+        // `total=4 completed=4 failed=1`). The over-count itself is cause-fixed
+        // in `engine_handle`'s claim protocol; this is the second line, and it
+        // also aligns with the sibling accumulator `BatchProgress::is_terminal`,
+        // which has always used `>=`.
+        //
+        // `>=` cannot fire early: both writers register `total` no later than
+        // the outcome it accounts for — the background path increments `total`
+        // BEFORE the spawn, the inline path increments `total` in the same
+        // statement as the outcome.
+        self.completed + self.skipped + self.failed >= self.total
     }
 }
 

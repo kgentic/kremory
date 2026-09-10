@@ -221,9 +221,19 @@ pub async fn await_batch_enrichment(
             return Ok(status);
         }
         if start.elapsed() >= opts.timeout {
+            // Carry the ACCUMULATOR, not just the fact of the timeout. A batch
+            // that never terminates is diagnosed entirely by how its counters
+            // relate to `total`: short of it means work is still outstanding,
+            // PAST it means a run was counted twice and `is_done`'s equality
+            // can never hold again (TD-251 cause 2). Without these fields the
+            // two are indistinguishable from the log.
             tracing::warn!(
                 batch_id,
                 elapsed_ms = start.elapsed().as_millis(),
+                total = status.total,
+                completed = status.completed,
+                skipped = status.skipped,
+                failed = status.failed,
                 "await_batch_enrichment timeout exhausted"
             );
             return Err(MemoryError::Timeout);

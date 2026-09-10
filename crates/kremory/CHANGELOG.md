@@ -5,6 +5,28 @@ All notable changes to the `kremory` crate. Format loosely follows
 
 ## [Unreleased]
 
+### Fixed — cancelling a batched episode could wedge `await_batch` forever
+
+A cancel and the episode's own background task could BOTH record a terminal outcome for
+the same run: the task `completed += 1`, the cancel `failed += 1`. `tokio`'s
+`handle.abort()` only takes effect at an `.await`, so a task already past its last one
+runs its tail regardless. The double-count put `completed + skipped + failed` one past
+`total`, and `BatchStatus::is_done()` tested strict equality — so the batch could never
+read done again and `await_batch` blocked for its whole timeout, on 22 of 40 measured
+trials. Recording an outcome is now claimed atomically (exactly one of cancel/task wins),
+and `is_done()` uses `>=`, matching the sibling accumulator that always did.
+
+The same read closed a latent sibling: a backgrounded run could be stranded at the
+non-terminal `Extracting` status when its own status write landed after a cancel's and
+was then aborted, so `await_enrichment` could never return. That write is now a
+Pending-only compare-and-swap.
+
+Visible consequence: a cancel arriving just as its episode finishes may now win, so that
+episode reads `Failed("cancelled by caller")` where it previously read `Complete` — and
+the batch terminates either way instead of hanging. `await_batch`'s timeout log now
+carries the batch counters, which is what distinguishes "still working" from "counted
+twice".
+
 ### Fixed — right-to-erasure was broken on any multi-source graph
 
 `mem.forget().by_source_id(..)` raised `FOREIGN KEY constraint failed` whenever the

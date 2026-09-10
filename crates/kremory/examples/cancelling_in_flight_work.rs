@@ -29,20 +29,22 @@
 //! system telling you precisely what it could not unwind. A cancel API that
 //! returned `Ok(())` would be hiding that.
 //!
-//! ## About the race, and a live bug
+//! ## About the race
 //!
 //! This example cancels work that may already have finished — under a stub model
 //! phase 2 is fast. **That is a real production case, not an artefact**: by the
 //! time your cancel arrives, the job may be done.
 //!
-//! ⚠️ **`await_batch()` after a cancel currently hangs until its timeout on a
-//! minority of runs** (TD-251). When the cancel lands after the task finished,
-//! every episode reads `Complete` and the batch still never reaches terminal.
-//! Writing this example is what surfaced it.
+//! Either way the batch still reaches a terminal state, so `await_batch()` is
+//! the right way to wait for it. Exactly one outcome is recorded per episode —
+//! whichever of the cancel and the episode's own task gets there first — so the
+//! cancelled episode reads `Failed("cancelled by caller")` when the cancel
+//! arrived in time and `Complete` when it did not. Both are honest; neither
+//! leaves the batch hanging.
 //!
-//! So this asserts **per-episode** status, which is reliable on every run, and
-//! deliberately does not await the batch. An example that asserts around a known
-//! race is a flaky test wearing a tutorial's clothes.
+//! Writing this example is what surfaced TD-251, where a late cancel and the
+//! finishing task BOTH counted the same episode and `await_batch()` then blocked
+//! for its whole timeout on 22 of 40 runs. Fixed 2026-09-10.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -98,40 +100,22 @@ async fn main() -> anyhow::Result<()> {
         println!("  → not unwound, and it TOLD you what was left half-done.");
     }
 
-    // ── Every episode reaches a terminal state ─────────────────────────────
+    // ── Wait for the whole batch, cancelled member included ─────────────────
     //
-    // Per-episode status is the reliable check, and it is the one that matters:
-    // the cancelled episode is terminal, and its neighbours completed.
-    //
-    // ⚠️ NOT asserted here: `await_batch()` after a cancel. It hangs until its
-    // timeout on a minority of runs (TD-251, cause 2) — when the cancel lands
-    // AFTER the task finished, every episode reads `Complete` and the BATCH
-    // still never reaches terminal. That is an engine defect, not an example
-    // problem, and asserting around it would make this a flaky test wearing a
-    // tutorial's clothes. Poll `status_of` per episode until it is fixed.
-    // Poll until every episode is terminal, bounded. `await_batch` would have
-    // done this waiting for us; since we cannot use it (TD-251), poll explicitly
-    // rather than sleeping a guessed interval — a fixed sleep is a race with
-    // extra steps.
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    loop {
-        let mut all_terminal = true;
-        for c in &commits {
-            let st = mem.status_of(c).await?;
-            if !matches!(
-                st,
-                kremory::core::error::IngestStatus::Complete
-                    | kremory::core::error::IngestStatus::Failed(_)
-            ) {
-                all_terminal = false;
-                break;
-            }
-        }
-        if all_terminal || std::time::Instant::now() > deadline {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(25)).await;
-    }
+    // Cancelling a member must not stop the batch reaching a terminal state —
+    // "a cancel that wedges its own batch is worse than no cancel at all". The
+    // counts below are the proof: every episode is accounted for exactly once.
+    let status = mem.await_batch(BATCH, Duration::from_secs(10)).await?;
+    println!(
+        "\nbatch terminal: total={} completed={} skipped={} failed={}",
+        status.total, status.completed, status.skipped, status.failed
+    );
+    assert_eq!(
+        status.completed + status.skipped + status.failed,
+        status.total,
+        "every episode must be accounted for exactly once — a cancel and the \
+         episode's own task must not both record an outcome for it"
+    );
 
     let mut terminal = 0;
     let mut completed = 0;
@@ -199,8 +183,8 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\nCancellation is surgical at the EPISODE level: one job stopped, its");
     println!("neighbours finished, and anything that could not be unwound was named");
-    println!("rather than swallowed. Batch-level awaiting after a cancel is not yet");
-    println!("reliable — see TD-251.");
+    println!("rather than swallowed. The batch still reaches a terminal state, so");
+    println!("await_batch() is safe to use after a cancel.");
 
     mem.close().await?;
     Ok(())

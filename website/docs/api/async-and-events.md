@@ -47,6 +47,13 @@ let outcome: kremory::CancelOutcome = mem.cancel(&commit).await?;
 let batch_status: kremory::BatchStatus = mem.await_batch("import-2026-05-27", Duration::from_secs(60)).await?;
 ```
 
+Every episode in a batch is accounted for **exactly once** — `completed + skipped + failed`
+reaches `total` and stops there. That holds even when you cancel a member mid-flight: the cancel
+and the episode's own task race, whichever arrives first records the outcome, and the loser records
+nothing. So a cancelled episode reads `Failed("cancelled by caller")` when the cancel landed in
+time and `Complete` when the work had already finished, and `await_batch` returns either way rather
+than blocking on a batch that can never balance.
+
 `await_batch` (and `await_dream`, `await_enrichment`) share one internal options type,
 `AwaitOpts { timeout, poll_interval }`, built from the `Duration` argument you pass — not
 something you construct yourself at the facade layer, but the name to grep for if you're reading
