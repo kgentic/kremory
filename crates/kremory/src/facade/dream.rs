@@ -152,6 +152,25 @@ impl<'a> DreamRequest<'a> {
     ///
     /// Named `with_opts` (not `opts`) so the builder verb is distinct from the
     /// `opts` field it sets (DX1 — a method named `opts` reads like a getter).
+    ///
+    /// # Constructing `DreamOpts`
+    ///
+    /// It is `#[non_exhaustive]`, so **struct-literal syntax does not compile
+    /// outside this crate** — including the `..Default::default()` form, which is
+    /// the one everybody reaches for first. Take the default and assign:
+    ///
+    /// ```
+    /// # use kremory::DreamOpts;
+    /// let mut opts = DreamOpts::default();
+    /// opts.archive_grace_days = Some(0);   // archive as soon as a fact expires
+    /// opts.include_community_detection = false;
+    /// // mem.dream().with_opts(opts).execute().await?;
+    /// ```
+    ///
+    /// The fields are public and this is the intended idiom — new knobs then
+    /// appear without breaking any caller. There are no `with_*` setters on
+    /// `DreamOpts` deliberately: it carries 17-plus fields and a matching wall of
+    /// one-line setters would be surface to maintain for no expressive gain.
     pub fn with_opts(mut self, opts: DreamOpts) -> Self {
         self.opts = Some(opts);
         self
