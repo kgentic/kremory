@@ -5,7 +5,10 @@
 
 mod deferred;
 mod deferred_emissions;
+mod entity_type_registry;
+mod forward_refs;
 mod ingest_with;
+mod pre_pinned;
 mod phase1;
 mod types;
 

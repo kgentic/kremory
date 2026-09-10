@@ -8,13 +8,12 @@ use metrics::{counter, histogram};
 use crate::core::config::{ContentType, ResolutionStrategy};
 use crate::core::contradiction::{DetectParams, TwoPoolDetector};
 use crate::core::embed_prefix::{document_embed_text, query_embed_text};
-use crate::core::entity_types::EntityTypeRegistry;
 use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::graph::{
     EpisodeInsert, FactInsert, InsertEntityWithGroupParams, InsertEpisodicEdgeParams,
     InvalidateFactWithReasonParams, PriorEpisodesParams, SetEntityNerConfidenceParams,
-    UpdateEntitySourceTierParams, UpsertEntityWithGroupParams,
+    UpsertEntityWithGroupParams,
 };
 use crate::core::intelligence::{
     EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
@@ -25,6 +24,8 @@ use crate::core::resolver::{entity_name, normalize_name, CascadeResolver, UnionF
 use crate::core::search::{FtsSearchFactsParams, SearchFilters, VectorSearchEntitiesNoCountParams};
 
 use super::deferred_emissions::{flush_deferred_emissions, DeferredEmission};
+use super::forward_refs::forward_reference_names;
+use super::pre_pinned::PrePinnedWriteParams;
 use crate::core::ingest::helpers::extract_context_snippet;
 use crate::core::ingest::{Engine, IngestionResult, SourceParams};
 
@@ -47,13 +48,13 @@ pub struct IngestWithParams<'a> {
 
 /// Args-as-object for [`Engine::make_pinned_entity_recallable`] to keep the
 /// function under clippy's too_many_arguments threshold (clippy.toml threshold 3).
-struct PinnedEntityRecall<'a> {
+pub(super) struct PinnedEntityRecall<'a> {
     /// Entity id (== the literal pinned subject/object text).
-    id: &'a str,
+    pub(super) id: &'a str,
     /// Namespace the entity + its episodic edge live in (composite-FK scope).
-    group_id: Option<&'a str>,
+    pub(super) group_id: Option<&'a str>,
     /// Source episode to attribute the entity to.
-    episode_id: i64,
+    pub(super) episode_id: i64,
 }
 
 /// Bundled parameters for [`Engine::block_resolution_candidates`] — args-as-object
@@ -283,284 +284,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // pre-write ordering. Intra-set duplicates (caller passes the same
         // triple twice in their own set) also dedup cleanly via
         // `try_insert_fact_with_group`.
-        let mut pinned_fact_ids: Vec<i64> = Vec::new();
-        if !source_params.pre_pinned_facts.is_empty() {
-            let mut pinned_count: u64 = 0;
-            for pf in &source_params.pre_pinned_facts {
-                // Auto-stub the subject entity (entity_type_id=0 "Entity") so the
-                // fact insert FK constraint resolves. Mirrors how Phase 2 LLM
-                // extraction auto-creates UNKNOWN entities for forward references.
-                // Duplicate-entity is the expected case (entity already exists);
-                // explicit swallow. Treat the cause, not the symptom:
-                // NON-Duplicate errors (connection failure, schema gap, etc) are
-                // surfaced via tracing::warn — masking them silently would hide
-                // real production failures.
-                // Stub entities MUST be created in the fact's `group_id` namespace, not the
-                // default one: the facts composite FK is (subject_id, subject_group_id) →
-                // entities(id, group_id) (schema.rs:1450). A namespace-less `insert_entity`
-                // puts the stub in "default" while the pinned fact below stamps
-                // `subject_group_id = group_id`, so the FK fails and the fact is dropped.
-                // Stamp the entity's literal name into `properties` so
-                // the FTS seed arm (`entities_fts.properties`) can find a
-                // caller-pinned entity WITHOUT a second LLM. Mode-(a) LLM
-                // extraction is recall-findable precisely because its
-                // `properties["name"]` carries the name text (entities_fts.label
-                // is empty post-Migration-009 — the FTS index is over
-                // `properties` only). A bare `{"stub": false}` stub carried no
-                // name token → recall returned 0. `properties["name"]` also
-                // feeds `graph_search`'s original-case `entity_name` render.
-                if let Err(e) = self
-                    .graph
-                    .insert_entity_with_group(InsertEntityWithGroupParams {
-                        id: &pf.subject,
-                        entity_type_id: 0,
-                        properties: serde_json::json!({"name": pf.subject, "stub": false}),
-                        group_id,
-                    })
-                    .await
-                {
-                    if !matches!(e, crate::core::error::Error::Duplicate { .. }) {
-                        tracing::warn!(
-                            subject = %pf.subject,
-                            error = %e,
-                            "kremory.with_facts.stub_entity_insert_failed"
-                        );
-                    }
-                }
-                // Stamp the vector channel too — embed the literal
-                // subject text into `entities.embedding` so the vector seed arm
-                // finds the pin under a real embedder. Best-effort + always-run
-                // (not gated on `skip_extraction`): Phase 2 is not guaranteed to
-                // re-cover a pinned subject that never appears in the episode
-                // text, so pins must be findable independent of enrichment. The
-                // embedder is NOT the chat LLM — "no second LLM" still holds.
-                // Also links the entity to its episode (attribution
-                // channel) so it renders under the default TemporalFacts template.
-                self.make_pinned_entity_recallable(PinnedEntityRecall {
-                    id: &pf.subject,
-                    group_id,
-                    episode_id,
-                })
-                .await;
-                if let Some(ref obj_id) = pf.object_id {
-                    if let Err(e) = self
-                        .graph
-                        .insert_entity_with_group(InsertEntityWithGroupParams {
-                            id: obj_id,
-                            entity_type_id: 0,
-                            properties: serde_json::json!({"name": obj_id, "stub": false}),
-                            group_id,
-                        })
-                        .await
-                    {
-                        if !matches!(e, crate::core::error::Error::Duplicate { .. }) {
-                            tracing::warn!(
-                                object_id = %obj_id,
-                                error = %e,
-                                "kremory.with_facts.stub_entity_insert_failed"
-                            );
-                        }
-                    }
-                    self.make_pinned_entity_recallable(PinnedEntityRecall {
-                        id: obj_id,
-                        group_id,
-                        episode_id,
-                    })
-                    .await;
-                }
-
-                // Time-inversion guard — mirror `facade/supersede.rs`'s
-                // `if valid_to < fact.valid_from` reject (§3b step 3). A
-                // caller-asserted `valid_to` predating the fact's own resolved
-                // `valid_from` is a nonsensical `[valid_from, valid_to)` window
-                // that, once bound, makes the fact permanently invisible to
-                // every `as_of(t)` query. The default `valid_from` is ingest
-                // `now()` (`sf.valid_from.or(published_at).unwrap_or(occurred_at)`
-                // in `engine_handle.rs`), so a caller who supplies `valid_to`
-                // but NOT `valid_from` trivially inverts the window.
-                //
-                // DECISION: reject the WHOLE pin (skip the insert entirely) —
-                // do NOT silently drop the `valid_to` and persist an open-ended
-                // window the caller never asked for. Caller-asserted temporal
-                // data is never silently altered; a nonsensical assertion is
-                // refused outright. Observable via counter + warn, never silent.
-                if let Some(valid_to) = pf.valid_to {
-                    if valid_to < pf.valid_from {
-                        metrics::counter!(
-                            "kremory.with_facts.pin_rejected_total",
-                            "outcome" => "rejected_time_inversion"
-                        )
-                        .increment(1);
-                        tracing::warn!(
-                            subject = %pf.subject,
-                            predicate = %pf.predicate,
-                            valid_from = %pf.valid_from,
-                            valid_to = %valid_to,
-                            "kremory.with_facts.pin_rejected_time_inversion"
-                        );
-                        continue;
-                    }
-                }
-
-                match self
-                    .graph
-                    .try_insert_fact_with_group(
-                        FactInsert {
-                            subject_id: &pf.subject,
-                            predicate: &pf.predicate,
-                            object_id: pf.object_id.as_deref(),
-                            object_value: pf.object_value.as_deref(),
-                            valid_from: pf.valid_from,
-                            confidence: pf.confidence,
-                            source_episode_id: Some(episode_id),
-                            embedding: None,
-                        },
-                        group_id,
-                    )
-                    .await
-                {
-                    Ok(Some(fact_id)) => {
-                        pinned_count = pinned_count.saturating_add(1);
-                        pinned_fact_ids.push(fact_id);
-                        // Bind the caller-asserted bounded
-                        // window (StructuredFact.valid_to, "None = open-ended")
-                        // if given — this used to be silently dropped
-                        // (`PrePinnedFact` carried `valid_from` only). Mirrors
-                        // `SupersedeRequest`'s own `bound_valid_to` call — NOT
-                        // `invalidate_fact`/
-                        // `invalidate_fact_with_reason`, which write
-                        // `expired_at`/`invalid_at` (a separate, later,
-                        // system-time retirement act).
-                        if let Some(valid_to) = pf.valid_to {
-                            if let Err(e) = self.graph.bound_valid_to(fact_id, valid_to).await {
-                                // A dropped caller-asserted
-                                // `valid_to` (DB-level bind failure — distinct
-                                // from the time-inversion reject above)
-                                // must be observable, not just warn-logged. The
-                                // success path already has
-                                // `valid_to_bound_total`; pair it with a failure
-                                // counter so the drop rate is a metric.
-                                metrics::counter!("kremory.with_facts.valid_to_bind_failed_total")
-                                    .increment(1);
-                                tracing::warn!(
-                                    subject = %pf.subject,
-                                    fact_id,
-                                    error = %e,
-                                    "kremory.with_facts.valid_to_bind_failed"
-                                );
-                            } else {
-                                metrics::counter!("kremory.with_facts.valid_to_bound_total")
-                                    .increment(1);
-                            }
-                        }
-                        // Stamp ConsumerPinned on the subject entity
-                        // so the dream reclassify pass skips it. Best-effort — a warn on
-                        // failure is sufficient; the fact is already pinned.
-                        if let Err(e) = self
-                            .graph
-                            .update_entity_source_tier(UpdateEntitySourceTierParams {
-                                id: &pf.subject,
-                                group_id,
-                                source_tier: "ConsumerPinned",
-                            })
-                            .await
-                        {
-                            tracing::warn!(
-                                subject = %pf.subject,
-                                error = %e,
-                                "kremory.with_facts.consumer_pinned_stamp_failed"
-                            );
-                        } else {
-                            metrics::counter!(
-                                "kremory.with_facts.consumer_pinned_tier_stamped_total"
-                            )
-                            .increment(1);
-                        }
-                        // Symmetric protection: when a pinned fact references an object
-                        // entity (object_id = Some), stamp it
-                        // ConsumerPinned too — the consumer asserted a typed relationship, so dream
-                        // re-typing of either endpoint silently invalidates their assertion. When
-                        // object is a literal (object_id = None), no object entity exists to stamp —
-                        // subject-only is correct.
-                        //
-                        // Peer convergence: Graphiti add_triplet + Mem0 infer=False both treat
-                        // endpoints symmetrically. Zero precedent for subject-only protection across
-                        // surveyed peers (Graphiti / Letta / Mem0 / LightRAG / Cognee / LangChain).
-                        if let Some(ref object_id) = pf.object_id {
-                            match self
-                                .graph
-                                .update_entity_source_tier(UpdateEntitySourceTierParams {
-                                    id: object_id,
-                                    group_id,
-                                    source_tier: "ConsumerPinned",
-                                })
-                                .await
-                            {
-                                Ok(()) => {
-                                    metrics::counter!(
-                                        "kremory.with_facts.consumer_pinned_object_tier_stamped_total"
-                                    )
-                                    .increment(1);
-                                }
-                                Err(e) => {
-                                    metrics::counter!(
-                                        "kremory.with_facts.consumer_pinned_object_stamp_failed"
-                                    )
-                                    .increment(1);
-                                    tracing::warn!(
-                                        object_id = %object_id,
-                                        error = %e,
-                                        "kremory.with_facts.consumer_pinned_object_stamp_failed"
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        // Intra-caller-set duplicate (already counted as
-                        // axis=caller_vs_llm inside the helper; relabel here
-                        // for diagnostic clarity via a second counter increment).
-                        metrics::counter!(
-                            "kremory.with_facts.deduped_total",
-                            "axis" => "intra_caller_set"
-                        )
-                        .increment(1);
-                    }
-                    Err(e) => {
-                        // DIAG: surface failures via counter so tests can detect.
-                        metrics::counter!("kremory.with_facts.pin_failed_total").increment(1);
-                        tracing::warn!(
-                            subject = %pf.subject,
-                            predicate = %pf.predicate,
-                            error = %e,
-                            "kremory.with_facts.pin_failed"
-                        );
-                    }
-                }
-            }
-            if pinned_count > 0 {
-                metrics::counter!(
-                    "kremory.with_facts.pinned_total",
-                    "source" => "caller"
-                )
-                .increment(pinned_count);
-                tracing::info!(
-                    pinned = pinned_count,
-                    requested = source_params.pre_pinned_facts.len(),
-                    episode_id,
-                    "kremory.with_facts.pinned"
-                );
-            } else {
-                // Avoid INFO-level noise for all-dedup caller sets;
-                // bulk-import workloads can hit this thousands of times per batch.
-                tracing::debug!(
-                    pinned = 0_u64,
-                    requested = source_params.pre_pinned_facts.len(),
-                    episode_id,
-                    "kremory.with_facts.all_deduped_or_failed"
-                );
-            }
-        }
+        let pinned_fact_ids: Vec<i64> = self
+            .write_pre_pinned_facts(PrePinnedWriteParams {
+                pre_pinned_facts: &source_params.pre_pinned_facts,
+                episode_id,
+                group_id,
+            })
+            .await;
 
         // 1c. `skip_extraction` early return.
         //
@@ -673,128 +403,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         crate::core::entity_types::ensure_default_types_seeded(&self.graph.conn, effective_gid)
             .await?;
 
-        let registry = if let Some(ref override_specs) = source_params.entity_types_override {
-            let db_registry =
-                EntityTypeRegistry::load_for_group(&self.graph.conn, effective_gid).await?;
-            if db_registry.is_empty() {
-                // First-call persistence: seed DB from override.
-                crate::core::entity_types::upsert_entity_types(
-                    &self.graph.conn,
-                    effective_gid,
-                    override_specs,
-                )
-                .await?;
-                metrics::counter!(
-                    "rql.ingest.registry_override_applied",
-                    "persisted" => "true",
-                )
-                .increment(1);
-            } else {
-                // Additive merge: persist any override types missing from DB.
-                //
-                // Was previously "ephemeral, do not touch DB" but that
-                // created an entity-type/JOIN hole: an entity row stored with
-                // entity_type_id = override-only id had no entity_types row →
-                // SQL COALESCE(et.name, 'Entity') resolved label='Entity' at
-                // read time regardless of the stored integer id. The right fix is
-                // additive merge — INSERT OR IGNORE each missing override
-                // spec, preserving previously-stored rows.
-                let mut newly_persisted: usize = 0;
-                for spec in override_specs.iter() {
-                    if db_registry.name_to_id(&spec.name).is_none() {
-                        self.graph
-                            .conn
-                            .execute(
-                                "INSERT OR IGNORE INTO entity_types \
-                                 (group_id, id, name, description) \
-                                 VALUES (?1, ?2, ?3, ?4)",
-                                libsql::params![
-                                    effective_gid,
-                                    spec.id as i64,
-                                    spec.name.clone(),
-                                    spec.description.clone()
-                                ],
-                            )
-                            .await
-                            .map_err(|e| {
-                                crate::core::error::Error::Other(anyhow::anyhow!(
-                                    "additive override persist failed for spec '{}': {e}",
-                                    spec.name
-                                ))
-                            })?;
-                        newly_persisted += 1;
-                    }
-                }
-                metrics::counter!(
-                    "rql.ingest.registry_override_applied",
-                    "persisted" => if newly_persisted > 0 { "additive" } else { "false" },
-                )
-                .increment(1);
-                metrics::histogram!("rql.ingest.registry_override_additive_count")
-                    .record(newly_persisted as f64);
-            }
-            EntityTypeRegistry::from_specs(override_specs.clone())
-        } else {
-            let db_registry =
-                EntityTypeRegistry::load_for_group(&self.graph.conn, effective_gid).await?;
-            // Builder-seed: if the builder set `allowed_entity_types`,
-            // any type not already in the registry for this group_id is registered
-            // additively via `label_to_id_or_register`. This runs AFTER
-            // `ensure_default_types_seeded` so the registry is never empty here;
-            // the merge is additive-only (INSERT OR IGNORE via the same race-safe
-            // MAX(id)+1 path that Pass 0 uses). No caller-specified id → SQLite
-            // assigns the next free id, avoiding position-based collisions with
-            // future Pass 0 writes.
-            if !self.config.allowed_entity_types.is_empty() {
-                let mut new_types_seeded: usize = 0;
-                for name in &self.config.allowed_entity_types {
-                    // Use case-insensitive match here so we don't fire the
-                    // seed branch when the DB already has the canonical form under a
-                    // different case (e.g. builder has "court", DB has "Court").
-                    // `label_to_id_or_register` does a case-insensitive DB lookup
-                    // (COLLATE NOCASE path), so a case-sensitive `name_to_id` guard
-                    // would count a "skip that never inserts" as a seed — a
-                    // lying-counter failure mode.
-                    let already_registered = db_registry
-                        .specs()
-                        .iter()
-                        .any(|s| s.name.eq_ignore_ascii_case(name));
-                    if !already_registered {
-                        crate::core::entity_types::label_to_id_or_register(
-                            crate::core::entity_types::LabelToIdOrRegisterParams {
-                                conn: &self.graph.conn,
-                                group_id: effective_gid,
-                                registry: &db_registry,
-                                label: name,
-                            },
-                        )
-                        .await?;
-                        new_types_seeded += 1;
-                    }
-                }
-                if new_types_seeded > 0 {
-                    metrics::counter!(
-                        "rql.ingest.registry_builder_seed_applied",
-                        "namespace" => effective_gid.to_string(),
-                    )
-                    .increment(1);
-                    // Histogram gains namespace label matching the paired counter
-                    // so operators can disaggregate by namespace.
-                    metrics::histogram!(
-                        "rql.ingest.registry_builder_seed_count",
-                        "namespace" => effective_gid.to_string(),
-                    )
-                    .record(new_types_seeded as f64);
-                    // Reload the registry so the derived allowed_entity_types_live
-                    // below includes the newly-seeded builder types.
-                    EntityTypeRegistry::load_for_group(&self.graph.conn, effective_gid).await?
-                } else {
-                    db_registry
-                }
-            } else {
-                db_registry
-            }
-        };
+        let registry = self
+            .resolve_entity_type_registry(source_params.entity_types_override.as_deref(), effective_gid)
+            .await?;
 
         // 2c. L4': fetch top-N existing entities for prompt-time injection.
         //
@@ -1122,88 +733,72 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             // Any name NOT already mapped from the extraction list is a forward
             // reference — insert it as an UNKNOWN stub so the fact loop can resolve
             // it without producing a dangling subject_id.
-            let extracted_names: HashSet<String> = all_entities
-                .iter()
-                .map(|e| normalize_name(&e.name))
-                .collect();
-
-            for fact in &all_facts {
-                let mut forward_refs: Vec<String> = vec![normalize_name(&fact.subject)];
-                if fact.is_entity_ref {
-                    forward_refs.push(normalize_name(&fact.object));
-                }
-                for norm_name in forward_refs {
-                    if extracted_names.contains(&norm_name) {
-                        // Will be handled in the entity loop — skip.
-                        continue;
+            // Names the facts reference that no extracted entity accounts for.
+            // The RULE is now a pure function with its own tests (`forward_refs.rs`);
+            // what stays here is the INSERT that acts on it.
+            for norm_name in forward_reference_names(&all_entities, &all_facts) {
+                // entities.id is a sole TEXT PK pre-migration-004.
+                // Post-migration-004: composite PK (id, group_id) closes the bypass surface.
+                // Stub INSERT uses INSERT OR IGNORE — cross-namespace name collision silently
+                // skips stub creation. Single-namespace use only for v0.1.1.
+                //
+                // Strategy: attempt insert_entity_with_group; if the entity already exists
+                // (UNIQUE constraint error), that is fine — a real row is present.
+                // `properties["name"]` is REQUIRED for FTS findability.
+                // `entities_fts` indexes `properties` ONLY — `entities_fts.label` is
+                // empty post-Migration-009 — so a stub without a name token is
+                // invisible to the FTS seed arm. The `with_facts` pinned path
+                // established exactly this (`:458-466`: *"A bare `{"stub": false}`
+                // stub carried no name token → recall returned 0"*), but the
+                // EXTRACTION forward-reference path never received the same fix.
+                //
+                // So these stubs were unreachable by BOTH retrieval arms: no
+                // `properties["name"]` (no FTS) and no embedding (no dense — see the
+                // post-commit embed below). It also feeds `graph_search`'s
+                // original-case `entity_name` render.
+                let stub_props = serde_json::json!({
+                    "name": norm_name,
+                    "stub": true,
+                    "source": "forward_reference",
+                });
+                match self
+                    .graph
+                    .insert_entity_with_group(InsertEntityWithGroupParams {
+                        id: &norm_name,
+                        entity_type_id: 0,
+                        properties: stub_props,
+                        group_id,
+                    })
+                    .await
+                {
+                    Ok(()) => {
+                        // Newly inserted stub.
+                        name_to_id.insert(norm_name.clone(), norm_name.clone());
+                        stub_entities_inserted += 1;
+                        // Both counters claim a persisted stub row, so they
+                        // are replayed after the outer commit, never here.
+                        deferred.push(DeferredEmission::StubInserted);
+                        // A stub written here carries NO embedding, so it is absent
+                        // from the ANN index while still being counted by
+                        // `plan_index_fetch`'s `namespace_rows` — which is exactly
+                        // the shortfall `search.rs:353-383` reports. Measured
+                        // on LoCoMo conv-26: 25 of 67 entities (37%) had a NULL
+                        // embedding and were unreachable by dense retrieval, and the
+                        // filtered-ANN arm under-filled (requested=10 delivered=7)
+                        // even with the group filter matching every row (see
+                        // `search.rs:353-383`'s namespace-shortfall reporting).
+                        //
+                        // Queued, not embedded inline: see `stub_names_to_embed`.
+                        stub_names_to_embed.push(norm_name.clone());
+                        tracing::warn!(
+                            target: "kremory.ingest.stub",
+                            name = %norm_name,
+                            "inserted UNKNOWN stub for forward reference"
+                        );
                     }
-                    if name_to_id.contains_key(&norm_name) {
-                        // Already inserted as a stub in a previous fact iteration.
-                        continue;
-                    }
-                    // entities.id is a sole TEXT PK pre-migration-004.
-                    // Post-migration-004: composite PK (id, group_id) closes the bypass surface.
-                    // Stub INSERT uses INSERT OR IGNORE — cross-namespace name collision silently
-                    // skips stub creation. Single-namespace use only for v0.1.1.
-                    //
-                    // Strategy: attempt insert_entity_with_group; if the entity already exists
-                    // (UNIQUE constraint error), that is fine — a real row is present.
-                    // `properties["name"]` is REQUIRED for FTS findability.
-                    // `entities_fts` indexes `properties` ONLY — `entities_fts.label` is
-                    // empty post-Migration-009 — so a stub without a name token is
-                    // invisible to the FTS seed arm. The `with_facts` pinned path
-                    // established exactly this (`:458-466`: *"A bare `{"stub": false}`
-                    // stub carried no name token → recall returned 0"*), but the
-                    // EXTRACTION forward-reference path never received the same fix.
-                    //
-                    // So these stubs were unreachable by BOTH retrieval arms: no
-                    // `properties["name"]` (no FTS) and no embedding (no dense — see the
-                    // post-commit embed below). It also feeds `graph_search`'s
-                    // original-case `entity_name` render.
-                    let stub_props = serde_json::json!({
-                        "name": norm_name,
-                        "stub": true,
-                        "source": "forward_reference",
-                    });
-                    match self
-                        .graph
-                        .insert_entity_with_group(InsertEntityWithGroupParams {
-                            id: &norm_name,
-                            entity_type_id: 0,
-                            properties: stub_props,
-                            group_id,
-                        })
-                        .await
-                    {
-                        Ok(()) => {
-                            // Newly inserted stub.
-                            name_to_id.insert(norm_name.clone(), norm_name.clone());
-                            stub_entities_inserted += 1;
-                            // Both counters claim a persisted stub row, so they
-                            // are replayed after the outer commit, never here.
-                            deferred.push(DeferredEmission::StubInserted);
-                            // A stub written here carries NO embedding, so it is absent
-                            // from the ANN index while still being counted by
-                            // `plan_index_fetch`'s `namespace_rows` — which is exactly
-                            // the shortfall `search.rs:353-383` reports. Measured
-                            // on LoCoMo conv-26: 25 of 67 entities (37%) had a NULL
-                            // embedding and were unreachable by dense retrieval, and the
-                            // filtered-ANN arm under-filled (requested=10 delivered=7)
-                            // even with the group filter matching every row (see
-                            // `search.rs:353-383`'s namespace-shortfall reporting).
-                            //
-                            // Queued, not embedded inline: see `stub_names_to_embed`.
-                            stub_names_to_embed.push(norm_name.clone());
-                            tracing::warn!(
-                                target: "kremory.ingest.stub",
-                                name = %norm_name,
-                                "inserted UNKNOWN stub for forward reference"
-                            );
-                        }
-                        Err(_) => {
-                            // Entity already exists (real or from a previous batch) — use it.
-                            name_to_id.insert(norm_name.clone(), norm_name.clone());
-                        }
+                    Err(_) => {
+                        // Entity already exists (real or from a previous batch) — use it.
+                        name_to_id.insert(norm_name.clone(), norm_name.clone());
                     }
                 }
             }
@@ -2467,7 +2062,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// FTS-findable + attributed. `set_entity_embedding` + `insert_episodic_edge`
     /// are UPDATE/INSERT-OR-IGNORE, so they also cover entities that pre-existed
     /// as bare stubs (the FTS-name INSERT, by contrast, is skipped on Duplicate).
-    async fn make_pinned_entity_recallable(&self, p: PinnedEntityRecall<'_>) {
+    pub(super) async fn make_pinned_entity_recallable(&self, p: PinnedEntityRecall<'_>) {
         let PinnedEntityRecall {
             id,
             group_id,

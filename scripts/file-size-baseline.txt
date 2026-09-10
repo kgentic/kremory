@@ -152,8 +152,8 @@
 1366 crates/kremory/src/core/ingest/mod.rs
 654 crates/kremory/src/core/ingest/pipeline/deferred.rs
 209 crates/kremory/src/core/ingest/pipeline/deferred_emissions.rs
-2542 crates/kremory/src/core/ingest/pipeline/ingest_with.rs pin=TD-045
-15 crates/kremory/src/core/ingest/pipeline/mod.rs
+2137 crates/kremory/src/core/ingest/pipeline/ingest_with.rs pin=TD-045
+18 crates/kremory/src/core/ingest/pipeline/mod.rs
 259 crates/kremory/src/core/ingest/pipeline/phase1.rs
 75 crates/kremory/src/core/ingest/pipeline/types.rs
 1565 crates/kremory/src/core/ingest/tests.rs
@@ -401,6 +401,7 @@
 117 crates/kremory/tests/it/td246_forget_multi_source.rs
 109 crates/kremory/tests/it/td249_batch_skip_extraction.rs
 224 crates/kremory/tests/it/td250_archived_facts_are_reachable.rs
+150 crates/kremory/tests/it/td250_unmerge_is_reachable.rs
 101 crates/kremory/tests/it/td251_cancel_wedges_batch.rs
 140 crates/kremory/tests/it/td252_forget_namespace_erases_episodes.rs
 216 crates/kremory/tests/it/td_012_canary.rs
