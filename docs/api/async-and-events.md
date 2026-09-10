@@ -16,6 +16,18 @@ let commit: kremory::EpisodeCommit = mem.remember("Meeting notes...")
     .no_wait()    // returns after Phase 1 only
     .await?;
 
+// ⚠️ CHECK run_id BEFORE assuming there is something to wait for.
+//   Some(id) — Phase 2 is running; poll with status_of() or block with await_enrichment()
+//   None     — there was NO background work, so there is nothing to track
+//
+// You get None when nothing needed enriching — most obviously under
+// .skip_extraction(), where you supplied the facts and Phase 2 has no job.
+// status_of() on such a commit returns an error saying Phase 2 was inline,
+// rather than inventing a status. Assuming run_id is always present is the
+// mistake this note exists to prevent.
+//
+// Runnable: cargo run --example ingest_without_blocking
+
 // Poll Phase 2 status
 let status: kremory::IngestStatus = mem.status_of(&commit).await?;
 // IngestStatus: Queued | Running | Succeeded | Failed | Cancelled

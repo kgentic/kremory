@@ -58,8 +58,8 @@ let mem = Memory::with_ollama_at("http://192.168.1.5:11434", "./agent.db").await
 // OpenAI — requires $OPENAI_API_KEY; uses gpt-4o-mini + text-embedding-3-small
 let mem = Memory::with_openai("./agent.db").await?;
 
-// Anthropic — requires $ANTHROPIC_API_KEY; LLM = claude-3-haiku, embedder falls back to
-// deterministic sha256 (NOT semantic — warns at runtime; use with_openai for semantic recall)
+// Anthropic — requires $ANTHROPIC_API_KEY. LLM = claude-3-haiku.
+// ⚠️ NO EMBEDDING MODEL — see the warning below this block.
 let mem = Memory::with_anthropic("./agent.db").await?;
 ```
 
@@ -96,6 +96,44 @@ let mem = Memory::open("./agent.db")
     .with_embedder(Arc::new(my_embedder))
     .await?;
 ```
+
+### ⚠️ `with_anthropic` gives you no embedder
+
+Anthropic has no embedding API, so `with_anthropic` wires
+`DeterministicEmbeddingProvider` — an **FNV-1a hash**, not a model. The crate warns at
+runtime: *"recall is structural, NOT semantic."*
+
+Everything keeps working. It just stops being smart: semantically similar text will not
+be found, so "how do I get paid" will not match a passage about invoicing. That is the
+worst way for a system to degrade, because nothing errors.
+
+If you want Claude for reasoning **and** real semantic recall, pair it yourself:
+
+```rust ignore
+Memory::open(path)
+    .with_llm(anthropic_provider)   // Claude for extraction
+    .with_embedder(real_embedder)   // something that actually embeds
+    .await?
+```
+
+Runnable: `cargo run --example hosted_providers` — the only example that costs money.
+
+### Changing your embedding model later
+
+Embeddings are only comparable to other embeddings from the **same** model. Change model
+and every stored vector becomes noise relative to new queries — silently. Two operations
+exist and picking the wrong one is expensive:
+
+| operation | use it when |
+|---|---|
+| `backfill_episode_embeddings(batch)` | rows have **no** vector yet (you added an embedder to an existing corpus) |
+| `reembed_all_episode_embeddings(batch)` | the **model changed** — the vectors are not missing, they are wrong |
+
+⚠️ **Reaching for `backfill` after a model change is the trap.** Nothing is missing a
+vector, so it correctly finds no work, reports success, and leaves the entire corpus
+stale. Both are idempotent, so retries need no bookkeeping.
+
+Runnable: `cargo run --example changing_embedding_model`.
 
 The Tier 1 shortcuts (`with_ollama`, `with_openai`, `with_anthropic`) apply token tracking internally — no opt-in required.
 

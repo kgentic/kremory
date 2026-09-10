@@ -11,6 +11,32 @@ runs two sub-phases:
 2. **Consolidation** — graph-global cleanup: four ops — community detection, cross-episode entity
    merge, supersession sweep, fact archival.
 
+### Why you need it — what extraction actually leaves behind
+
+Language models do not produce canonical output. One sentence routinely yields the same
+fact twice under different casing, plus the occasional nonsense triple. From a single
+input, *"Ines runs the harbour pilot service at Lysfjord"*:
+
+```text
+Ines works_at lysfjord
+ines works_at Lysfjord
+```
+
+⚠️ **This is not a small-model artefact.** The example above is from OpenAI's
+`gpt-4o-mini`; a local `gemma4:e4b` does the same. Paying more per token buys better
+triples, not canonical casing. Alias resolution and cross-episode merge are what
+reconcile them, and that is `dream()`.
+
+**It is deliberately conservative.** On a small graph it will report `merged: 0`, because
+two mentions differing only in casing with one supporting sentence each is not enough
+evidence to justify an irreversible merge. That is correct behaviour, not a failure — a
+memory that merges eagerly on thin evidence corrupts itself quietly. Give it a real
+corpus and the numbers stop being zero.
+
+Runnable: `cargo run --example dream_on_a_schedule` for running it automatically, and
+`cargo run --example agent_memory_with_ollama` to see the raw extraction output it exists
+to clean up.
+
 **All ops default ON.** This is safe because every destructive mutation is reversible (ADR-073 —
 see [Reversibility and deletion](./reversibility.md)): you can always SEE what `dream()` changed and UNDO it. Cross-episode merge is the one
 exception to "ON = commits" — it defaults to **Shadow** mode (computes + reports merge decisions

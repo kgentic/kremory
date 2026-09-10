@@ -113,8 +113,9 @@ let dfact = mem.delete_fact(fact_id).execute().await?;   // fact_id is global
 mem.undo_delete_fact(dfact.mutation_id).execute().await?;
 
 // Explicitly bound a fact's world-time validity window (consumer-driven supersession).
-// .at(valid_to) is REQUIRED (no silent default). The next dream() supersession sweep closes it,
-// or .close_now() retires already-past-dated bounds inline.
+// .at(valid_to) is REQUIRED (no silent default).
+//
+// ⚠️ .at() ALONE IS USUALLY NOT WHAT YOU WANT — see the note below this block.
 let outcome = mem.supersede(fact_id)
     .at(chrono::Utc::now())
     .close_now()
@@ -122,6 +123,31 @@ let outcome = mem.supersede(fact_id)
     .execute()
     .await?;   // SupersedeOutcome::{Bounded { retired } | RejectedTimeInversion | NotFound}
 ```
+
+### ⚠️ `.at()` without `.close_now()` looks like it did nothing
+
+Setting a bound records *when* the fact stopped being true. It does **not** retire the
+fact — that happens on the next `dream()` supersession sweep, or immediately if you add
+`.close_now()`.
+
+So a correction applied with `.at(Utc::now())` alone leaves the old fact still showing up
+in a default recall. Nothing errored, the call returned `Ok`, and the record still reads
+as current. Anyone verifying their own correction will conclude supersession is broken.
+
+```rust ignore
+// Records the bound, but the fact still reads as current until dream() runs:
+mem.supersede(fact_id).at(Utc::now()).execute().await?;
+
+// Records the bound AND retires it now — what a correction usually means:
+mem.supersede(fact_id).at(Utc::now()).close_now().execute().await?;
+```
+
+`.close_now()` only retires bounds already in the past. A **future-dated** bound cannot
+be retired yet, so it returns `Bounded { retired: 0 }` and waits for a later sweep — the
+count is in-band precisely so you can see the deferral rather than assume it failed.
+
+Runnable: `cargo run --example correcting_the_record`, and
+`cargo run --example undoing_a_correction` for when the correction was itself wrong.
 
 `edit_entity` / `delete_*` / `supersede` are all `#[must_use]` builders — nothing happens until you
 call `.execute()`. Like `dream()`, `supersede()` is rejected on `AppendOnly` namespaces.
@@ -135,14 +161,53 @@ This explicit terminal makes the intent visible in code review.
 
 ```rust
 // Forget everything in the default namespace
-let deleted: u64 = mem.forget().execute().await?;
-println!("{deleted} records deleted");
+let entities_removed: u64 = mem.forget().execute().await?;
 
 // Forget a specific namespace
-let deleted = mem.forget()
+let entities_removed = mem.forget()
     .in_namespace(Namespace::new("tenant-acme"))
     .execute()
     .await?;
+
+// Right-to-erasure: everything ONE source contributed, leaving other sources intact
+let entities_removed = mem.forget()
+    .in_namespace(ns)
+    .by_source_id("support-chat-4417")
+    .execute()
+    .await?;
 ```
+
+### ⚠️ The return value counts ENTITIES, so a successful erasure often returns `0`
+
+Shared-entity preservation pins any subject that also appears in **another** source — the
+normal case, since the same person appears in several documents. So a complete, correct
+`by_source_id` erasure removes that source's facts and returns **0 entities**.
+
+```rust ignore
+// WRONG — a full erasure legitimately reports 0
+if removed > 0 { println!("erased"); }
+```
+
+Treat a successful `Ok(_)` as the erasure having happened. The count tells you how many
+entities became orphaned, not whether the operation worked. A richer return shape is
+tracked but would be a breaking change.
+
+Runnable: `cargo run --example gdpr_erasure_by_source` — it asserts both halves, that the
+erased source is gone **and** that another source's facts about the same person survive.
+Over-deletion is also a failure, and it is the half people forget to test.
+
+### Which tool for which situation
+
+Four operations, and picking the wrong one is the usual mistake:
+
+| you want to say | use | reversible? |
+|---|---|---|
+| "erase everything this SOURCE contributed" (a data-subject request) | `forget().by_source_id(..)` | no |
+| "this USED to be true" (a correction) | `supersede(fact_id).at(..).close_now()` | yes — `unsupersede` |
+| "the correction was itself wrong" | `unsupersede(fact_id)` | yes — supersede again |
+| "this should never have been recorded" | `delete_fact(fact_id)` | yes — `undo_delete_fact` |
+
+`fact_id` comes from `RetrievedFact::fact_id` on the recall path; `mutation_id` for the
+undos comes from `list_mutations()`.
 
 ---
