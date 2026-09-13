@@ -6,10 +6,12 @@
 mod deferred;
 mod deferred_emissions;
 mod entity_type_registry;
+mod entity_upsert;
+mod fact_rules;
 mod forward_refs;
 mod ingest_with;
-mod pre_pinned;
 mod phase1;
+mod pre_pinned;
 mod types;
 
 pub use deferred::IngestDeferredParams;

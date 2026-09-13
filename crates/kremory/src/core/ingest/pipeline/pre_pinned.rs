@@ -234,10 +234,8 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             "kremory.with_facts.consumer_pinned_stamp_failed"
                         );
                     } else {
-                        metrics::counter!(
-                            "kremory.with_facts.consumer_pinned_tier_stamped_total"
-                        )
-                        .increment(1);
+                        metrics::counter!("kremory.with_facts.consumer_pinned_tier_stamped_total")
+                            .increment(1);
                     }
                     // Symmetric protection: when a pinned fact references an object
                     // entity (object_id = Some), stamp it

@@ -8,25 +8,27 @@ use metrics::{counter, histogram};
 use crate::core::config::{ContentType, ResolutionStrategy};
 use crate::core::contradiction::{DetectParams, TwoPoolDetector};
 use crate::core::embed_prefix::{document_embed_text, query_embed_text};
-use crate::core::extraction::normalize_label;
 use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::graph::{
     EpisodeInsert, FactInsert, InsertEntityWithGroupParams, InsertEpisodicEdgeParams,
-    InvalidateFactWithReasonParams, PriorEpisodesParams, SetEntityNerConfidenceParams,
-    UpsertEntityWithGroupParams,
+    InvalidateFactWithReasonParams, PriorEpisodesParams,
 };
 use crate::core::intelligence::{
-    EntityExtractor, EntityResolver, ExtractedEntity, ExtractedFact, ExtractionContext,
-    ExtractionResult, ResolutionResult,
+    EntityExtractor, ExtractedEntity, ExtractedFact, ExtractionContext, ExtractionResult,
+    ResolutionResult,
 };
 use crate::core::provider::{ChatProvider, EmbeddingProvider, TokenUsage};
 use crate::core::resolver::{entity_name, normalize_name, CascadeResolver, UnionFind};
 use crate::core::search::{FtsSearchFactsParams, SearchFilters, VectorSearchEntitiesNoCountParams};
 
 use super::deferred_emissions::{flush_deferred_emissions, DeferredEmission};
+use super::entity_upsert::{EntityUpsertParams, Phase1EntityState};
+use super::fact_rules::{
+    contradiction_labels, is_within_episode_duplicate, is_within_episode_multivalue,
+    pool_b_sharing_an_entity, resolve_fact_endpoints, EpisodeTriple, FactEndpoints,
+};
 use super::forward_refs::forward_reference_names;
 use super::pre_pinned::PrePinnedWriteParams;
-use crate::core::ingest::helpers::extract_context_snippet;
 use crate::core::ingest::{Engine, IngestionResult, SourceParams};
 
 /// Bundled call-context parameters for [`Engine::ingest_with`] — args-as-object
@@ -61,10 +63,10 @@ pub(super) struct PinnedEntityRecall<'a> {
 /// to keep the function under clippy's too_many_arguments threshold. All fields
 /// share the `'a` borrow of the pre-batch existing-entity slice so the returned candidate refs
 /// tie back to it.
-struct BlockCandidatesParams<'a> {
-    extracted: &'a ExtractedEntity,
-    existing_entities: &'a [crate::core::schema::Entity],
-    group_id: Option<&'a str>,
+pub(super) struct BlockCandidatesParams<'a> {
+    pub(super) extracted: &'a ExtractedEntity,
+    pub(super) existing_entities: &'a [crate::core::schema::Entity],
+    pub(super) group_id: Option<&'a str>,
 }
 
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
@@ -91,7 +93,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// Returned refs borrow `existing_entities`, keeping the candidate universe
     /// == the pre-batch existing set so the downstream stub-check + union-find
     /// (which reference `existing_entities` by id) stay valid.
-    async fn block_resolution_candidates<'a>(
+    pub(super) async fn block_resolution_candidates<'a>(
         &self,
         params: BlockCandidatesParams<'a>,
     ) -> Vec<&'a crate::core::schema::Entity> {
@@ -816,453 +818,33 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             let mut entity_loop_ids: HashSet<String> = HashSet::new();
 
             // ── Phase 1: entity loop (Bug B snippet + Bug A episodic_edge) ──────────
-            for extracted in &all_entities {
-                // The over-rejection guard
-                // (`is_canonical_entity_type` + `allowed_entity_types` policy) is
-                // DELETED under the L1 integer-ID design. Live diagnostic
-                // showed it rejecting 14 "Entity" emissions per
-                // mock_interview ingest — id=0 "Entity" is the legitimate
-                // Graphiti-pattern catch-all, NOT a placeholder to drop.
-                //
-                // Replacement guardrails (all already wired):
-                //   - L3 validate_or_fallback bounds-checks emitted entity_type_id
-                //   - L4 disambiguation handles surface-form duplicates
-                //   - L5 vector canonicalization merges variant spellings
-                //   - L7 dream-phase reclassification upgrades id=0 entities once
-                //     corpus accumulates 3+ episodes
-                //
-                // We still normalise the label string so downstream resolver +
-                // FTS get the canonical case ("ORG" → "Organisation").
-                let label = normalize_label(&extracted.label);
-
-                // Which existing id (if any) `extracted`
-                // resolves to, computed differently per strategy.
-                //
-                // - `Batched` (default): Pass 1 (deterministic tiers) + Pass 2
-                //   (batched LLM call) already ran BEFORE this transaction —
-                //   see `batched_resolved` above. This arm is a pure lookup;
-                //   it must NOT call `block_resolution_candidates` again
-                //   (that already ran once per entity in Pass 1).
-                // - `Pairwise`: the earlier behaviour, unchanged. It
-                //   resolves `extracted` only against a bounded
-                //   candidate block (exact-name ∪ embedding-ANN top-k), not
-                //   every existing entity — collapses the LLM
-                //   `ResolutionVerdict` fan-out from O(new × existing) to
-                //   O(k). No-op on ≤k-entity groups.
-                let resolved_to: Option<String> = match self.config.resolution_strategy {
-                    ResolutionStrategy::Batched => batched_resolved
-                        .get(&normalize_name(&extracted.name))
-                        .cloned(),
-                    ResolutionStrategy::Pairwise => {
-                        let candidates = self
-                            .block_resolution_candidates(BlockCandidatesParams {
-                                extracted,
-                                existing_entities: &existing_entities,
-                                group_id,
-                            })
-                            .await;
-                        metrics::counter!("kremory.resolution.candidates_considered_total")
-                            .increment(candidates.len() as u64);
-                        metrics::counter!("kremory.resolution.blocked_out_total").increment(
-                            existing_entities.len().saturating_sub(candidates.len()) as u64,
-                        );
-
-                        let mut found: Option<String> = None;
-                        for existing in candidates.iter().copied() {
-                            let result = match resolver.resolve(extracted, existing).await {
-                                Ok(r) => r,
-                                Err(e) => break 'phases Err(e),
-                            };
-                            if result == ResolutionResult::Same {
-                                found = Some(existing.id.clone());
-                                break;
-                            }
-                        }
-                        found
-                    }
-                };
-
-                let entity_id = if let Some(existing_id) = resolved_to {
-                    // Merged with existing entity
-                    union_find.make_set(&existing_id);
-                    let norm = normalize_name(&extracted.name);
-                    union_find.make_set(&norm);
-                    union_find.union(&norm, &existing_id);
-                    merged_entities.push((existing_id.clone(), extracted.name.clone()));
-
-                    // Bug E (F-4): stub promotion — if the existing entity is a stub
-                    // (entity_type_id=0, properties.stub=true), overwrite it with the
-                    // real entity_type_id and a fresh context snippet. The upsert removes
-                    // the stub flag because the new properties map does not carry it.
-                    // First-mention-wins policy still applies for non-stubs.
-                    let existing_is_stub = existing_entities
-                        .iter()
-                        .find(|e| e.id == existing_id)
-                        .map(|e| {
-                            e.entity_type_id == 0
-                                && e.properties
-                                    .get("stub")
-                                    .and_then(|v| v.as_bool())
-                                    .unwrap_or(false)
-                        })
-                        .unwrap_or(false);
-
-                    if existing_is_stub {
-                        let context_snippet = extract_context_snippet(text, &extracted.name, 200);
-                        let promoted_props = serde_json::json!({
-                            "context": context_snippet,
-                            "name": extracted.name.clone()
-                        });
-                        // Open vocabulary: register novel type label on the fly.
-                        // If registration itself fails (DB error), fall back to id=0
-                        // and emit a swallow counter — the stub
-                        // promotion is best-effort and must not abort the transaction.
-                        let entity_type_id =
-                            match crate::core::entity_types::label_to_id_or_register(
-                                crate::core::entity_types::LabelToIdOrRegisterParams {
-                                    conn: &self.graph.conn,
-                                    group_id: group_id.unwrap_or("default"),
-                                    registry: &registry,
-                                    label: &label,
-                                },
-                            )
-                            .await
-                            {
-                                Ok(id) => id,
-                                Err(_) => {
-                                    metrics::counter!(
-                                        "rql.entity_types.registration_swallowed_total",
-                                        "site" => "stub_promotion",
-                                    )
-                                    .increment(1);
-                                    0
-                                }
-                            };
-                        // `.ok()` — promotion is best-effort; failure to promote
-                        // leaves the stub row but does not abort the transaction.
-                        self.graph
-                            .upsert_entity_with_group(UpsertEntityWithGroupParams {
-                                id: &existing_id,
-                                entity_type_id,
-                                properties: promoted_props,
-                                group_id,
-                            })
-                            .await
-                            .ok();
-                        // Stub-promotion path: a row that was previously source=stub
-                        // is now being filled with LLM-extracted content. Count it as
-                        // a NET-NEW llm-source write (the stub row is no longer a
-                        // stub after this upsert).
-                        // Claims a persisted row — replayed after the outer commit.
-                        deferred.push(DeferredEmission::EntityPersisted {
-                            source: "llm",
-                            via: Some("stub_promotion"),
-                        });
-                        tracing::debug!(
-                            target: "kremory.ingest.stub",
-                            id = %existing_id,
-                            label = %label,
-                            entity_type_id,
-                            "promoted stub entity to real entity"
-                        );
-                    }
-
-                    // Episodic edge for merged entity (this episode now references it).
-                    // Fires on Ok only (insert error is soft `.ok()` precedent). ids
-                    // in tracing fields only, NOT metric labels.
-                    // Migration 006: thread the ingest namespace so the
-                    // composite FK (entity_id, entity_group_id) resolves — the
-                    // entity was just merged/promoted under `group_id`, so the edge
-                    // must reference the same namespace or it silently FK-fails.
-                    let mention_ok = self
-                        .graph
-                        .insert_episodic_edge(InsertEpisodicEdgeParams {
-                            episode_id,
-                            entity_id: &existing_id,
-                            entity_group_id: group_id,
-                            role: "mention",
-                        })
-                        .await
-                        .is_ok();
-                    // Captured, not fired — replayed after the outer commit.
-                    deferred.push(DeferredEmission::EntityMention {
-                        entity_id: existing_id.clone(),
-                        name: extracted.name.clone(),
-                        mention_ok,
-                        via: "merged",
-                    });
-                    if mention_ok {
-                        entity_loop_ids.insert(existing_id.clone());
-                    }
-
-                    existing_id
-                } else {
-                    // ── L4: graph-time disambiguation (Cognee pattern) ──────────────────
-                    // Before inserting a new entity row, probe cosine similarity against
-                    // existing entities in the same group_id.  This catches "Alice Johnson"
-                    // vs "Alice J." style variants that the string-match resolver (step 4)
-                    // misses because they are not lexically close enough.
-                    //
-                    // Outcomes:
-                    //   Merge         → reuse the existing entity_id (same real-world entity)
-                    //   PotentialAlias → insert new row AND a `potential_alias` fact edge
-                    //   New           → proceed as normal (no existing match)
-                    //
-                    let l4_outcome = match crate::core::disambiguation::disambiguate(
-                        crate::core::disambiguation::DisambiguateParams {
-                            entity_name: &extracted.name,
-                            group_id,
-                            graph: &self.graph,
-                        },
-                        &*self.embedder,
-                        self.config.search.embed_task_prefix_enabled,
-                    )
-                    .await
-                    {
-                        Ok(o) => o,
-                        Err(e) => break 'phases Err(e),
-                    };
-
-                    // ── L4 Merge path ───────────────────────────────────────────────────
-                    if let crate::core::disambiguation::DisambiguationOutcome::Merge {
-                        existing_id: ref l4_existing_id,
-                        ..
-                    } = l4_outcome
-                    {
-                        let norm = normalize_name(&extracted.name);
-                        union_find.make_set(l4_existing_id);
-                        union_find.make_set(&norm);
-                        union_find.union(&norm, l4_existing_id);
-                        merged_entities.push((l4_existing_id.clone(), extracted.name.clone()));
-                        // Episodic edge: this episode now references the existing entity.
-                        // Migration 006: thread the ingest namespace so
-                        // the composite FK resolves for the L4-merged entity (stored
-                        // under `group_id`).
-                        let mention_ok = self
-                            .graph
-                            .insert_episodic_edge(InsertEpisodicEdgeParams {
-                                episode_id,
-                                entity_id: l4_existing_id,
-                                entity_group_id: group_id,
-                                role: "mention",
-                            })
-                            .await
-                            .is_ok();
-                        // Captured, not fired — replayed after the outer commit.
-                        deferred.push(DeferredEmission::EntityMention {
-                            entity_id: l4_existing_id.clone(),
-                            name: extracted.name.clone(),
-                            mention_ok,
-                            via: "l4_merge",
-                        });
-                        if mention_ok {
-                            entity_loop_ids.insert(l4_existing_id.clone());
-                        }
-                        name_to_id.insert(norm, l4_existing_id.clone());
-                        // Skip the rest of the else block — entity_id is the existing one.
-                        // SAFETY: the outer `let entity_id = if ... { ... } else { ... };`
-                        // expression needs a value; we push to name_to_id above and
-                        // `continue` to the next extracted entity below.
-                        continue;
-                    }
-
-                    // ── New or PotentialAlias — insert new entity row ────────────────────
-                    let entity_id = normalize_name(&extracted.name);
-
-                    // Bug B: capture verbatim first-mention snippet (±100 chars around the
-                    // entity name in the source text).  First-mention wins: this branch only
-                    // runs for genuinely new entity rows.
-                    let entity_context =
-                        extract_context_snippet(text, &extracted.name, 100);
-                    let props_with_context = serde_json::json!({
-                        "context": entity_context,
-                        "name": extracted.name.clone(),
-                    });
-
-                    // Open vocabulary: register novel type label on the fly.
-                    // Unlike the stub-promotion site, the insert-new path is NOT
-                    // best-effort — registration failure propagates as a hard
-                    // ingest failure (matches the existing insert_entity_with_group
-                    // error path that breaks 'phases below).
-                    let entity_type_id = match crate::core::entity_types::label_to_id_or_register(
-                        crate::core::entity_types::LabelToIdOrRegisterParams {
-                            conn: &self.graph.conn,
-                            group_id: group_id.unwrap_or("default"),
-                            registry: &registry,
-                            label: &label,
-                        },
-                    )
-                    .await
-                    {
-                        Ok(id) => id,
-                        Err(e) => break 'phases Err(e),
-                    };
-                    if let Err(e) = self
-                        .graph
-                        .insert_entity_with_group(InsertEntityWithGroupParams {
-                            id: &entity_id,
-                            entity_type_id,
-                            properties: props_with_context,
-                            group_id,
-                        })
-                        .await
-                    {
-                        // A UNIQUE violation here means the row ALREADY
-                        // EXISTS — benign, and exactly what the sibling stub
-                        // path at :1114 already concluded ("that is fine — a
-                        // real row is present"). This path previously failed the
-                        // ENTIRE ingest on it, because the raw libsql error was
-                        // indistinguishable from a genuine DB failure. Observed:
-                        // 1 of 8 LongMemEval sessions HTTP 500'd on
-                        // `UNIQUE constraint failed: entities.id, entities.group_id`.
-                        //
-                        // The reachable cause is the extractor emitting the same
-                        // NORMALISED name twice within one episode — this path
-                        // believes the entity is new because it just decided so.
-                        //
-                        // NOT a blanket swallow: only the unique case
-                        // is tolerated, and it is COUNTED so the rate stays
-                        // visible. Every other error still fails the ingest.
-                        if e.is_unique_violation() {
-                            metrics::counter!(
-                                "kremory.ingest.entity_insert_duplicate_tolerated_total",
-                                "via" => "insert_new",
-                            )
-                            .increment(1);
-                            tracing::warn!(
-                                entity_id = %entity_id,
-                                "kremory.ingest.entity_insert_duplicate — row already \
-                                 exists; continuing. Extractor likely emitted \
-                                 the same normalised name twice in one episode."
-                            );
-                        } else {
-                            break 'phases Err(e);
-                        }
-                    }
-                    // Claims a persisted row — replayed after the outer commit.
-                    deferred.push(DeferredEmission::EntityPersisted {
-                        source: "llm",
-                        via: Some("insert_new"),
-                    });
-
-                    // Persist GLiNER span confidence when present.
-                    // `properties["confidence"]` is written by ner.rs for Phase 1 GLiNER
-                    // extractions; absent on LLM-only paths. Best-effort — warn only.
-                    if let Some(conf_val) = extracted.properties.get("confidence") {
-                        if let Some(conf_f64) = conf_val.as_f64() {
-                            let conf_f32 = conf_f64 as f32;
-                            if let Err(e) = self
-                                .graph
-                                .set_entity_ner_confidence(SetEntityNerConfidenceParams {
-                                    id: &entity_id,
-                                    group_id,
-                                    confidence: conf_f32,
-                                })
-                                .await
-                            {
-                                tracing::warn!(
-                                    entity_id = %entity_id,
-                                    error = %e,
-                                    "kremory.ingest.ner_confidence_write_failed"
-                                );
-                            }
-                        }
-                    }
-
-                    // Embed and store the entity name vector for L4 disambiguation probing.
-                    // This is a WRITE into `entities.embedding` — document-prefix it.
-                    let embedding = match self
-                        .embedder
-                        .embed(&document_embed_text(
-                            &extracted.name,
-                            self.config.search.embed_task_prefix_enabled,
-                        ))
-                        .await
-                    {
-                        Ok(v) => v,
-                        Err(e) => break 'phases Err(e),
-                    };
-                    // SCOPED write. This previously used the
-                    // namespace-unscoped `set_entity_embedding`, whose SQL matches
-                    // `WHERE id = ?` alone — so ingesting an entity named X into
-                    // namespace A silently overwrote X's embedding in EVERY other
-                    // namespace holding that name. 90 entity names exist in more
-                    // than one namespace on the shipped LoCoMo corpus, and
-                    // `entities.embedding` is a live retrieval signal, so the
-                    // corruption was silent and cross-tenant.
-                    //
-                    // `group_id.unwrap_or("default")` mirrors the sibling
-                    // `insert_entity_with_group` call above exactly, so the write
-                    // lands on the row this ingest just created and on no other.
-                    if let Err(e) = self
-                        .graph
-                        .set_entity_embedding_in_group(
-                            crate::core::graph::SetEntityEmbeddingParams {
-                                id: &entity_id,
-                                group_id: group_id.unwrap_or("default"),
-                                embedding: &embedding,
-                            },
-                        )
-                        .await
-                    {
-                        break 'phases Err(e);
-                    }
-
-                    // ── L4 PotentialAlias: record the meta-edge fact ─────────────────────
-                    // Best-effort — alias recording failure does not abort ingest.
-                    if let crate::core::disambiguation::DisambiguationOutcome::PotentialAlias {
-                        existing_id: ref alias_target_id,
-                        similarity: alias_sim,
-                    } = l4_outcome
-                    {
-                        // `.ok()` — best-effort; duplicate alias entries are swallowed
-                        // inside `insert_potential_alias_fact`.
-                        crate::core::disambiguation::insert_potential_alias_fact(
-                            crate::core::disambiguation::InsertPotentialAliasFactParams {
-                                graph: &self.graph,
-                                new_entity_id: &entity_id,
-                                existing_id: alias_target_id,
-                                similarity: alias_sim,
-                                provenance: crate::core::disambiguation::AliasProvenance {
-                                    source_episode_id: Some(episode_id),
-                                    group_id,
-                                },
-                            },
-                        )
-                        .await
-                        .ok();
-                    }
-
-                    // Episodic edge for newly inserted entity.
-                    // Migration 006: thread `group_id` — the entity was just inserted
-                    // via `insert_entity_with_group(.., group_id)` above, so the edge
-                    // must reference the same namespace for the composite FK to resolve.
-                    let mention_ok = self
-                        .graph
-                        .insert_episodic_edge(InsertEpisodicEdgeParams {
-                            episode_id,
-                            entity_id: &entity_id,
-                            entity_group_id: group_id,
-                            role: "mention",
-                        })
-                        .await
-                        .is_ok();
-                    // Captured, not fired — replayed after the outer commit.
-                    deferred.push(DeferredEmission::EntityMention {
-                        entity_id: entity_id.clone(),
-                        name: extracted.name.clone(),
-                        mention_ok,
-                        via: "insert_new",
-                    });
-                    if mention_ok {
-                        entity_loop_ids.insert(entity_id.clone());
-                    }
-
-                    upserted_entities.push(entity_id.clone());
-                    entity_id
-                };
-
-                name_to_id.insert(normalize_name(&extracted.name), entity_id);
+            // The per-entity upsert/merge pass. 448 lines of it used to sit inline
+            // here, threading six pieces of mutable state through a single loop body
+            // (TD-045). `break 'phases Err(e)` becomes an early `Err` return inside
+            // the extracted method and the same labelled break at THIS call site, so
+            // an error still abandons the whole phase block exactly as before.
+            if let Err(e) = self
+                .upsert_extracted_entities(EntityUpsertParams {
+                    all_entities: &all_entities,
+                    existing_entities: &existing_entities,
+                    batched_resolved: &batched_resolved,
+                    resolver: &resolver,
+                    registry: &registry,
+                    group_id,
+                    episode_id,
+                    text,
+                    state: Phase1EntityState {
+                        union_find: &mut union_find,
+                        upserted_entities: &mut upserted_entities,
+                        merged_entities: &mut merged_entities,
+                        name_to_id: &mut name_to_id,
+                        entity_loop_ids: &mut entity_loop_ids,
+                        deferred: &mut deferred,
+                    },
+                })
+                .await
+            {
+                break 'phases Err(e);
             }
 
             // ── Phase 2: detect contradictions and store facts ───────────────────────
@@ -1301,28 +883,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             };
 
             for fact in &all_facts {
-                // Resolve subject and object IDs through the merge map
-                let subject_id = name_to_id
-                    .get(&normalize_name(&fact.subject))
-                    .cloned()
-                    .unwrap_or_else(|| normalize_name(&fact.subject));
-
-                let object_id = if fact.is_entity_ref {
-                    Some(
-                        name_to_id
-                            .get(&normalize_name(&fact.object))
-                            .cloned()
-                            .unwrap_or_else(|| normalize_name(&fact.object)),
-                    )
-                } else {
-                    None
-                };
-
-                let object_value = if !fact.is_entity_ref {
-                    Some(fact.object.as_str())
-                } else {
-                    None
-                };
+                // Resolve subject and object IDs through the merge map. The RULE
+                // is a pure function with its own tests (`fact_rules.rs`).
+                let FactEndpoints {
+                    subject_id,
+                    object_id,
+                    object_value,
+                } = resolve_fact_endpoints(fact, &name_to_id);
+                let object_value = object_value.as_deref();
 
                 // Get candidate pools for contradiction detection
                 let pool_a = match self
@@ -1347,49 +915,14 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     Ok(hits) => hits,
                     Err(e) => break 'phases Err(e),
                 };
-                // Keep only candidates that SHARE AN ENTITY with the new
-                // fact. The FTS above matches on the PREDICATE alone, so without
-                // this it returns other subjects' facts entirely — "Alice likes
-                // tea" pulls in "Bob likes coffee" and buys a full LLM
-                // round-trip to ask whether they contradict. They cannot.
-                //
-                // Measured before adding this filter (Groq, 8 sessions,
-                // counters below):
-                //   pool_a contributed to 85 LLM-reachable checks -> 33 contradictions + 4 duplicates
-                //   pool_b contributed to 63 LLM-reachable checks ->  0 contradictions,  0 duplicates
-                // 0/63 gives a 95% CI upper bound of 4.8% on pool_b's hit rate,
-                // against ~43% for pool_a. It was pure cost.
-                //
-                // This is a COST fix, not a capability removal: same-subject
-                // contradiction is unaffected (that is pool_a's job, and pool_b
-                // candidates sharing the subject survive the filter). What it
-                // drops is the CROSS-ENTITY case, which was never designed —
-                // the pool_b search is documented above as a "semantically
-                // related facts" recall heuristic, and genuine cross-entity
-                // contradiction ("X is CEO of Acme" vs "Y is CEO of Acme")
-                // needs predicate CARDINALITY, which kremory does not model.
-                // Build that deliberately if wanted; do not leave it as an
-                // accident of a text search.
-                //
-                // The `contradiction_outcome_total{source=...}` counter added
-                // alongside this keeps the decision falsifiable: if pool_b ever
-                // starts earning its keep, `source="pool_b"` will show it.
-                let pool_b: Vec<crate::core::schema::Fact> = pool_b_hits
-                    .into_iter()
-                    .map(|h| h.item)
-                    .filter(|f| {
-                        let shares_subject = f.subject_id == subject_id;
-                        let shares_object = match (&f.object_id, &object_id) {
-                            (Some(a), Some(b)) => a == b,
-                            _ => false,
-                        };
-                        // A candidate whose OBJECT is our SUBJECT (or vice
-                        // versa) is still about the same entity — keep it.
-                        let cross_ref = f.object_id.as_deref() == Some(subject_id.as_str())
-                            || object_id.as_deref() == Some(f.subject_id.as_str());
-                        shares_subject || shares_object || cross_ref
-                    })
-                    .collect();
+                // Keep only candidates that SHARE AN ENTITY with the new fact.
+                // The RULE — and the measured cost argument behind it — is a pure
+                // function with its own tests (`fact_rules.rs`).
+                let pool_b = pool_b_sharing_an_entity(
+                    pool_b_hits.into_iter().map(|h| h.item).collect(),
+                    &subject_id,
+                    object_id.as_deref(),
+                );
 
                 // Run contradiction detection (skipped when disabled —
                 // no LLM call, no invalidation; the fact below is still stored)
@@ -1427,35 +960,15 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // predicate-only arm earns its cost — the question that
                 // otherwise has to be settled by opinion.
                 //
-                // Cardinality is bounded: 3 outcomes x 3 sources = 9 series.
+                // Cardinality is bounded: 3 outcomes x 4 sources = 12 series.
+                // The labelling RULE is a pure function with its own tests
+                // (`fact_rules.rs`).
                 {
-                    let a_ids: std::collections::HashSet<i64> =
-                        pool_a.iter().map(|f| f.id).collect();
-                    let (mut from_a, mut from_b) = (false, false);
-                    for id in contradiction_result
-                        .contradictions
-                        .iter()
-                        .chain(contradiction_result.duplicates.iter())
-                    {
-                        if a_ids.contains(id) {
-                            from_a = true;
-                        } else {
-                            from_b = true;
-                        }
-                    }
-                    let source = match (from_a, from_b) {
-                        (true, true) => "mixed",
-                        (true, false) => "pool_a",
-                        (false, true) => "pool_b",
-                        (false, false) => "none",
-                    };
-                    let outcome = if !contradiction_result.contradictions.is_empty() {
-                        "contradiction"
-                    } else if !contradiction_result.duplicates.is_empty() {
-                        "duplicate"
-                    } else {
-                        "no_conflict"
-                    };
+                    let (outcome, source) = contradiction_labels(
+                        &pool_a,
+                        &contradiction_result.contradictions,
+                        &contradiction_result.duplicates,
+                    );
                     metrics::counter!(
                         "kremory.ingest.contradiction_outcome_total",
                         "outcome" => outcome,
@@ -1586,13 +1099,16 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // temporally-ordered mechanism and is unaffected.
                 //
                 // Purely a client-side filter on data already fetched; no extra DB
-                // round-trip is needed.
-                let within_episode_duplicate = pool_a.iter().any(|f| {
-                    f.source_episode_id == Some(episode_id)
-                        && f.object_id.as_deref() == object_id.as_deref()
-                        && f.object_value.as_deref() == object_value
-                });
-                if within_episode_duplicate {
+                // round-trip is needed. The RULE — full triple, not the pair — is
+                // a pure function with its own tests (`fact_rules.rs`).
+                if is_within_episode_duplicate(
+                    &pool_a,
+                    EpisodeTriple {
+                        episode_id,
+                        object_id: object_id.as_deref(),
+                        object_value,
+                    },
+                ) {
                     let ns = group_id.unwrap_or("default");
                     // Renamed from `within_episode_contradiction`: the check
                     // now fires only on an exact repeated triple, which is a duplicate,
@@ -1628,10 +1144,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // asserts multiple DISTINCT objects for the same subject+predicate. Data
                 // loss is irreversible; detection is additive — so measure the phenomenon
                 // first, then design policy against real counts instead of assumptions.
-                let within_episode_multivalue = pool_a
-                    .iter()
-                    .any(|f| f.source_episode_id == Some(episode_id));
-                if within_episode_multivalue {
+                if is_within_episode_multivalue(&pool_a, episode_id) {
                     let ns = group_id.unwrap_or("default");
                     metrics::counter!(
                         "rql.ingest.within_episode_multivalue",

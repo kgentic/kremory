@@ -30,10 +30,7 @@ pub(super) fn forward_reference_names(
     entities: &[ExtractedEntity],
     facts: &[ExtractedFact],
 ) -> Vec<String> {
-    let extracted: HashSet<String> = entities
-        .iter()
-        .map(|e| normalize_name(&e.name))
-        .collect();
+    let extracted: HashSet<String> = entities.iter().map(|e| normalize_name(&e.name)).collect();
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut out: Vec<String> = Vec::new();
@@ -116,15 +113,16 @@ mod tests {
                 fact("Bergen", "Lysfjord", true),
             ],
         );
-        assert_eq!(got, vec![normalize_name("Lysfjord"), normalize_name("Bergen")]);
+        assert_eq!(
+            got,
+            vec![normalize_name("Lysfjord"), normalize_name("Bergen")]
+        );
     }
 
     #[test]
     fn order_is_first_seen_because_the_inserts_and_their_metrics_follow_it() {
-        let got = forward_reference_names(
-            &[],
-            &[fact("Zulu", "x", false), fact("Alpha", "y", false)],
-        );
+        let got =
+            forward_reference_names(&[], &[fact("Zulu", "x", false), fact("Alpha", "y", false)]);
         assert_eq!(
             got,
             vec![normalize_name("Zulu"), normalize_name("Alpha")],
