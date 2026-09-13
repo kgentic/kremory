@@ -5,18 +5,23 @@
 //! expression inside a 510-line loop that also opens transactions, calls an LLM
 //! contradiction detector and writes rows — so the only way to ask "does the
 //! pool_b filter keep a cross-referencing fact?" was to run a full ingest against
-//! a database with a live model and infer the answer from what landed. Three of
-//! the five encode a measured, load-bearing decision (the pool_b cost filter, the
+//! a database with a live model and infer the answer from what landed. Four of
+//! the six encode a measured, load-bearing decision (the pool_b cost filter, the
 //! full-triple duplicate check, the outcome/source labelling that keeps the cost
-//! filter falsifiable), and none of them could be checked directly.
+//! filter falsifiable, and the refusal to emit a contradiction payload whose prior
+//! fact cannot be evidenced), and none of them could be checked directly.
 //!
 //! Nothing here touches `self`, the graph or the network. The loop keeps the I/O.
 
 use std::collections::HashSet;
 
+use chrono::{DateTime, Utc};
+
+use crate::core::error::ContradictionResolution;
 use crate::core::intelligence::ExtractedFact;
 use crate::core::resolver::normalize_name;
 use crate::core::schema::Fact;
+use crate::core::sink::{ContradictionDetected, EntityId, SinkFact};
 
 /// Where a fact's subject and object point once the merge map has had its say.
 ///
@@ -190,6 +195,87 @@ pub(super) fn is_within_episode_multivalue(pool_a: &[Fact], episode_id: i64) -> 
     pool_a
         .iter()
         .any(|f| f.source_episode_id == Some(episode_id))
+}
+
+/// Everything [`contradiction_event`] needs to describe a supersession.
+///
+/// An args-as-object because the rule reads seven things and `clippy.toml` caps
+/// arguments at 3 — the same reason [`EpisodeTriple`] exists.
+pub(super) struct ContradictionEventInput<'a> {
+    /// Correctly-scoped candidate pool (same subject).
+    pub(super) pool_a: &'a [Fact],
+    /// Predicate-matched pool, already narrowed by [`pool_b_sharing_an_entity`].
+    pub(super) pool_b: &'a [Fact],
+    /// The prior fact being superseded, by id.
+    pub(super) prior_fact_id: i64,
+    /// The newly extracted triple that supersedes it.
+    pub(super) new_fact: &'a ExtractedFact,
+    /// Resolved subject entity id, shared by both facts.
+    pub(super) subject_id: &'a str,
+    /// Episode reference time — the new fact's world clock.
+    pub(super) ref_time: DateTime<Utc>,
+    /// Wall clock for the event itself. Passed in rather than read inside so the
+    /// rule is deterministic and therefore testable.
+    pub(super) detected_at: DateTime<Utc>,
+}
+
+/// Build the `ContradictionDetected` payload for a superseded fact, or `None`
+/// when the prior fact is not in either pool.
+///
+/// **`None` means skip the emission, never fabricate one.** The payload's
+/// `prior_fact` has to be a faithful snapshot of a row that actually existed; if
+/// the id cannot be found in the pools that were just searched, there is nothing
+/// truthful to report and a default-filled payload would be a lie in an audit
+/// trail. This is the parse-loudly rule applied on the way out.
+///
+/// Resolution is always `Superseded` — `ingest_with` has no Retained or Merged
+/// branch on this path.
+///
+/// An EMPTY object is legitimate and is not the same failure. A fact may be a
+/// unary predicate carrying neither `object_id` nor `object_value`, and `""` is
+/// the faithful representation of that prior fact, not a silently defaulted
+/// required field.
+pub(super) fn contradiction_event(
+    input: ContradictionEventInput<'_>,
+) -> Option<Box<ContradictionDetected>> {
+    let ContradictionEventInput {
+        pool_a,
+        pool_b,
+        prior_fact_id,
+        new_fact,
+        subject_id,
+        ref_time,
+        detected_at,
+    } = input;
+
+    pool_a
+        .iter()
+        .chain(pool_b.iter())
+        .find(|f| f.id == prior_fact_id)
+        .map(|prior| {
+            let prior_object = prior
+                .object_id
+                .clone()
+                .or_else(|| prior.object_value.clone())
+                .unwrap_or_default();
+            Box::new(ContradictionDetected {
+                entity_id: EntityId(subject_id.to_owned()),
+                prior_fact: SinkFact {
+                    subject: prior.subject_id.clone(),
+                    predicate: prior.predicate.clone(),
+                    object: prior_object,
+                    valid_at: Some(prior.valid_from),
+                },
+                new_fact: SinkFact {
+                    subject: new_fact.subject.clone(),
+                    predicate: new_fact.predicate.clone(),
+                    object: new_fact.object.clone(),
+                    valid_at: Some(ref_time),
+                },
+                resolution: ContradictionResolution::Superseded,
+                detected_at,
+            })
+        })
 }
 
 #[cfg(test)]
@@ -488,5 +574,196 @@ mod tests {
             }
         ));
         assert!(!is_within_episode_multivalue(&[], 42));
+    }
+
+    // ── contradiction_event ─────────────────────────────────────────────────
+
+    /// A fixed instant, so payload timestamps are assertable rather than merely
+    /// present. `Utc::now()` inside a helper would make the clock untestable —
+    /// which is exactly why `contradiction_event` takes `detected_at` instead of
+    /// reading the clock itself.
+    fn ref_time() -> DateTime<Utc> {
+        DateTime::from_timestamp(1_700_000_000, 0).expect("fixed timestamp is valid")
+    }
+
+    /// When the contradiction was NOTICED — deliberately a DIFFERENT instant from
+    /// [`ref_time`].
+    ///
+    /// ⚠️ These two were the same value here, and that alone made a whole class of
+    /// bug invisible: a rule that assigned `detected_at` where `ref_time` belonged
+    /// would still satisfy an assertion named "valid_at is the episode ref_time",
+    /// because the fixture made the two indistinguishable. A fixture that collapses
+    /// two semantically distinct fields cannot tell them apart, and neither can any
+    /// assertion built on it.
+    fn detected_at() -> DateTime<Utc> {
+        DateTime::from_timestamp(1_700_009_999, 0).expect("fixed timestamp is valid")
+    }
+
+    /// The fixed inputs every payload test shares; each test varies one. Pools
+    /// travel as a pair to stay inside the 3-argument cap without an `#[allow]`.
+    fn event_input<'a>(
+        pools: (&'a [Fact], &'a [Fact]),
+        prior_fact_id: i64,
+        new_fact: &'a ExtractedFact,
+    ) -> ContradictionEventInput<'a> {
+        ContradictionEventInput {
+            pool_a: pools.0,
+            pool_b: pools.1,
+            prior_fact_id,
+            new_fact,
+            subject_id: "alice",
+            ref_time: ref_time(),
+            detected_at: detected_at(),
+        }
+    }
+
+    #[test]
+    fn a_prior_fact_in_neither_pool_emits_nothing() {
+        let new_fact = extracted("Alice", "Berlin", true);
+
+        let got = contradiction_event(event_input((&[], &[]), 999, &new_fact));
+
+        assert!(
+            got.is_none(),
+            "a payload whose prior_fact cannot be evidenced is a lie in an audit trail; skip beats fabricate"
+        );
+    }
+
+    #[test]
+    fn a_prior_fact_found_in_pool_a_is_snapshotted() {
+        let prior = fact_with_id(7, "alice");
+        let new_fact = extracted("Alice", "Berlin", true);
+
+        let got = contradiction_event(event_input((&[prior], &[]), 7, &new_fact))
+            .expect("prior fact is in pool_a");
+
+        assert_eq!(got.prior_fact.subject, "alice");
+        assert_eq!(got.prior_fact.predicate, "likes");
+        assert_eq!(got.new_fact.object, "Berlin");
+    }
+
+    #[test]
+    fn a_prior_fact_found_only_in_pool_b_is_still_snapshotted() {
+        let prior = fact_with_id(7, "alice");
+        let new_fact = extracted("Alice", "Berlin", true);
+
+        let got = contradiction_event(event_input((&[], &[prior]), 7, &new_fact));
+
+        assert!(
+            got.is_some(),
+            "pool_b is searched too — restricting the lookup to pool_a would silently drop predicate-matched supersessions"
+        );
+    }
+
+    #[test]
+    fn an_objectless_prior_fact_reports_an_empty_object_rather_than_skipping() {
+        // Neither object_id nor object_value — a unary predicate.
+        let prior = fact_with_id(7, "alice");
+        let new_fact = extracted("Alice", "Berlin", true);
+
+        let got = contradiction_event(event_input((&[prior], &[]), 7, &new_fact))
+            .expect("an objectless prior fact is legitimate, not a missing field");
+
+        assert_eq!(
+            got.prior_fact.object, "",
+            "\"\" is the faithful representation of an objectless triple, not a silent default"
+        );
+    }
+
+    #[test]
+    fn a_literal_object_is_reported_when_there_is_no_object_id() {
+        let prior = Fact {
+            id: 7,
+            ..literal_fact("alice", "blue", None)
+        };
+        let new_fact = extracted("Alice", "red", false);
+
+        let got = contradiction_event(event_input((&[prior], &[]), 7, &new_fact))
+            .expect("prior fact is in pool_a");
+
+        assert_eq!(got.prior_fact.object, "blue");
+    }
+
+    #[test]
+    fn an_entity_object_outranks_a_literal_on_the_same_prior_fact() {
+        let prior = Fact {
+            id: 7,
+            object_id: Some("berlin".to_owned()),
+            object_value: Some("Berlin, DE".to_owned()),
+            ..fact("alice", None, None)
+        };
+        let new_fact = extracted("Alice", "Munich", true);
+
+        let got = contradiction_event(event_input((&[prior], &[]), 7, &new_fact))
+            .expect("prior fact is in pool_a");
+
+        assert_eq!(
+            got.prior_fact.object, "berlin",
+            "the entity reference is the resolved identity; the literal is only a fallback"
+        );
+    }
+
+    #[test]
+    fn the_resolution_on_this_path_is_always_superseded() {
+        let prior = fact_with_id(7, "alice");
+        let new_fact = extracted("Alice", "Berlin", true);
+
+        let got = contradiction_event(event_input((&[prior], &[]), 7, &new_fact))
+            .expect("prior fact is in pool_a");
+
+        assert!(matches!(
+            got.resolution,
+            ContradictionResolution::Superseded
+        ));
+    }
+
+    #[test]
+    fn the_new_facts_valid_at_is_the_episode_ref_time() {
+        let prior = fact_with_id(7, "alice");
+        let new_fact = extracted("Alice", "Berlin", true);
+
+        let got = contradiction_event(event_input((&[prior], &[]), 7, &new_fact))
+            .expect("prior fact is in pool_a");
+
+        assert_eq!(
+            got.new_fact.valid_at,
+            Some(ref_time()),
+            "the new fact's world clock is when it became TRUE, not when the contradiction was noticed"
+        );
+        assert_ne!(
+            got.new_fact.valid_at,
+            Some(detected_at()),
+            "if these two clocks were equal the assertion above would prove nothing"
+        );
+    }
+
+    #[test]
+    fn the_events_detected_at_is_the_wall_clock_not_the_episode_ref_time() {
+        let prior = fact_with_id(7, "alice");
+        let new_fact = extracted("Alice", "Berlin", true);
+
+        let got = contradiction_event(event_input((&[prior], &[]), 7, &new_fact))
+            .expect("prior fact is in pool_a");
+
+        assert_eq!(got.detected_at, detected_at());
+        assert_ne!(
+            got.detected_at, ref_time(),
+            "the two clocks are separate arguments precisely so they can differ"
+        );
+    }
+
+    #[test]
+    fn the_first_matching_id_wins_when_a_fact_sits_in_both_pools() {
+        let in_a = fact_with_id(7, "alice_from_pool_a");
+        let in_b = fact_with_id(7, "alice_from_pool_b");
+        let new_fact = extracted("Alice", "Berlin", true);
+
+        let got = contradiction_event(event_input((&[in_a], &[in_b]), 7, &new_fact))
+            .expect("prior fact is in both pools");
+
+        assert_eq!(
+            got.prior_fact.subject, "alice_from_pool_a",
+            "pool_a is the correctly-scoped arm and is chained first, so it wins the tie"
+        );
     }
 }

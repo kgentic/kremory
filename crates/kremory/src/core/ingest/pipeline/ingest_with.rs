@@ -22,7 +22,9 @@ use crate::core::resolver::{entity_name, normalize_name, CascadeResolver, UnionF
 use crate::core::search::{FtsSearchFactsParams, SearchFilters, VectorSearchEntitiesNoCountParams};
 
 use super::deferred_emissions::{flush_deferred_emissions, DeferredEmission};
+use super::entity_rules;
 use super::entity_upsert::{EntityUpsertParams, Phase1EntityState};
+use super::fact_rules;
 use super::fact_rules::{
     contradiction_labels, is_within_episode_duplicate, is_within_episode_multivalue,
     pool_b_sharing_an_entity, resolve_fact_endpoints, EpisodeTriple, FactEndpoints,
@@ -422,26 +424,13 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         //     entities; L4' injection needs only the top-N most relevant.
         let existing_entities_for_prompt: Vec<(String, String)> = {
             const L4_PRIME_INJECT_LIMIT: usize = 50;
-            let mut raw = match group_id {
+            let raw = match group_id {
                 Some(gid) => self.graph.list_entities_in_group(gid).await?,
                 None => self.graph.list_entities().await?,
             };
-            // Sort descending by access_count (most-recently-used first).
-            raw.sort_by(|a, b| b.access_count.cmp(&a.access_count));
-            raw.truncate(L4_PRIME_INJECT_LIMIT);
-            raw.into_iter()
-                .map(|e| {
-                    // Prefer properties["name"] (original casing) over the
-                    // normalized id so the LLM sees the exact display name.
-                    let display_name = e
-                        .properties
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_owned())
-                        .unwrap_or(e.id);
-                    (display_name, e.label)
-                })
-                .collect()
+            // Ranking, truncation and the display-name-over-id choice are a pure
+            // rule with its own tests — see `entity_rules::top_n_display_names`.
+            entity_rules::top_n_display_names(raw, L4_PRIME_INJECT_LIMIT)
         };
 
         // 3. Extract from all chunks, merge results.
@@ -572,14 +561,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // dedup-rejection can layer that contract on top of `remember_batch`
         // at the application layer.
         {
-            let mut seen_this_call: HashSet<String> = HashSet::new();
-            let mut dup_names: Vec<String> = Vec::new();
-            for extracted in &all_entities {
-                let id = normalize_name(&extracted.name);
-                if !seen_this_call.insert(id.clone()) {
-                    dup_names.push(id);
-                }
-            }
+            let dup_names = entity_rules::duplicate_extracted_names(&all_entities);
             if !dup_names.is_empty() {
                 tracing::warn!(
                     target: "kremory.ingest",
@@ -1026,53 +1008,21 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     invalidated_fact_ids.push(*fact_id);
 
                     // ── Fire-site: on_contradiction ─────────────────────────────────
-                    // The new `fact` superseded a prior fact (`*fact_id`) that lives in
-                    // pool_a/pool_b (both already fetched above). Build a faithful
-                    // ContradictionDetected from the prior fact snapshot + the new triple.
-                    // Resolution is always `Superseded` on this path (the prior fact was
-                    // invalidated in favour of the new one — there is no Retained/Merged
-                    // branch in `ingest_with`). Best-effort: if the prior fact cannot be
-                    // located in the pools, skip the sink call rather than fabricate a
-                    // payload (parse-loudly: no silent defaults for load-bearing fields).
-                    // The payload is BUILT here (it needs `pool_a`/`pool_b`, which
-                    // are scoped to this loop iteration) but DELIVERED after the commit.
+                    // BUILT here because it needs `pool_a`/`pool_b`, which are scoped to
+                    // this loop iteration, but DELIVERED after the commit. The payload
+                    // rule itself — including why a prior fact missing from both pools
+                    // yields `None` rather than a default-filled event — is documented and
+                    // tested on `fact_rules::contradiction_event`.
                     let contradiction_event = if sink.is_some() {
-                        pool_a
-                            .iter()
-                            .chain(pool_b.iter())
-                            .find(|f| f.id == *fact_id)
-                            .map(|prior| {
-                            use crate::core::sink::{ContradictionDetected, EntityId, SinkFact};
-                            // An empty object_id is LEGITIMATE here, not a silent
-                            // default / parse-loudly violation: a fact may
-                            // be a unary predicate / objectless triple where BOTH
-                            // `object_id` and `object_value` are absent. `unwrap_or_default()`
-                            // yields "" for that case, which is the correct faithful
-                            // representation of an objectless prior fact in the sink
-                            // payload — there is no missing-required-field to surface.
-                            let prior_object = prior
-                                .object_id
-                                .clone()
-                                .or_else(|| prior.object_value.clone())
-                                .unwrap_or_default();
-                            Box::new(ContradictionDetected {
-                                entity_id: EntityId(subject_id.clone()),
-                                prior_fact: SinkFact {
-                                    subject: prior.subject_id.clone(),
-                                    predicate: prior.predicate.clone(),
-                                    object: prior_object,
-                                    valid_at: Some(prior.valid_from),
-                                },
-                                new_fact: SinkFact {
-                                    subject: fact.subject.clone(),
-                                    predicate: fact.predicate.clone(),
-                                    object: fact.object.clone(),
-                                    valid_at: Some(ref_time),
-                                },
-                                resolution: crate::core::error::ContradictionResolution::Superseded,
-                                detected_at: Utc::now(),
-                            })
-                            })
+                        fact_rules::contradiction_event(fact_rules::ContradictionEventInput {
+                            pool_a: &pool_a,
+                            pool_b: &pool_b,
+                            prior_fact_id: *fact_id,
+                            new_fact: fact,
+                            subject_id: &subject_id,
+                            ref_time,
+                            detected_at: Utc::now(),
+                        })
                     } else {
                         None
                     };

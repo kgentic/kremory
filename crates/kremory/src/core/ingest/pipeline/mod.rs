@@ -5,6 +5,7 @@
 
 mod deferred;
 mod deferred_emissions;
+mod entity_rules;
 mod entity_type_registry;
 mod entity_upsert;
 mod fact_rules;
