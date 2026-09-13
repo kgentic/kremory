@@ -380,12 +380,12 @@ revisit = "v0.2.0"
 [[skip]]
 symbol = "MemoryBuilder::with_episode_dense_enabled"
 reason = "TD-141: new per-knob SearchConfig override setter (TD-136 dense-episode arm). Same rationale as with_content_stream_weight — Tier-2 builder wiring deferred per ADR-030 Form B."
+revisit = "v0.2.0"
 
 [[skip]]
 symbol = "MemoryBuilder::with_temporal_weight"
 reason = "TD-157 (2026-07-28): new per-knob SearchConfig override setter for ADR-082's temporal-recency axis, added because the axis was previously UNREACHABLE (real compute, permanently 0.0, no builder/env/config path). Same Tier-2 rationale as the sibling with_proximity_weight / with_content_stream_weight entries. Reachable from Node TODAY via the KREMORY_TEMPORAL_WEIGHT env override (process-global), which is how the other sweep knobs are reached; the per-instance JS builder mirror lands with the TD-159 parity sweep rather than piecemeal."
 revisit = "TD-159 parity sweep (this whole Tier-2 knob cluster together, not one at a time)"
-revisit = "v0.2.0"
 
 [[skip]]
 symbol = "MemoryBuilder::with_fact_dense_enabled"

@@ -45,69 +45,81 @@ use std::path::PathBuf;
 
 use syn::{ImplItem, Item};
 
-// ── Skip-list parsing (manual — avoids toml crate !Send issues in test harness) ──
+// ── Skip-list parsing ─────────────────────────────────────────────────────────
 
-/// Parse `parity-skip.toml` into a map of `symbol → reason` without using
-/// the `toml` crate's serde integration (which has thread-safety issues in the
-/// test harness due to `toml::value::Table` using `Arc` internally).
+/// One `[[skip]]` entry: a substrate symbol with no Node equivalent.
+#[derive(serde::Deserialize)]
+struct SkipEntry {
+    /// Substrate symbol being skipped, e.g. `MemoryBuilder::with_temporal_weight`.
+    symbol: String,
+    /// Why it has no Node equivalent. Surfaced in the orphan report, and REQUIRED:
+    /// a skip with no stated reason is indistinguishable from an oversight.
+    reason: String,
+    /// When the deferral is due to be revisited. REQUIRED: a skip with no revisit
+    /// is a permanent gap wearing a temporary label.
+    revisit: String,
+}
+
+#[derive(serde::Deserialize)]
+struct SkipFile {
+    skip: Vec<SkipEntry>,
+}
+
+/// Parse `parity-skip.toml` into a map of `symbol → reason`.
 ///
-/// We parse manually: look for `[[skip]]` section headers, then extract
-/// `symbol = "..."` and `reason = "..."` key-value pairs.
+/// ⚠️ **This used to hand-parse the file line-by-line, and that is why the file was
+/// MALFORMED and nobody knew.** One entry carried two `revisit` keys — which real
+/// TOML rejects outright — while the hand parser skipped `revisit` entirely and so
+/// could not see it. A second entry had silently lost its own `revisit` value to
+/// the same drift. The `toml` dependency needed to catch this had been declared in
+/// `Cargo.toml` the whole time and never used; the only mention of it in this file
+/// was a comment explaining why it was not being used.
+///
+/// The original comment claimed the `toml` crate had `!Send` problems in the test
+/// harness via `toml::value::Table`'s internal `Arc`. That applies to the dynamic
+/// `toml::Value` API; deserializing straight into owned structs, as below, never
+/// constructs one.
 fn load_skip_list(toml_path: &std::path::Path) -> HashMap<String, String> {
     let raw = std::fs::read_to_string(toml_path)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", toml_path.display()));
 
-    let mut result: HashMap<String, String> = HashMap::new();
-    let mut cur_symbol: Option<String> = None;
-    let mut cur_reason: Option<String> = None;
+    let parsed: SkipFile = toml::from_str(&raw).unwrap_or_else(|e| {
+        panic!(
+            "parity-skip.toml is not valid TOML: {e}\n\
+             A malformed skip-list silently changes which symbols the parity gate \
+             believes are deliberately absent, so this is a hard failure rather than \
+             a best-effort parse."
+        )
+    });
 
-    for line in raw.lines() {
-        let line = line.trim();
-
-        if line == "[[skip]]" {
-            // Flush previous entry if complete.
-            if let (Some(sym), Some(reason)) = (cur_symbol.take(), cur_reason.take()) {
-                result.insert(sym, reason);
-            } else {
-                // Reset partial state.
-                cur_symbol = None;
-                cur_reason = None;
-            }
-            continue;
+    let mut result: HashMap<String, String> = HashMap::with_capacity(parsed.skip.len());
+    for entry in parsed.skip {
+        assert!(
+            !entry.reason.trim().is_empty(),
+            "parity-skip.toml entry '{}' has an empty `reason`. A skip with no stated \
+             reason cannot be told apart from an oversight.",
+            entry.symbol
+        );
+        assert!(
+            !entry.revisit.trim().is_empty(),
+            "parity-skip.toml entry '{}' has an empty `revisit`. Every deferral needs \
+             a date or a named sweep, or it is permanent by default.",
+            entry.symbol
+        );
+        // Duplicate detection has to happen HERE, at insert time. The governance
+        // check that used to live further down iterated the finished HashMap's keys,
+        // which cannot contain duplicates by construction — a green control that
+        // could never fire.
+        if let Some(previous) = result.insert(entry.symbol.clone(), entry.reason) {
+            panic!(
+                "parity-skip.toml has a duplicate entry for symbol '{}'. Each symbol \
+                 must appear at most once; the later entry silently replaced:\n  {previous}",
+                entry.symbol
+            );
         }
-
-        // Skip comments and empty lines.
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        if let Some(val) = extract_toml_string_value(line, "symbol") {
-            cur_symbol = Some(val);
-        } else if let Some(val) = extract_toml_string_value(line, "reason") {
-            cur_reason = Some(val);
-        }
-        // `revisit` is governance metadata — not needed for the test logic.
-    }
-
-    // Flush last entry.
-    if let (Some(sym), Some(reason)) = (cur_symbol, cur_reason) {
-        result.insert(sym, reason);
     }
 
     result
-}
-
-/// Extract the string value from a TOML line of the form `key = "value"`.
-/// Returns `None` if the line doesn't match.
-fn extract_toml_string_value(line: &str, key: &str) -> Option<String> {
-    let prefix = format!("{key} = \"");
-    if !line.starts_with(&prefix) {
-        return None;
-    }
-    let rest = &line[prefix.len()..];
-    // Find the closing quote, handling trivial escape (no multi-line strings in this file).
-    let end = rest.rfind('"')?;
-    Some(rest[..end].to_string())
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -419,17 +431,8 @@ fn napi_surface_matches_substrate_or_skip_list() {
         &facade_dream_src,
     ]);
 
-    // Governance check: no duplicate skip-list entries.
-    {
-        let mut seen: HashSet<&str> = HashSet::new();
-        for key in skip_list.keys() {
-            assert!(
-                seen.insert(key.as_str()),
-                "parity-skip.toml has duplicate entry for symbol '{key}'. \
-                 Each symbol must appear at most once."
-            );
-        }
-    }
+    // Duplicate skip-list entries are rejected inside `load_skip_list`, at insert
+    // time. A check here would iterate the finished map's keys and could never fire.
 
     // Enforce: skip-list count must not exceed 92 (sanity cap — over-finding guard).
     // ⚠️ THIS NOTE ROTTED TWICE before 2026-08-12 (see the history below for the
@@ -650,16 +653,97 @@ revisit = "never"
         assert_eq!(map.len(), 2);
     }
 
+    /// Each parser test writes its OWN file. A shared fixed filename in the temp
+    /// dir races sibling tests under nextest's parallel pool, and now that the
+    /// parser PANICS on malformed input, a race would fail an unrelated test.
+    fn write_skip_fixture(name: &str, body: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("api_parity_test_{name}.toml"));
+        std::fs::write(&path, body).expect("write temp skip toml");
+        path
+    }
+
     #[test]
-    fn extract_toml_string_value_basic() {
-        assert_eq!(
-            extract_toml_string_value(r#"symbol = "Memory::open""#, "symbol"),
-            Some("Memory::open".to_string())
+    #[should_panic(expected = "not valid TOML")]
+    fn malformed_toml_is_rejected_rather_than_best_effort_parsed() {
+        // A duplicate key — the EXACT malformation that sat undetected in the real
+        // file, because the previous hand-rolled parser never looked at `revisit`.
+        let path = write_skip_fixture(
+            "malformed",
+            r#"
+[[skip]]
+symbol = "Memory::open"
+reason = "Tier-2 builder deferred"
+revisit = "v0.2.0"
+revisit = "stray"
+"#,
         );
-        assert_eq!(
-            extract_toml_string_value(r#"reason = "some reason""#, "reason"),
-            Some("some reason".to_string())
+        let _ = load_skip_list(&path);
+    }
+
+    #[test]
+    #[should_panic(expected = "duplicate entry for symbol")]
+    fn a_duplicated_symbol_is_rejected_instead_of_silently_collapsing() {
+        // Two entries, one symbol. The previous check iterated the finished
+        // HashMap's keys, so this collapsed to ONE entry and quietly CREATED
+        // headroom under the cap.
+        let path = write_skip_fixture(
+            "duplicate",
+            r#"
+[[skip]]
+symbol = "Memory::open"
+reason = "first"
+revisit = "v0.2.0"
+
+[[skip]]
+symbol = "Memory::open"
+reason = "second"
+revisit = "v0.2.0"
+"#,
         );
-        assert_eq!(extract_toml_string_value("other = \"x\"", "symbol"), None);
+        let _ = load_skip_list(&path);
+    }
+
+    #[test]
+    #[should_panic(expected = "empty `revisit`")]
+    fn a_deferral_with_no_revisit_is_rejected() {
+        let path = write_skip_fixture(
+            "no_revisit",
+            r#"
+[[skip]]
+symbol = "Memory::open"
+reason = "Tier-2 builder deferred"
+revisit = "   "
+"#,
+        );
+        let _ = load_skip_list(&path);
+    }
+
+    #[test]
+    #[should_panic(expected = "empty `reason`")]
+    fn a_skip_with_no_reason_is_rejected() {
+        let path = write_skip_fixture(
+            "no_reason",
+            r#"
+[[skip]]
+symbol = "Memory::open"
+reason = ""
+revisit = "v0.2.0"
+"#,
+        );
+        let _ = load_skip_list(&path);
+    }
+
+    #[test]
+    fn the_real_skip_list_parses_and_every_entry_is_complete() {
+        // The shipped file itself, through the real loader — so a malformation
+        // committed tomorrow fails HERE with a parser message, not later with a
+        // confusing parity mismatch.
+        let map = load_skip_list(&repo_root().join("crates/kremory-napi/parity-skip.toml"));
+        assert!(
+            map.len() > 50,
+            "the real skip list should be substantial; got {} entries — a near-empty \
+             map means the loader silently dropped entries",
+            map.len()
+        );
     }
 }
