@@ -1,0 +1,20 @@
+[package]
+name = "kremory-py"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+publish = false
+
+[lib]
+name = "kremory_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }
+kremory = { path = "../kremory-src/crates/kremory" }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[profile.release]
+# Deliberately NOT panic="abort" (the kremory workspace sets that) — a Rust
+# panic must unwind into PyO3, not abort the interpreter.
+opt-level = 2

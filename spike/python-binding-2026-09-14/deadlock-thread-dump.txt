@@ -1,0 +1,2 @@
+This program requires root on OSX.
+Try running again with elevated permissions by going 'sudo !!'
