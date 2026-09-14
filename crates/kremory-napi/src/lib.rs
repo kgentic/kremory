@@ -1475,6 +1475,25 @@ async fn open_with_js_embedder(
     let emb: Arc<dyn kremory::DynEmbeddingProvider> =
         bridge::into_arc(bridge::JsEmbedderBridge::new(tsfn, expected_dim));
 
+    // `embeddingDim` must reach the SCHEMA, not only the bridge's length check.
+    //
+    // It used to do only the latter: `expected_dim` was handed to
+    // `JsEmbedderBridge` to validate the callback's output length, and never to
+    // `MemoryBuilder::embedding_dim`. So the vector columns and indexes were
+    // created at the 384 default whatever the caller asked for, a caller with a
+    // 16-dim embedder wrote 16-dim vectors into a 384-dim column, the insert was
+    // rejected, and `make_pinned_entity_recallable`'s best-effort branch swallowed
+    // it. `remember()` returned `warnings: []`, the JS callback ran cleanly, and
+    // every pinned entity was silently invisible to every vector arm.
+    //
+    // Measured before the fix, same scenario both SDKs: Rust `.embedding_dim(16)`
+    // stored a 64-byte embedding and recalled 2 facts; Node `embeddingDim: 16`
+    // stored NULL and recalled 0.
+    let base = match expected_dim {
+        Some(dim) => Memory::open(&path).embedding_dim(dim),
+        None => Memory::open(&path),
+    };
+
     // A BYOE extractor is exactly the documented "NoLlm
     // typestate" case (`{ embedder, extractor }` → `ExtractorKind::Custom`,
     // per this fn's own doc comment above). Env-detecting an LLM here was
@@ -1504,16 +1523,12 @@ async fn open_with_js_embedder(
 
         let build_result = if has_env_llm {
             let llm = bridge::resolve_env_llm().await?;
-            Memory::open(&path)
-                .with_llm(llm)
+            base.with_llm(llm)
                 .with_embedder(emb)
                 .with_extractor(extractor)
                 .await
         } else {
-            Memory::open(&path)
-                .with_embedder(emb)
-                .with_extractor(extractor)
-                .await
+            base.with_embedder(emb).with_extractor(extractor).await
         };
 
         let mem = build_result.map_err(|e| {
@@ -1529,7 +1544,7 @@ async fn open_with_js_embedder(
     // classification, per `.with_gliner()`'s own doc comment) or a plain
     // BYOM-embedder-only open — both need a real LLM.
     let llm = bridge::resolve_env_llm().await?;
-    let builder = Memory::open(&path).with_llm(llm).with_embedder(emb);
+    let builder = base.with_llm(llm).with_embedder(emb);
 
     // Shadowed (not `mut`-reassigned): under a build without the `ner`
     // feature, the `gliner_cfg.is_some()` arm always diverges (`return

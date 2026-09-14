@@ -75,7 +75,12 @@ const EMBED_DIM = 384;
 
 /** Deterministic BYOM embedder — same shape as `__test__/smoke-embedder.test.mjs`. */
 function makeEmbedder(dim) {
-  return async function embedText(text) {
+  // ⚠️ TWO arguments, error-first: the bridge invokes this as `(err, text)`.
+  // A one-argument form binds the parameter to `err` (always null), and a
+  // null-guard then yields an ALL-ZERO vector of the right length — stored
+  // without error and permanently unrecallable. `validate_embedding` now
+  // rejects that, so this signature is load-bearing, not cosmetic.
+  return async function embedText(_err, text) {
     const safeText = text == null ? '' : String(text);
     const vec = new Array(dim).fill(0);
     for (let i = 0; i < safeText.length; i++) {

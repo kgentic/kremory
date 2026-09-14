@@ -40,7 +40,8 @@ const _openOpts: OpenOptions = {
 const _openOptsWithEmbedder: OpenOptions = {
   embeddingDim: 256,
   defaultNamespace: 'byom',
-  withEmbedder: async (text: string): Promise<number[]> => {
+  // Error-first: `err` is always null, the text is the SECOND argument.
+  withEmbedder: async (_err: null, text: string): Promise<number[]> => {
     return Array.from({ length: 256 }, (_, i) => (i / 256) * (text.length / 100));
   },
 };

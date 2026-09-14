@@ -561,6 +561,43 @@ fn validate_dim(vec: &[f32], expected_dim: Option<usize>) -> Result<(), CoreErro
             )));
         }
     }
+    validate_embedding(vec)
+}
+
+/// Reject an embedding whose CONTENT cannot be a real embedding, whatever its length.
+///
+/// The length check above is not enough, and the gap it leaves is the one this
+/// binding actually shipped. A JS callback written with ONE parameter binds that
+/// parameter to napi-rs's error-first `err` (always `null`), guards it to `""`,
+/// and returns a correctly-sized vector of ZEROS. Every shipped example and test
+/// in this repo had that shape. A zero vector has no direction and zero cosine
+/// similarity with every query, so each affected entity was stored, reported
+/// success, and was permanently unrecallable by any vector arm — with nothing
+/// anywhere reporting a problem.
+///
+/// A doc comment cannot prevent that, because the failure is in code the consumer
+/// writes. The check has to live where the value crosses the boundary.
+///
+/// Rejected: all-zero (no direction), and any non-finite component (NaN/inf
+/// poisons every distance it participates in).
+fn validate_embedding(vec: &[f32]) -> Result<(), CoreError> {
+    if let Some(idx) = vec.iter().position(|v| !v.is_finite()) {
+        return Err(CoreError::Other(anyhow!(
+            "embedder returned a non-finite value ({}) at index {idx}. NaN or \
+             infinity poisons every distance this vector takes part in.",
+            vec[idx]
+        )));
+    }
+    if !vec.is_empty() && vec.iter().all(|v| *v == 0.0) {
+        return Err(CoreError::Other(anyhow!(
+            "embedder returned an all-zero vector. A zero vector has no direction \
+             and scores zero similarity against every query, so the record would be \
+             stored and then be permanently unrecallable.\n\nThe usual cause is the \
+             callback's SIGNATURE: it is invoked error-first as `(err, text)`, so a \
+             one-argument `async (text) => ...` binds `text` to null. Declare it as \
+             `async (_err, text) => ...`."
+        )));
+    }
     Ok(())
 }
 
@@ -751,6 +788,68 @@ mod tests {
     }
 
     // ── D3: Dim validation — mismatch ─────────────────────────────────────────
+
+    /// The zero-vector case, which is what the one-argument-callback bug produced.
+    ///
+    /// It is the dangerous one precisely because the LENGTH is right: the
+    /// dimension check passes, the row stores, nothing errors, and the record is
+    /// then unrecallable forever.
+    #[tokio::test]
+    async fn an_all_zero_embedding_is_rejected_even_at_the_correct_dimension() {
+        let dim = 16usize;
+        let arc = into_arc(JsEmbedderBridge::new_mock_with_dim_check(
+            vec![0.0f32; dim],
+            dim,
+        ));
+
+        let result = arc.embed_dyn("some text").await;
+
+        let msg = result
+            .expect_err("an all-zero vector must be rejected, not stored")
+            .to_string();
+        assert!(
+            msg.contains("all-zero"),
+            "the error must name the actual problem: got '{msg}'"
+        );
+        assert!(
+            msg.contains("(err, text)") || msg.contains("_err"),
+            "the error must point at the usual cause — the error-first callback \
+             signature — because that is what a consumer needs to change: got '{msg}'"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_single_nonzero_component_is_enough_to_be_a_valid_embedding() {
+        let dim = 16usize;
+        let mut vec = vec![0.0f32; dim];
+        vec[7] = 0.5;
+
+        let arc = into_arc(JsEmbedderBridge::new_mock_with_dim_check(vec, dim));
+
+        assert!(
+            arc.embed_dyn("some text").await.is_ok(),
+            "only an ENTIRELY zero vector is degenerate; a sparse one is legitimate"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_non_finite_component_is_rejected() {
+        let dim = 16usize;
+        let mut vec = vec![0.1f32; dim];
+        vec[3] = f32::NAN;
+
+        let arc = into_arc(JsEmbedderBridge::new_mock_with_dim_check(vec, dim));
+
+        let msg = arc
+            .embed_dyn("some text")
+            .await
+            .expect_err("NaN poisons every distance it participates in")
+            .to_string();
+        assert!(
+            msg.contains("non-finite"),
+            "error must name the non-finite value: got '{msg}'"
+        );
+    }
 
     #[tokio::test]
     async fn bridge_validates_embedding_dim_mismatch() {

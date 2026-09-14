@@ -42,7 +42,15 @@ const NAMESPACE = 'demo';
  * both SDKs produce identical vectors for identical text.
  */
 function demoEmbedder(dim) {
-  return async function embed(text) {
+  // ⚠️ TWO arguments. The embedder is invoked through a napi-rs
+  // ThreadsafeFunction with the error-first calling convention, exactly like
+  // `opts.extractor.extract` — `err` is always null and the TEXT IS THE SECOND
+  // ARGUMENT. A one-argument `async (text) => …` silently binds `text` to null,
+  // and a null-guard that maps it to '' then returns an ALL-ZERO vector of the
+  // right length. It passes the bridge's dimension check, stores cleanly, and
+  // has zero cosine similarity with every query — so entities embed to nothing
+  // and become permanently unrecallable, with no error anywhere.
+  return async function embed(_err, text) {
     const safeText = text == null ? '' : String(text);
     const vec = new Array(dim).fill(0);
     for (let i = 0; i < safeText.length; i++) {

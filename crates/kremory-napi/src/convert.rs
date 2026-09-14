@@ -73,11 +73,26 @@ pub struct JsOpenOptions {
     pub default_namespace: Option<String>,
     /// Optional BYOM embedder callback (Tier-2).
     ///
-    /// Callback signature: `(text: string) => Promise<number[]>`.
+    /// Callback signature: `(err: null, text: string) => Promise<number[]>`.
+    ///
+    /// ⚠️ **TWO arguments, error-first** — the same napi-rs `CalleeHandled`
+    /// convention as `extractor.extract`. `err` is always `null` and **the text
+    /// is the SECOND argument**.
+    ///
+    /// This was declared as a one-argument `(text: string) => …` until
+    /// 2026-09-14, and that declaration was wrong in the worst possible way: a
+    /// one-argument callback binds its parameter to `null`, most implementations
+    /// guard that to `""`, and the result is an ALL-ZERO vector of the correct
+    /// length. It passes the dimension check, stores without error, and has zero
+    /// cosine similarity with every query — so every entity embeds to nothing and
+    /// becomes permanently unrecallable, silently. Every embedder in this repo's
+    /// own examples and tests had the one-argument shape and was producing zero
+    /// vectors. `validate_embedding` now rejects that outcome rather than
+    /// trusting this doc comment to prevent it.
     ///
     /// When set, kremory wires this JS function as the embedding provider via
     /// the `MemoryBuilder` Tier-2 path.
-    #[napi(ts_type = "((text: string) => Promise<number[]>) | undefined | null")]
+    #[napi(ts_type = "((err: null, text: string) => Promise<number[]>) | undefined | null")]
     pub with_embedder: Option<
         napi::threadsafe_function::ThreadsafeFunction<
             String,
