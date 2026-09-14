@@ -22,6 +22,10 @@
 //! ## Env vars
 //!
 //! - `KREMORY_MCP_DB_PATH` — required. Path to the kremory libSQL database.
+//! - `KREMORY_MCP_HOST` — bind address, default `127.0.0.1` (loopback). This
+//!   binary has NO inbound authentication and serves `DELETE /namespaces/{ns}`,
+//!   so binding a non-loopback address exposes unauthenticated namespace erasure
+//!   to anyone who can reach the port. Set it only behind an authenticating proxy.
 //! - `KREMORY_MCP_OLLAMA_URL` — default `http://localhost:11434`.
 //! - `KREMORY_MCP_MODEL_ID` — default `gemma4:e4b`.
 //! - `PORT` — default `3179` (matches codemem's benchmark harness default).
@@ -1684,9 +1688,29 @@ async fn main() -> Result<()> {
         }),
     );
 
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port))
+    // Loopback by DEFAULT. This bound `0.0.0.0` — every interface — while serving
+    // `DELETE /namespaces/{ns}` straight onto `Memory::forget` with NO inbound
+    // authentication anywhere in this binary. (The only key here,
+    // `KREMORY_MCP_CHAT_API_KEY`, is an OUTBOUND credential for the chat
+    // provider.) That combination is unauthenticated remote erasure of a
+    // namespace by anyone who can reach the port — on a laptop, that is anyone on
+    // the coffee-shop wifi.
+    //
+    // kremory is local-first by design, so loopback is also the honest default
+    // rather than a restriction. Binding wider is now a deliberate act, and the
+    // operator who takes it is told what they are exposing.
+    let host = std::env::var("KREMORY_MCP_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+    if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+        tracing::warn!(
+            %host,
+            "kremory-http is binding a NON-LOOPBACK address and has NO inbound \
+             authentication. DELETE /namespaces/{{ns}} erases a namespace. Put it \
+             behind a reverse proxy that authenticates, or bind loopback."
+        );
+    }
+    let listener = tokio::net::TcpListener::bind((host.as_str(), port))
         .await
-        .with_context(|| format!("failed to bind 0.0.0.0:{port}"))?;
+        .with_context(|| format!("failed to bind {host}:{port}"))?;
 
     tracing::info!(
         port,
