@@ -33,7 +33,14 @@ crate-type = ["cdylib", "rlib"]
 # opt-in available — a Rule-16 surface-parity gap on the Cargo-feature axis.
 default = ["content-search"]
 
-# unstable-graph: passes through to substrate. Gates B11 (JsMemory.getRelated).
+# unstable-graph: passes through to substrate.
+#
+# ⚠️ This said it "Gates B11 (JsMemory.getRelated)" until 2026-09-14. There is no
+# `getRelated` on the napi surface — `grep -rn getRelated crates/kremory-napi/src/`
+# returns nothing — so the feature gated a method that does not exist here (TD-160).
+# It still forwards the substrate feature, which is real; what was false was the
+# claim about a JS method. A feature whose stated purpose is fictional is worse
+# than an undocumented one: a consumer enables it expecting a capability.
 # Mirrors substrate `kremory/unstable-graph` per Vera cycle-2 IRREV-002 mitigation.
 # See .ai-docs/specs/kremory-napi-v016-surface-expansion-2026-05-29.md §10.
 unstable-graph = ["kremory/unstable-graph"]

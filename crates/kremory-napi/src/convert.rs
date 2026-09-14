@@ -697,6 +697,22 @@ pub struct JsCancelOutcome {
 /// and episode ids are stringified for JS ergonomics.
 #[napi(object, js_name = "RetrievedFact")]
 pub struct JsRetrievedFact {
+    /// Row id of the underlying fact — the HANDLE that makes this fact nameable.
+    ///
+    /// Without it a caller can read a fact they know is wrong and have no way to
+    /// say WHICH one. The facade added this field for exactly that reason
+    /// (TD-244: "Without it, `supersede` was documented but UNREACHABLE"), and
+    /// this binding dropped it — reintroducing the same unreachability on the
+    /// Node surface, where the correction ops take an id the caller could not get.
+    ///
+    /// `i64` crosses to JS as a BigInt-backed number; kept as the raw row id
+    /// rather than a string so it can be passed straight back to a correction
+    /// call without a parse step.
+    ///
+    /// `None` when the item did not come from a fact row: a content passage
+    /// retrieved by content-search has no fact id, and inventing one would be
+    /// worse than admitting the absence.
+    pub fact_id: Option<i64>,
     /// Natural-language rendering, e.g. `"Grace Hopper invented the compiler"`.
     pub fact: String,
     /// Subject entity display name.
@@ -726,6 +742,7 @@ pub struct JsRetrievedFact {
 /// Convert a `kremory::RetrievedFact` to the napi-facing `JsRetrievedFact`.
 pub fn retrieved_fact_to_js(f: RetrievedFact) -> JsRetrievedFact {
     JsRetrievedFact {
+        fact_id: f.fact_id,
         fact: f.fact,
         subject: f.subject,
         predicate: f.predicate,
