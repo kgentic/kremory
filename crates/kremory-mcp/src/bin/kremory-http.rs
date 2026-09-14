@@ -1725,6 +1725,10 @@ mod tests {
 
     fn fact_wire(fact: &str) -> RetrievedFactWire {
         RetrievedFactWire {
+            // These fixtures exercise the RENDERING of facts, not their identity,
+            // so a `None` handle is the honest fixture value rather than an
+            // invented id.
+            fact_id: None,
             fact: fact.to_string(),
             subject: "s".into(),
             predicate: "p".into(),

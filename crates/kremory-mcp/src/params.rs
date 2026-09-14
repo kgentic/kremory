@@ -86,6 +86,19 @@ pub struct SourceRefWire {
 /// strings.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct RetrievedFactWire {
+    /// Row id of the underlying fact — the HANDLE that makes this fact nameable.
+    ///
+    /// Without it an agent can read a wrong fact and has no way to say WHICH one
+    /// is wrong. The facade added this field for exactly that reason (TD-244:
+    /// "Without it, `supersede` was documented but UNREACHABLE"), and this wire
+    /// mirror dropped it — reintroducing the same unreachability on the agent
+    /// transport, where every fact-level correction op takes an `i64` the agent
+    /// could not obtain.
+    ///
+    /// `None` when the item did not come from a fact row: a content passage
+    /// retrieved by content-search has no fact id, and inventing one would be
+    /// worse than admitting the absence.
+    pub fact_id: Option<i64>,
     /// Natural-language rendering, e.g. `"Grace Hopper invented the compiler"`.
     pub fact: String,
     pub subject: String,

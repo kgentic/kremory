@@ -296,6 +296,7 @@ impl From<RetrievedContext> for RetrievedContextWire {
 impl From<RetrievedFact> for RetrievedFactWire {
     fn from(f: RetrievedFact) -> Self {
         Self {
+            fact_id: f.fact_id,
             fact: f.fact,
             subject: f.subject,
             predicate: f.predicate,
