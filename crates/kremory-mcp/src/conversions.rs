@@ -586,6 +586,12 @@ impl TryFrom<UndoOutcome> for UndoOutcomeWire {
             UndoOutcome::EditEntity(o) => Ok(Self::EditEntity(o.into())),
             UndoOutcome::DeleteEntity(o) => Ok(Self::DeleteEntity(o.into())),
             UndoOutcome::DeleteFact(o) => Ok(Self::DeleteFact(o.into())),
+            UndoOutcome::RestoreArchived(o) => Ok(Self::RestoreArchived(
+                crate::params::RestoreArchivedOutcomeWire {
+                    restored_fact_id: o.restored_fact_id,
+                    already_live: o.already_live,
+                },
+            )),
             other => Err(format!(
                 "kremory_undo: UndoOutcome carries a variant kremory-mcp's UndoOutcomeWire \
                  does not yet mirror ({other:?}) — kremory added a new log-dispatchable \
@@ -599,6 +605,43 @@ impl TryFrom<UndoOutcome> for UndoOutcomeWire {
 mod tests {
     use super::*;
     use crate::params::SourceKindWire;
+
+    /// Pin the JSON an agent actually receives when it undoes a dream's fact
+    /// archival.
+    ///
+    /// ⚠️ The CONVERSION itself cannot be unit-tested from this crate:
+    /// `kremory::core::dream::provenance` is a private module and
+    /// `RestoreArchivedOutcome` is `#[non_exhaustive]`, so the input value can be
+    /// destructured here (which is why the `TryFrom` arm compiles) but never
+    /// constructed. What is testable — and what the agent depends on — is that the
+    /// variant exists and serializes under the same internally-tagged shape as its
+    /// four siblings.
+    ///
+    /// The gap this covers was not a missing feature but a WRONG ANSWER: without
+    /// the arm, `UndoOutcomeWire::try_from` fell through to its catch-all `Err`,
+    /// and that conversion runs AFTER `do_undo` has already `.execute()`d. A
+    /// committed, successful restore was reported as `internal_error`, so the
+    /// correct agent response was to retry something that had already happened.
+    #[test]
+    fn the_restore_archived_wire_variant_serializes_like_its_siblings() {
+        let wire = UndoOutcomeWire::RestoreArchived(crate::params::RestoreArchivedOutcomeWire {
+            restored_fact_id: 42,
+            already_live: false,
+        });
+
+        let json = serde_json::to_value(&wire).expect("wire type must serialize");
+
+        assert_eq!(
+            json.get("restored_fact_id").and_then(serde_json::Value::as_i64),
+            Some(42),
+            "the agent needs the fact id it just restored: {json}"
+        );
+        assert_eq!(
+            json.get("already_live").and_then(serde_json::Value::as_bool),
+            Some(false),
+            "an idempotent no-op must stay distinguishable from a real restore: {json}"
+        );
+    }
 
     #[test]
     fn source_kind_wire_maps_note_and_document_to_facade_document() {

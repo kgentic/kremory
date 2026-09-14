@@ -328,10 +328,17 @@ pub struct ListMutationsParams {
     /// filters). Omit to list namespace-wide via `Memory::list_mutations`.
     pub entity_id: Option<String>,
     /// Restrict to one mutation kind, e.g. `"entity_merge"` / `"entity_edit"`
-    /// / `"entity_delete"` / `"fact_delete"` (the four LOGGED kinds — the
-    /// other four `MutationKind` variants are reserved and will always
-    /// return empty). An unrecognised string is rejected as invalid_params.
+    /// / `"entity_delete"` / `"fact_delete"` / `"fact_archive"` — the FIVE
+    /// LOGGED kinds. The remaining three `MutationKind` variants are reserved
+    /// and return empty. An unrecognised string is rejected as invalid_params.
     /// Ignored when `entity_id` is set.
+    ///
+    /// ⚠️ This said FOUR logged kinds and that `fact_archive` "will always
+    /// return empty" until 2026-09-14. That became false when fact archival
+    /// started writing to the mutation log, and a stale parameter doc on an MCP
+    /// tool is not cosmetic — it is the prompt. It actively steered the model
+    /// away from a live capability, so the agent could not find the dream
+    /// mutation it was looking for and concluded none existed.
     pub kind: Option<String>,
     /// RFC 3339 UTC lower bound on `created_at`. Ignored when `entity_id` is
     /// set.
@@ -449,6 +456,23 @@ pub struct DeleteFactOutcomeWire {
     pub already_undone: bool,
 }
 
+/// Wire mirror of `kremory::RestoreArchivedOutcome` — what `kremory_undo`
+/// reversed when the mutation was a `fact_archive` written by a dream.
+///
+/// This mirror did not exist until 2026-09-14, and its absence was not a missing
+/// feature — it was a WRONG ANSWER. `UndoOutcomeWire::try_from` fell through to
+/// its catch-all `Err` arm for this variant, and that conversion runs AFTER
+/// `.execute()` has already committed. The agent was told a reversal it had
+/// successfully performed had failed, so the honest response was to retry an
+/// operation that had already happened.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct RestoreArchivedOutcomeWire {
+    /// The fact id moved back out of the archive.
+    pub restored_fact_id: i64,
+    /// `true` if the fact was already live — an honest no-op, nothing restored.
+    pub already_live: bool,
+}
+
 /// Wire mirror of `kremory::UndoOutcome` (§3.1) — what `kremory_undo`
 /// ACTUALLY reversed. Internally tagged on `reversed_kind` so every per-kind
 /// count survives to the wire (no flattening to a string — the exact class
@@ -464,4 +488,6 @@ pub enum UndoOutcomeWire {
     DeleteEntity(DeleteEntityOutcomeWire),
     /// The mutation was a `fact_delete`.
     DeleteFact(DeleteFactOutcomeWire),
+    /// The mutation was a `fact_archive` — a fact a dream retired, now restored.
+    RestoreArchived(RestoreArchivedOutcomeWire),
 }
