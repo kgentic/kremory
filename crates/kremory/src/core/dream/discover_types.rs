@@ -893,6 +893,31 @@ struct RetypeBySimilarityParams<'a> {
 }
 
 /// Retype evidence entities with cosine ≥ 0.75 similarity to the type description.
+///
+/// **TD-123 verdict (2026-09-15): verdict-cleared for precision, NOT guarded.**
+/// This compares an entity NAME embedding to a type DESCRIPTION embedding —
+/// structurally different from the four `names_lexically_compatible`-guarded
+/// sites (name-vs-name), so that helper does not apply here; a token-Jaccard
+/// check between a bare name and a prose description would reject nearly
+/// every legitimate pair by construction, not just the bad ones.
+///
+/// Empirically spiked against the real `nomic-embed-text` embedder (the
+/// shipped default) with 10 adversarial name/description pairs drawn from
+/// `DEFAULT_ENTITY_TYPES`' own real descriptions (e.g. `Boston` vs `Person`,
+/// `Alice Chen` vs `Organisation`): worst-case cosine was **0.4922**, a 0.26
+/// margin below this threshold — no evidence of the anisotropic
+/// same-embedder-different-comparison-shape degeneracy that made bare
+/// name-vs-name cosine unusable (TD-097/098, `cos(Ria,Morocco)=1.0000`). So
+/// the false-positive (precision) risk TD-123 was auditing for is not
+/// observed here.
+///
+/// **Separate, NOT-fixed finding surfaced by the same spike, filed as
+/// TD-256**: none of 7 LEGITIMATE pairs cleared 0.75 either (best:
+/// `Acme Corp` vs `Organisation` = 0.6604) — the threshold may be
+/// miscalibrated for this comparison shape under this embedder, silently
+/// dropping evidence retypes rather than wrongly accepting them. A recall
+/// problem, not the precision problem this function's guard-audit covers;
+/// out of scope for TD-123, tracked separately.
 async fn retype_evidence_by_similarity(params: RetypeBySimilarityParams<'_>) -> Result<usize> {
     let RetypeBySimilarityParams {
         conn,
