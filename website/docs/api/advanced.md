@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 // You supply the graph handle (e.g. kremory::memory::TemporalGraph or your own impl)
 // and manage LLM + embedder Arcs directly. Both fns take a single bundled params
-// struct (args-as-object, TD-042) rather than positional arguments.
+// struct (args-as-object) rather than positional arguments.
 let commit = submit_episode(SubmitEpisodeParams {
     graph: graph.as_ref(),
     content: "Alice prefers async Rust",

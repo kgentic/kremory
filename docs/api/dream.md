@@ -37,8 +37,8 @@ Runnable: `cargo run --example dream_on_a_schedule` for running it automatically
 `cargo run --example agent_memory_with_ollama` to see the raw extraction output it exists
 to clean up.
 
-**All ops default ON.** This is safe because every destructive mutation is reversible (ADR-073 —
-see [Reversibility and deletion](./reversibility.md)): you can always SEE what `dream()` changed and UNDO it. Cross-episode merge is the one
+**All ops default ON.** This is safe because every destructive mutation is reversible — see
+[Reversibility and deletion](./reversibility.md): you can always SEE what `dream()` changed and UNDO it. Cross-episode merge is the one
 exception to "ON = commits" — it defaults to **Shadow** mode (computes + reports merge decisions
 but fuses nothing) until you opt into Apply.
 
@@ -127,7 +127,7 @@ let summary = mem.dream()
 ```
 
 > **Namespace policy:** `dream()` mutates the graph, so it is rejected on `AppendOnly` namespaces
-> with `Err(Error::NamespacePolicyViolation { operation: "dream", .. })` (ADR-029b enforcement).
+> with `Err(Error::NamespacePolicyViolation { operation: "dream", .. })`.
 
 ### Idempotent batch key
 

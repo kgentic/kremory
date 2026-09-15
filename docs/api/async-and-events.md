@@ -61,7 +61,7 @@ let commit = mem.remember("data")
     .await?;
 ```
 
-### Background ingestor (OS-thread pipeline, ADR-051)
+### Background ingestor (OS-thread pipeline)
 
 `Memory::send_batched(text, batch_id)` is a lighter-weight alternative to `remember(...)` for
 high-throughput batch ingest. When a sink is configured on the builder via `.with_event_sink(...)`,

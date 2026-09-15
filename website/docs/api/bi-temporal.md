@@ -33,7 +33,7 @@ mem.remember("Q4 2025 policy")
 ### Audit query
 
 `.as_of(t)` is a **valid-time** query — *"what was TRUE in the world at t"* — and it is wired
-end-to-end (ADR-068). This is the predicate the engine actually issues:
+end-to-end. This is the predicate the engine actually issues:
 
 ```sql
 -- what kremory issues for as_of(t) — ONE bound parameter, valid-time only:

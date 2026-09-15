@@ -2,8 +2,8 @@
 
 ## Reversibility — see, trust, undo
 
-Because `dream()` mutates the graph by default, kremory ships a **reversibility substrate**
-(ADR-073): every logged destructive mutation can be inspected and undone. Undo is deterministic
+Because `dream()` mutates the graph by default, kremory ships a **reversibility substrate**:
+every logged destructive mutation can be inspected and undone. Undo is deterministic
 (replayed from an in-transaction snapshot — no LLM), idempotent (a second undo is a zero-count
 no-op, never a double-restore), and returns an **honest outcome** (the actual counts reversed,
 never a bare "ok").

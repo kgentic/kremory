@@ -1,13 +1,13 @@
 # Feature flags
 
 
-kremory's `default` feature set is **`["content-search"]`** (ADR-078, 2026-07-28 — it was previously
+kremory's `default` feature set is **`["content-search"]`** (2026-07-28 — it was previously
 empty). Opt into the surfaces below as needed:
 
 | Feature | Default | Enables |
 |---|---|---|
 | *(default)* | — | Full `Memory` facade, bi-temporal graph, hybrid recall, dream phase, reversibility. BYOM LLM + embedder always available. |
-| `content-search` | **ON** | Three things, not one: (a) the BM25/FTS5 **content arm that `recall()` RRF-fuses in automatically**, (b) the dense episode arm, and (c) Migrations 022 + 026 (`episodes_fts`, `episodes.embedding`). It also enables the explicit `mem.recall(q).content()` terminal + `ContentPassage` type ([Recall](./recall.md), ADR-072) — but that terminal is the *smallest* part of it. **Turning this off costs −32.2pt ex-adversarial substring recall** (measured, ADR-078); it is a default, not an extra. Zero additional dependencies. |
+| `content-search` | **ON** | Three things, not one: (a) the BM25/FTS5 **content arm that `recall()` RRF-fuses in automatically**, (b) the dense episode arm, and (c) Migrations 022 + 026 (`episodes_fts`, `episodes.embedding`). It also enables the explicit `mem.recall(q).content()` terminal + `ContentPassage` type ([Recall](./recall.md)) — but that terminal is the *smallest* part of it. **Turning this off costs −32.2pt ex-adversarial substring recall** (measured); it is a default, not an extra. Zero additional dependencies. |
 | `ner` | off | GLiNER hybrid extractor (`.with_gliner()` + `.with_llm(...)`); auto-downloads the ONNX GLiNER model on first use (`ort` / `ndarray` / `tokenizers` / `hf-hub`). |
 | `embeddings` | off | Local ONNX embedding-provider support (`ort` / `ndarray` / `tokenizers` / `hf-hub`). BYOM embedders work without it. |
 | `otel` | off | OTLP export — `tracing-subscriber` + `tracing-opentelemetry` + OTLP exporter; enables `init_telemetry(...)` (see [observability.md](observability.md)). |
@@ -19,7 +19,7 @@ empty). Opt into the surfaces below as needed:
 ```toml
 # Example: content recall + OTLP export.
 # `content-search` is listed explicitly for clarity, but it is ON by default
-# since ADR-078 (2026-07-28) — you only need to name it if you have set
+# since it became a default feature (2026-07-28) — you only need to name it if you have set
 # `default-features = false`.
 kremory = { version = "0.8", features = ["content-search", "otel"] }
 ```

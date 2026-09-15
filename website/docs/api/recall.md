@@ -76,7 +76,7 @@ graph** (entities + facts, hybrid vector + keyword). A separate terminal, `.cont
 the extracted graph. It is a sibling of `.raw()` and returns `Vec<ContentPassage>`.
 
 `.content()` is gated behind the **`content-search`** cargo feature, which is **ON by default**
-since ADR-078 (2026-07-28) — so the terminal and the `ContentPassage` type exist in a default build.
+since content-search became a default feature (2026-07-28) — so the terminal and the `ContentPassage` type exist in a default build.
 If you have disabled default features, re-enable it explicitly:
 
 ```toml
@@ -85,7 +85,7 @@ kremory = { version = "0.8", default-features = false, features = ["content-sear
 
 ⚠️ Disabling it does **not** just remove `.content()` — it also removes the BM25 content arm and the
 dense episode arm from the ordinary `recall()` path, measured at **−32.2pt** ex-adversarial
-substring recall (ADR-078).
+substring recall.
 
 ```rust
 use kremory::memory::types::ContentPassage;
@@ -105,7 +105,7 @@ for p in &passages {
 }
 ```
 
-**When to reach for `.content()` instead of `.raw()`** — measured 2026-07-28 (TD-151), conv0, same
+**When to reach for `.content()` instead of `.raw()`** — measured 2026-07-28, conv0, same
 corpus, dense arm on, no reranker:
 
 | terminal | what it queries | ex-adversarial substring recall | latency (mean) |
@@ -119,7 +119,7 @@ often the better trade — and a better one than any cross-encoder configuration
 in the opposite direction (the cheapest reranker arm measured costs 0.44 s/query). Absolutes were
 taken under load and are provisional; the ~9× ratio is not (ratios survive contention).
 
-Notes (ADR-072 seq1):
+Notes:
 
 - **BM25-only** — content passages are a distinct, un-fused stream. They are NOT blended into the
   entity/fact RRF ranking; `.content()` does not extend the graph-shaped `RetrievedContext`.

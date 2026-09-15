@@ -64,13 +64,13 @@ continues to compile and run. The notable surface + behaviour changes, at the AP
 | Area | Change |
 |---|---|
 | **Dream consolidation** ([dream](../api/dream.md)) | The dream phase is now fully wired — reconciliation passes (type discovery, aliases, reclassify, consistency-check, canonicalize) + four graph-global consolidation ops (community detection, cross-episode merge, supersession sweep, fact archival). All default ON; cross-episode merge defaults to **Shadow**. `DreamSummary` gained honest per-op fields (the old `episodes_processed` / `edges_merged` fields never existed on the shipped struct — use the fields documented in [dream](../api/dream.md)). |
-| **Reversibility** ([reversibility](../api/reversibility.md)) | **NEW** — `mem.mutation_history` / `list_mutations` (SEE), the unified `mem.undo(mutation_id)` dispatcher + per-kind `unmerge` / `undo_entity_edit` / `undo_delete_entity` / `undo_delete_fact` / `unsupersede` / `restore_archived_fact`, plus direct mutations `edit_entity` / `delete_entity` / `delete_fact` / `supersede`. Every destructive mutation is reversible (ADR-073). |
-| **Content recall** ([recall](../api/recall.md)) | **NEW** — `mem.recall(q).content()` for BM25/FTS5 search over raw episode text, under the `content-search` feature (ADR-072) — **now ON by default** (ADR-078), which also RRF-fuses the BM25 + dense episode arms into the ordinary `recall()` path. |
-| **Namespace policy enforcement** | v0.1.4 declared policies; **v0.1.5+ ENFORCES them** (ADR-029b): `dream()` / `forget()` / `supersede()` now return `Error::NamespacePolicyViolation` on `AppendOnly` namespaces. This is a behaviour change if you registered `AppendOnly` policies expecting the v0.1.4 declare-only semantics. |
+| **Reversibility** ([reversibility](../api/reversibility.md)) | **NEW** — `mem.mutation_history` / `list_mutations` (SEE), the unified `mem.undo(mutation_id)` dispatcher + per-kind `unmerge` / `undo_entity_edit` / `undo_delete_entity` / `undo_delete_fact` / `unsupersede` / `restore_archived_fact`, plus direct mutations `edit_entity` / `delete_entity` / `delete_fact` / `supersede`. Every destructive mutation is reversible. |
+| **Content recall** ([recall](../api/recall.md)) | **NEW** — `mem.recall(q).content()` for BM25/FTS5 search over raw episode text, under the `content-search` feature — **now ON by default**, which also RRF-fuses the BM25 + dense episode arms into the ordinary `recall()` path. |
+| **Namespace policy enforcement** | v0.1.4 declared policies; **v0.1.5+ ENFORCES them**: `dream()` / `forget()` / `supersede()` now return `Error::NamespacePolicyViolation` on `AppendOnly` namespaces. This is a behaviour change if you registered `AppendOnly` policies expecting the v0.1.4 declare-only semantics. |
 | **Multi-namespace recall** | `recall(q).in_namespaces(&[...])` fans out across namespaces with cross-namespace RRF blending. |
 | **Metadata filters** | `recall(q).filter_metadata(key, value)` / `.filter_metadata_in(key, &[..])` post-filter recall by episode metadata. |
-| **Async extraction wait** | `mem.wait_for_processing(episode_id, timeout)` polls an episode to a terminal extraction state (ADR-051). |
-| **Feature flags** ([feature flags](../api/feature-flags.md)) | The crate's `default` feature set is **`["content-search"]`** (ADR-078, 2026-07-28 — it was previously empty); see [feature flags](../api/feature-flags.md). There is no separate `substrate` feature — the facade + substrate free-functions ship in the one default surface. |
+| **Async extraction wait** | `mem.wait_for_processing(episode_id, timeout)` polls an episode to a terminal extraction state. |
+| **Feature flags** ([feature flags](../api/feature-flags.md)) | The crate's `default` feature set is **`["content-search"]`** (2026-07-28 — it was previously empty); see [feature flags](../api/feature-flags.md). There is no separate `substrate` feature — the facade + substrate free-functions ship in the one default surface. |
 | **Node/napi binding** ([node binding](../api/node-binding.md)) | The JS binding mirrors the surface in camelCase, including the undo + inspect surface. |
 
 The substrate free-functions (`kremory::memory::submit_episode`, etc.) remain public and unchanged.
@@ -83,10 +83,10 @@ the change that is the actual reason to upgrade.
 
 | Area | Change |
 |---|---|
-| **`content-search` is now a DEFAULT feature** (ADR-078) | Measured 25.7% → 86.2% recall out of the box. If you were opting in explicitly, you can drop the flag; if you were relying on the previous empty default set, recall quality changes substantially — for the better. |
+| **`content-search` is now a DEFAULT feature** | Measured 25.7% → 86.2% recall out of the box. If you were opting in explicitly, you can drop the flag; if you were relying on the previous empty default set, recall quality changes substantially — for the better. |
 | **Dense episode arm ON by default** | Recall now RRF-fuses the BM25 and dense episode arms into the ordinary `recall()` path. |
-| **Contradiction detection** | Default flipped OFF and then back ON with a rewritten prompt, after the original was found to destroy set-valued facts (TD-167 / TD-165). |
-| **`RawFact` gained `valid_at: Option<String>`** (TD-187 / TD-192) | **BREAKING for external `EntityExtractor` implementations that build `RawFact` with a struct literal** — the type is `pub` and not `#[non_exhaustive]`. Every built-in extraction path is default-identical: the field is optional with `#[serde(default)]`, and an absent value falls back to the previous `ref_time` behaviour. Add `valid_at: None` to your literal, or switch to functional-update syntax. |
+| **Contradiction detection** | Default flipped OFF and then back ON with a rewritten prompt, after the original was found to destroy set-valued facts. |
+| **`RawFact` gained `valid_at: Option<String>`** | **BREAKING for external `EntityExtractor` implementations that build `RawFact` with a struct literal** — the type is `pub` and not `#[non_exhaustive]`. Every built-in extraction path is default-identical: the field is optional with `#[serde(default)]`, and an absent value falls back to the previous `ref_time` behaviour. Add `valid_at: None` to your literal, or switch to functional-update syntax. |
 
 ### v0.6.0 → v0.7.0
 
@@ -95,12 +95,12 @@ correctness fixes worth knowing about because they change results you may have m
 
 | Area | Change |
 |---|---|
-| **`SearchFilters.valid_after` / `valid_before` removed** | Declared since v0.1.0 and never wired to any query — ADR-068 built a separate mechanism for facts. Zero non-test usages before removal. If you were setting them, they were doing nothing; use `recall().as_of(t)`. |
+| **`SearchFilters.valid_after` / `valid_before` removed** | Declared since v0.1.0 and never wired to any query — a separate mechanism was built for facts. Zero non-test usages before removal. If you were setting them, they were doing nothing; use `recall().as_of(t)`. |
 | **`recall().as_of()` now scopes episode and content search too** | Previously it filtered facts only, so a valid-time query could still return present-day episode text. Results change for any `as_of` query. |
-| **Ingest no longer overwrites entity embeddings across namespaces** (TD-206) | A correctness fix; recall quality in multi-namespace deployments changes. |
-| **Dream alias resolution was inert on real corpora** (TD-203) | Now functional, so `dream()` does more than it used to. |
-| **Oversized documents no longer fail dense embedding silently** (TD-232) | New `split_for_embedding` helper; previously long inputs produced no embedding and no error. |
-| **New `extraction_arm_budget_ms` builder knob** (TD-231) | Additive. |
+| **Ingest no longer overwrites entity embeddings across namespaces** | A correctness fix; recall quality in multi-namespace deployments changes. |
+| **Dream alias resolution was inert on real corpora** | Now functional, so `dream()` does more than it used to. |
+| **Oversized documents no longer fail dense embedding silently** | New `split_for_embedding` helper; previously long inputs produced no embedding and no error. |
+| **New `extraction_arm_budget_ms` builder knob** | Additive. |
 | **`dream()` is no longer recommended as routine usage** | Documentation change, not behaviour — see [dream](../api/dream.md). |
 
 `0.7.1` is packaging and public-surface hygiene only: no behaviour, API or schema change.
@@ -127,7 +127,7 @@ explicitly rather than letting them be inferred through `MemoryBuilder`.
 
 Also in this release, all additive: `Memory::with_ollama_at_model(url, model, path)`; `Debug`
 implementations for `Memory` and `MemoryBuilder` (neither had one); prior-turn replay into the
-extraction prompt so references resolve across conversation turns (ADR-080); and a fix for
+extraction prompt so references resolve across conversation turns; and a fix for
 `update_episode_metadata`, which overwrote every episode sharing a source id.
 
 ---

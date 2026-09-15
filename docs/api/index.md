@@ -15,7 +15,7 @@ before the code; pages that are simple mechanism just show the code.
 > applications should use the facade described here. Since v0.1.3 the facade gained a
 > fully-wired [dream consolidation phase](./dream.md), [reversible graph mutations with a
 > see/undo surface](./reversibility.md), [BM25/FTS5 content recall](./recall.md)
-> (`content-search` — a DEFAULT feature since ADR-078), and a
+> (`content-search` — a DEFAULT feature since 2026-07-28), and a
 > [feature-flag matrix](./feature-flags.md). The [Node binding](./node-binding.md) mirrors the
 > surface in camelCase.
 
@@ -29,7 +29,7 @@ before the code; pages that are simple mechanism just show the code.
   embedder: environment-driven shortcuts, named shortcuts, and the full builder with
   observability.
 - **[Namespaces and multi-tenancy](./namespaces.md)** — default and per-call namespaces, the
-  multi-tenant SaaS pattern, namespace policies (ADR-029a), and per-namespace entity-type
+  multi-tenant SaaS pattern, namespace policies, and per-namespace entity-type
   vocabularies.
 
 **Writing and reading**

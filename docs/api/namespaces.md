@@ -78,13 +78,13 @@ let ctx = mem.recall("onboarding status")
     .await?;
 ```
 
-### Namespace policies (v0.1.4+, ADR-029a)
+### Namespace policies (v0.1.4+)
 
 Per-namespace policy controls let callers DECLARE compliance intent (audit-grade,
 non-forgettable, non-dream-eligible). v0.1.4 **PERSISTS** the declaration and
 emits operational warnings, but does **NOT ENFORCE** the policy on
-`dream()` / `forget()` / mutation operations — enforcement lands in v0.1.5+
-per ADR-029b. Use the v0.1.4 window to capture intent + validate consumer
+`dream()` / `forget()` / mutation operations — enforcement lands in v0.1.5+.
+Use the v0.1.4 window to capture intent + validate consumer
 ergonomics ahead of enforcement.
 
 ```rust
@@ -125,7 +125,7 @@ Call `register_namespace` explicitly at startup for namespaces that need a
 non-default policy declared up front.
 
 **Retroactive upgrade**: `Memory::upgrade_namespace_policy(namespace)` monotonically ratchets an
-existing namespace's immutability from `Mutable` to `AppendOnly` (ADR-029b Decision 5) — a
+existing namespace's immutability from `Mutable` to `AppendOnly` — a
 **one-way** move; attempting the reverse (`AppendOnly → Mutable`) returns
 `Err(MemoryError::Core(Error::NamespacePolicyImmutable { .. }))`. Calling it on an
 already-`AppendOnly` namespace is idempotent (`Ok(())`).
