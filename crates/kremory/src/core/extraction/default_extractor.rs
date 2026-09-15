@@ -61,7 +61,10 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
         );
         let stage1_start = Instant::now();
         let stage1_msgs = vec![
-            chat_msg_system("You are an entity extraction system. Extract named entities from text. Each entity must appear ONCE — no duplicates. Output valid JSON only."),
+            chat_msg_system(format!(
+                "You are an entity extraction system. Extract named entities from text. Each entity must appear ONCE — no duplicates. Output valid JSON only. {}",
+                super::injection_patterns::UNTRUSTED_SOURCE_SYSTEM_RULE
+            )),
             chat_msg_user(stage1_prompt),
         ];
         // Build per-call schema with entity_type_id constrained to registered integer IDs.
@@ -104,7 +107,10 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
         let stage2_prompt = build_relation_names_prompt(text, &entities, ctx.allowed_edge_types);
         let stage2_start = Instant::now();
         let stage2_msgs = vec![
-            chat_msg_system("You are a relationship extraction system. Given entities found in text, identify relationship type names. Output valid JSON only."),
+            chat_msg_system(format!(
+                "You are a relationship extraction system. Given entities found in text, identify relationship type names. Output valid JSON only. {}",
+                super::injection_patterns::UNTRUSTED_SOURCE_SYSTEM_RULE
+            )),
             chat_msg_user(stage2_prompt),
         ];
         let stage2_value = structured::StructuredCallBuilder::new(
@@ -137,7 +143,10 @@ impl<L: ChatProvider> EntityExtractor for IntegerIdLlmExtractor<L> {
         });
         let stage3_start = Instant::now();
         let stage3_msgs = vec![
-            chat_msg_system("You are a knowledge graph extraction system. Extract (subject, predicate, object) triplets. Output valid JSON only."),
+            chat_msg_system(format!(
+                "You are a knowledge graph extraction system. Extract (subject, predicate, object) triplets. Output valid JSON only. {}",
+                super::injection_patterns::UNTRUSTED_SOURCE_SYSTEM_RULE
+            )),
             chat_msg_user(stage3_prompt),
         ];
         let stage3_value = structured::StructuredCallBuilder::new(
