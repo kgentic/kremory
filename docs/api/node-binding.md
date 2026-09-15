@@ -11,7 +11,7 @@ in **camelCase**. The reversibility surface is fully mirrored:
 - `DreamSummary` mirrors as `JsDreamSummary` with the honest fields (`crossEpisodeWouldMerge` vs
   `crossEpisodeMerged`, `budgetExhausted`, …).
 
-> **Updated 2026-07-28 (ADR-078).** This note previously said `content-search` was "a Rust-only
+> **Updated 2026-07-28.** This note previously said `content-search` was "a Rust-only
 > opt-in ... not enabled in the current `kremory-napi` build". That understated it: the binding had
 > **no passthrough for the feature at all**, so a Node consumer could not enable it under any
 > circumstances and was locked to entity/fact-only recall — which measures **−32.2pt**.
@@ -22,4 +22,4 @@ in **camelCase**. The reversibility surface is fully mirrored:
 
 ---
 
-*API reference current as of kremory v0.7 (2026-09-07). Facade design: ADR-027 (outside-in API design). Temporal model: ADR-003. BYOM contract: ADR-002. Dream reversibility: ADR-073. Content recall: ADR-072. Crate topology: ADR-028 (single-crate + cargo features, supersedes ADR-007 + ADR-008).*
+*API reference current as of kremory v0.7 (2026-09-07). Facade design: outside-in API design. Temporal model: see [ADR-003](../adr/adr-003-bitemporal-audit-compliance.md). BYOM contract: see [ADR-002](../adr/adr-002-byom-distribution-moat.md). Dream reversibility: every committed mutation is reversible. Content recall: BM25/FTS5 search over raw episode text. Crate topology: single crate + cargo features.*

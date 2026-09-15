@@ -372,7 +372,7 @@ fact archival are **ON and commit**. Cross-episode entity merges are the one exc
 default to **Shadow mode** (they compute and *report* merge decisions but fuse nothing), so you
 opt into actual fusion explicitly with `.cross_episode(CrossEpisodeMode::Apply)`. Watch the split
 via `summary.cross_episode_would_merge` (decisions) vs `summary.cross_episode_merged` (committed).
-Committing by default is safe because **every committed mutation is reversible** (ADR-073) — you
+Committing by default is safe because **every committed mutation is reversible** — you
 can always SEE what changed and UNDO it.
 
 ```rust
@@ -538,7 +538,7 @@ changes — pin a minor (`kremory = "0.8"`) and read the [CHANGELOG](CHANGELOG.m
   mirroring the Rust `Memory` facade in camelCase, including undo/reversibility. **It is not yet
   published to npm** — build it from source if you need it today. Known limitation: wiring a
   custom (JS-callback) embedder or LLM provider can hit a native teardown assertion on abrupt
-  process exit (upstream napi-rs issue; tracked as TD-005b) — this gates the npm publish.
+  process exit (upstream napi-rs issue) — this gates the npm publish.
 - **MCP server (`kremory-mcp`).** A Model Context Protocol server (5 tools: remember / recall /
   dream / list_mutations / undo) exists in this repo. **It is not yet published as an installable
   package** — build it from source.

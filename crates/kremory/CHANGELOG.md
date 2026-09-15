@@ -176,7 +176,7 @@ Presence-only for opaque `Arc<dyn Trait>` fields, verbatim for everything
 else, `finish_non_exhaustive()` — the same shape as `tokio::runtime::Runtime`
 and `reqwest::Client`. Previously neither type implemented `Debug` at all.
 
-### Added — prior-turn replay into the extraction prompt (ADR-080)
+### Added — prior-turn replay into the extraction prompt
 
 When consecutive episodes are tagged with the same source id (`.from_chat(id)` and friends),
 the preceding turns of that conversation are now replayed into the extraction prompt as
@@ -205,7 +205,7 @@ metadata of the others. It now merges per row, into each row's own metadata. Sam
 affected; the base value is no longer borrowed from a sibling.
 
 Reachable today through the documented session-threading recipe and through the Node binding's
-`remember({metadata, source_id})`, and ADR-080 makes multi-episode source ids the normal case,
+`remember({metadata, source_id})`, and multi-episode source ids are now the normal case,
 so this is a fix rather than hardening.
 
 
@@ -252,10 +252,10 @@ crates and pointing at `docs/observability.md` for the current picture.
 
 ## [0.7.0] - 2026-09-02
 
-### Added — `split_for_embedding` (TD-232 / TD-234)
+### Added — `split_for_embedding`
 
 A long document handed to `remember()` whole silently loses its dense/embedding search arm
-once it exceeds the embedder's own context window (TD-232) — kremory doesn't chunk content on
+once it exceeds the embedder's own context window — kremory doesn't chunk content on
 your behalf (a deliberate architectural boundary, unchanged by this release), and until now
 there was no supported way to chunk it yourself either. `kremory::split_for_embedding(text,
 max_chars)` fills that gap: unicode-aware sentence/paragraph-boundary splitting (via the
@@ -263,11 +263,11 @@ max_chars)` fills that gap: unicode-aware sentence/paragraph-boundary splitting 
 calls it automatically — see the `core::chunking` module doc comment for why a DEFAULT,
 automatic version of this was considered and deliberately not built this release.
 
-### Fixed — `recall().as_of()` did not scope episode/content search (ADR-068 extension)
+### Fixed — `recall().as_of()` did not scope episode/content search
 
-ADR-068's point-in-time (`as_of`) filter only ever scoped the fact 1-hop expansion, reasoning
+The existing point-in-time (`as_of`) filter only ever scoped the fact 1-hop expansion, reasoning
 "entities carry no temporal columns" — true for entities, never true for episodes. Since
-ADR-078 made `content-search` the default primary retrieval arm, most of a typical `recall()`
+`content-search` became the default primary retrieval arm, most of a typical `recall()`
 was unscoped by any requested point-in-time: `as_of(t)` correctly hid facts from after `t`
 while still returning episode content and dense-arm hits from after `t`, unfiltered. Both
 `content_search` (BM25) and `vector_search_episodes` (dense, both the DiskANN-index and
@@ -280,20 +280,20 @@ sans the exclusive `valid_to` case, which does not apply here). No public API ch
 
 Declared since kremory v0.1.0, flagged dead by an adversarial review in the original May 2026
 amendment spec, never wired to any query — `SearchOpts.as_of` was always meant to populate
-these and ADR-068 built a separate mechanism for facts instead. Confirmed zero non-test,
+these, and a separate mechanism was built for facts instead. Confirmed zero non-test,
 non-declaration usages before removal. A sibling defect on the same struct
 (`SearchFilters.exclude_expired` — one real caller sets it to `false` expecting a behaviour
 change that never fires) was found during the same audit and is recorded, not fixed, as
-TD-234 — it needs a design decision (wire it or delete it + fix the caller), not a mechanical
+a known gap — it needs a design decision (wire it or delete it + fix the caller), not a mechanical
 removal.
 
-### Added — `extraction_arm_budget_ms` builder method (TD-231)
+### Added — `extraction_arm_budget_ms` builder method
 
 `PipelineConfigOverrides::extraction_arm_budget_ms` existed on the internal config type but had
 no `MemoryBuilder` setter, so consumers had no way to reach a documented knob. Added
 `.extraction_arm_budget_ms(ms: u64)` mirroring the sibling `with_*` config-override setters.
 
-### Fixed — silent dense-embedding failure on oversized documents (TD-232)
+### Fixed — silent dense-embedding failure on oversized documents
 
 Ingesting a document too large for the embedder (context-window rejection) previously reported
 success while silently degrading that episode to lexical-only search, with no signal to the
@@ -315,7 +315,7 @@ default... all ops ON") — corrected to describe it as optional. Nothing auto-t
 in either version; the automatic scheduler defaults to `DreamSchedule::Off` and always has.
 Reversibility (see/undo any dream mutation) is unaffected and remains real.
 
-### Fixed — dream alias resolution was inert on real corpora (TD-203)
+### Fixed — dream alias resolution was inert on real corpora
 
 On the shipped LoCoMo corpus, **42 of 42 alias candidates sat unresolved across ten
 completed dream runs.** Re-running the same unchanged pass on a copy resolved 28 of them in
@@ -325,7 +325,7 @@ under a second. Four defects, all now closed:
   the merge keeper produced `X pred X`, which asserts nothing — 41 live ones on that corpus,
   18 on the reserved `potential_alias` predicate, a shape disambiguation cannot even emit.
   Such facts are now expired by the merge, and **revived by `unmerge`** so the mutation stays
-  reversible (ADR-073).
+  reversible.
 - **The dream pass that RESOLVES aliases ran before the two passes that CREATE them.**
   Anything produced by acronym/nickname recall or by canonicalization's merges waited for a
   *next* dream, which a one-dream-per-namespace caller never provides. A second deterministic
@@ -341,7 +341,7 @@ under a second. Four defects, all now closed:
   to **100 rows** and took an arbitrary one. Harmless there only because same-named entities
   across namespaces happened to carry identical vectors; now scoped.
 
-### Fixed — ingest overwrote entity embeddings across ALL namespaces (TD-206)
+### Fixed — ingest overwrote entity embeddings across ALL namespaces
 
 **Cross-namespace corruption of a live retrieval signal, on the default ingest path.**
 `ingest_with.rs` set every extracted entity's embedding via a helper whose SQL matched
@@ -369,21 +369,21 @@ Also lands the v1 durability sweep: sink events and durable-write counters no lo
 describe rows a rollback erased, and two migration crash-resume defects are fixed.
 
 Folded in since this entry was first drafted: `recall()` no longer leaks kremory's own
-entity-disambiguation bookkeeping to consumers as invented facts (TD-197 — up to 142 of
+entity-disambiguation bookkeeping to consumers as invented facts (up to 142 of
 199 benchmark questions were affected before the fix), a bi-temporal anchoring bug where
-LLM-extracted facts ignored the caller's declared `published_at` (TD-181), and a fix for
+LLM-extracted facts ignored the caller's declared `published_at`, and a fix for
 entities mentioned before being formally extracted, which were previously unreachable by
 both text and vector search. Also ships a breaking addition to `RawFact` for external
 `EntityExtractor` implementations, a fully-public construction surface for
 `RetrievedContext` / `RetrievedFact`, and two dependency security fixes.
 
 ### Changed (breaking)
-- **`content-search` is a DEFAULT feature (ADR-078).** Measured 25.7% -> 86.2% recall
+- **`content-search` is a DEFAULT feature.** Measured 25.7% -> 86.2% recall
   out of the box. This is the headline reason to upgrade.
 - **Dense episode arm ON by default.**
 - **Contradiction detection default flipped OFF then back ON** with a rewritten prompt
-  after it was found to destroy set-valued facts (TD-167/TD-165).
-- **`RawFact` gains a new field, `valid_at: Option<String>` (TD-187/TD-192).** Breaking
+  after it was found to destroy set-valued facts.
+- **`RawFact` gains a new field, `valid_at: Option<String>`.** Breaking
   for external `EntityExtractor` implementations that construct `RawFact` via struct
   literal — it is `pub`, not `#[non_exhaustive]`. Default-identical for every built-in
   extraction path: the field is optional/`#[serde(default)]`, and an absent value falls
@@ -401,17 +401,17 @@ both text and vector search. Also ships a breaking addition to `RawFact` for ext
 - **`IngestStatus::Skipped`** — a terminal status for `skip_extraction` ingests, which
   previously stayed `Pending` forever and surfaced to callers as `WaitTimeout`.
 - **`RetrievedContext::with_facts(...)` / `with_entity_type(id, name)`, plus
-  `RetrievedFact::new(RetrievedFactNewParams)` (+ `with_invalid_at` / `with_expired_at`)
-  (TD-199).** `RetrievedFact` previously had no public constructor at all, and
+  `RetrievedFact::new(RetrievedFactNewParams)` (+ `with_invalid_at` / `with_expired_at`).**
+  `RetrievedFact` previously had no public constructor at all, and
   `RetrievedContext`'s fluent-setter surface had no way to set `facts` or the
   entity-type pair — both `#[non_exhaustive]` types are now fully constructible outside
   the crate.
 - **`kremory::memory::{RenderableContext, RenderableFact, RenderableSourceRef}` traits,
-  and `render_entities` / `render_edge_summary` / `render_temporal_facts` are now `pub`
-  (TD-198).** Lets a consumer render kremory's own Markdown context blocks over its own
+  and `render_entities` / `render_edge_summary` / `render_temporal_facts` are now `pub`.**
+  Lets a consumer render kremory's own Markdown context blocks over its own
   result type, not only `RetrievedContext`.
 - **Extraction prompts are now temporally grounded, and facts can carry their own
-  `valid_at` (TD-187).** When a caller sets `.published_at(...)`, the extraction prompt
+  `valid_at`.** When a caller sets `.published_at(...)`, the extraction prompt
   now includes that declared date, and an extracted fact's `valid_at` is used when the
   model supplies one (falling back to the episode's reference time otherwise) —
   previously every fact from one episode shared a single date regardless of what the
@@ -435,12 +435,12 @@ both text and vector search. Also ships a breaking addition to `RawFact` for ext
   dream pass**, discarding every other adjudicated merge.
 - **`NuExtractEntitiesOnly` token cost was attributed to `operation="unclassified"`.**
 - **`recall()` no longer serves kremory's own entity-disambiguation bookkeeping to
-  consumers as a fact (TD-197).** The reserved `potential_alias` meta-edge predicate —
+  consumers as a fact.** The reserved `potential_alias` meta-edge predicate —
   used internally to propose entity merges — was never filtered out of either the
   connected-facts projection or the dense fact-search arm. Measured on a 199-question
   benchmark: 142 questions were leaking it before the fix, 0 after.
 - **Facts produced by LLM extraction now honour the caller's declared `published_at`**
-  instead of always anchoring to ingest wall-clock (TD-181) — previously only
+  instead of always anchoring to ingest wall-clock — previously only
   caller-supplied structured facts respected it, so the same document could be
   bi-temporally anchored two different ways depending on which code path produced a
   given fact.
@@ -448,8 +448,8 @@ both text and vector search. Also ships a breaking addition to `RawFact` for ext
   formally extracted — are now findable.** They previously had neither a name (missed
   by full-text search) nor an embedding (missed by vector search); both are now
   backfilled after commit.
-- **A silent data-loss bug in the structured-output JSON repair path is fixed
-  (TD-192).** The prior JSON-repair dependency flattened any array it had to recover
+- **A silent data-loss bug in the structured-output JSON repair path is fixed.**
+  The prior JSON-repair dependency flattened any array it had to recover
   rather than parse cleanly, silently dropping every element after the first while still
   reporting success. Replaced with a dependency (`jsonrepair`) that fails loudly instead
   of silently truncating; not observed to have fired on the benchmark corpus this was
@@ -479,7 +479,7 @@ fact sentences, and `RetrievedContext.facts` / napi `RetrievedContext.facts` are
 new. (Rolls up the prepared-but-unpublished 0.4.1 patch.)
 
 ### Added
-- **`recall` returns connected facts (TD-116, ADR-074)** — each `RetrievedContext`
+- **`recall` returns connected facts** — each `RetrievedContext`
   now carries `facts: Vec<RetrievedFact>`, the LLM-consumable knowledge: a
   natural-language `fact` string ("Grace Hopper invented the compiler") + the
   structured triple + BOTH bi-temporal clocks (`valid_at`/`invalid_at` +
@@ -490,19 +490,19 @@ new. (Rolls up the prepared-but-unpublished 0.4.1 patch.)
   the fact sentences instead of the entity name + type-label summary.
 
 ### Fixed
-- **Caller-pinned facts are now recall-findable (TD-113)** — `remember(...).with_facts(...).skip_extraction()`
+- **Caller-pinned facts are now recall-findable** — `remember(...).with_facts(...).skip_extraction()`
   previously pinned facts that `recall` could not return (0 results), undercutting the
   "no second LLM" path. Pinned entities are now stamped at write time via three channels,
   all LLM-free: FTS name (`properties["name"]`), a vector embedding of the literal name, and
   an episodic edge for source attribution (without which a found entity renders empty under
   the default `TemporalFacts` template).
-- **DiskANN vector index revived (TD-115)** — the `entities` embedding column was declared as
+- **DiskANN vector index revived** — the `entities` embedding column was declared as
   a bare `BLOB` by earlier rebuild migrations, which `libsql_vector_idx` rejects; the failed
   index-create was swallowed, so *all* vector recall had silently fallen back to brute-force
   (correct but O(n) — no ANN speedup). New idempotent migration `migrate_023` rebuilds the
   column as `F32_BLOB(dim)` and creates the index loudly; the two prior swallowed index-create
   sites now emit a `kremory.search.vector_index_create_failed` counter + warning.
-- **Filtered-ANN per-namespace recall shortfall (TD-114)** — `vector_top_k` post-filters
+- **Filtered-ANN per-namespace recall shortfall** — `vector_top_k` post-filters
   `group_id`, so a small-fraction namespace could be under-filled after the filter. The index
   path now over-fetches scaled by estimated namespace selectivity (capped) and emits
   `kremory.search.namespace_recall_shortfall_total` on a true ANN-horizon shortfall.
@@ -510,17 +510,17 @@ new. (Rolls up the prepared-but-unpublished 0.4.1 patch.)
 ## [0.4.0] - 2026-07-12
 
 Minor bump on the pre-1.0 lane (breaking changes permitted). Adds the reversible
-graph-mutation surface (ADR-073) and content recall (ADR-072 seq1), and fixes a
+graph-mutation surface and content recall, and fixes a
 fact-extraction production bug on the `ner` build.
 
 ### Added
-- **Reversible graph mutations (ADR-073)** — `unmerge`, `edit_entity` (rename / re-type
+- **Reversible graph mutations** — `unmerge`, `edit_entity` (rename / re-type
   with FK + edge + community propagation), `delete_entity` (cascade), and their inverses
   `undo_entity_edit` / `undo_delete_entity` / undo-of-unmerge, plus `list_mutations`,
   `mutation_history`, and NOGOOD recording so a reversed merge is not re-proposed. Every op
   returns an honest outcome struct (repointed / removed / restored counts, `already_undone`
   idempotency). Mirrored 1:1 on the `kremory-napi` surface.
-- **Content recall (ADR-072 seq1)** — `.content()` terminal on the recall builder performs
+- **Content recall** — `.content()` terminal on the recall builder performs
   FTS5/BM25 full-text search over raw episode text (migrate_022 `episodes_fts` virtual table
   + purge cascade). Gated behind the `content-search` feature.
 
@@ -559,8 +559,6 @@ fact-extraction production bug on the `ner` build.
   episode at most once" a structural invariant. New counter
   `kremory.ingest.episodic_edge_dup_suppressed_total` surfaces any suppressed duplicate
   (≈0 in normal operation). Entity-merge edge remapping handles the new constraint.
-
-See ADR-055 for the full rationale.
 
 ## [0.3.1] - 2026-06-24
 
