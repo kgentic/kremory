@@ -10,7 +10,7 @@ implementation grouping. Pages with a "why would I want this" trade-off worth st
 `.content()` versus `.raw()`, Reversibility's `merge_nogood` rationale) lead with the trade-off
 before the code; pages that are simple mechanism just show the code.
 
-> **v0.8** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
+> **v0.9** — The primary consumer surface is `kremory::Memory`. Substrate free-functions
 > (`kremory::memory::submit_episode`, and friends) remain public for advanced users; most
 > applications should use the facade described here. Since v0.1.3 the facade gained a
 > fully-wired [dream consolidation phase](./dream.md), [reversible graph mutations with a

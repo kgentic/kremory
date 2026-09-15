@@ -2,15 +2,17 @@
 
 ## Supported versions
 
-kremory is pre-1.0 (`0.5.x`). There is one supported line: **the latest published `0.5.x`
+kremory is pre-1.0. There is one supported line: **whatever is the latest published `0.x`
 release on [crates.io](https://crates.io/crates/kremory)**. Security fixes land on `main` and
 ship in the next patch/minor release — there is no backport policy for older `0.x` releases
-while the project is pre-1.0.
+while the project is pre-1.0. (Deliberately not naming a specific version number here — pre-1.0,
+that number changes often enough that a hardcoded one goes stale faster than this file gets
+reviewed. Check crates.io for the current version.)
 
 | Version | Supported |
 |---|---|
-| `0.5.x` (latest) | ✅ |
-| `< 0.5.0` | ❌ — upgrade to latest |
+| Latest published `0.x` release | ✅ |
+| Any older `0.x` release | ❌ — upgrade to latest |
 
 ## Reporting a vulnerability
 
