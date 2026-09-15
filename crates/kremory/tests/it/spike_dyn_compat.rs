@@ -203,6 +203,7 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                 committed_at: chrono::Utc::now(),
                 stub_entities_inserted: 0,
                 dense_embedded: None,
+                embedding_failures: Vec::new(),
             })
         } else {
             // Delegate to EngineGraphHandle for inline path

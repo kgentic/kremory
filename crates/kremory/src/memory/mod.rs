@@ -919,6 +919,7 @@ mod tests {
                 committed_at: chrono::Utc::now(),
                 stub_entities_inserted: 0,
                 dense_embedded: None,
+                embedding_failures: Vec::new(),
             })
         }
 

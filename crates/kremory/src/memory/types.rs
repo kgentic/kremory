@@ -900,6 +900,22 @@ pub struct EpisodeCommit {
     /// `stub_entities_inserted` above.
     #[serde(default)]
     pub dense_embedded: Option<bool>,
+    /// TD-253: identifiers (fact triple text, or entity name) for every fact/entity
+    /// whose embedding provider call FAILED during this ingest — the row is still
+    /// persisted, with `embedding = NULL`, and would otherwise be invisible until a
+    /// LATER `recall()` silently found nothing. Empty when nothing failed OR when
+    /// this path cannot observe the swallow synchronously (mirrors `dense_embedded`'s
+    /// `None` case, but as an empty `Vec` rather than `Option` — multiple facts/
+    /// entities in ONE episode can independently fail, so a scalar cannot represent
+    /// it): the background-spawn path (`run_id.is_some()`) and the separate
+    /// `BackgroundIngestor` path both return before any embed attempt resolves, and
+    /// their failures remain observable only via `tracing`/metrics, never here.
+    /// See ADR "TD-253 — surface embedder failures via EpisodeCommit.embedding_failures".
+    ///
+    /// `#[serde(default)]` for the same v0.1.0-JSON-compat reason as
+    /// `stub_entities_inserted` above.
+    #[serde(default)]
+    pub embedding_failures: Vec<String>,
 }
 
 /// Status of a Phase 3 (dream-phase batch consolidation) run.

@@ -422,6 +422,9 @@ impl GraphHandle for EngineGraphHandle {
                 // embed attempt inside it) resolves — see
                 // `EpisodeCommit::dense_embedded`.
                 dense_embedded: None,
+                // Same reasoning as `dense_embedded` above — see
+                // `EpisodeCommit::embedding_failures`.
+                embedding_failures: Vec::new(),
             });
         }
 
@@ -576,6 +579,9 @@ impl GraphHandle for EngineGraphHandle {
             // The inline path — the one place this IS known
             // synchronously. See `EpisodeCommit::dense_embedded`.
             dense_embedded: Some(ingest_result.dense_embedded),
+            // The inline path — the one place this IS known synchronously.
+            // See `EpisodeCommit::embedding_failures`.
+            embedding_failures: ingest_result.embedding_failures,
         })
     }
 

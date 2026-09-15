@@ -274,6 +274,9 @@ impl GraphHandle for BackgroundIngestorGraphHandle {
                 // Background path: the embed attempt (if any) hasn't resolved
                 // synchronously yet — see `EpisodeCommit::dense_embedded`.
                 dense_embedded: None,
+                // Same reasoning as `dense_embedded` above — see
+                // `EpisodeCommit::embedding_failures`.
+                embedding_failures: Vec::new(),
             })
         } else {
             // Inline path: delegate to EngineGraphHandle.

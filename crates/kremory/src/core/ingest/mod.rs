@@ -220,6 +220,19 @@ pub struct IngestionResult {
     /// need to represent (every construction site of `IngestionResult` is on
     /// a path where the answer IS synchronously known).
     pub dense_embedded: bool,
+    /// TD-253: identifiers (fact triple text, or entity name) for every fact/entity
+    /// whose embedding provider call FAILED during this ingest — the row was still
+    /// persisted, with `embedding = NULL`, exactly like `dense_embedded: false` but
+    /// per-item rather than per-episode (multiple facts/entities in one episode can
+    /// independently fail). Empty when nothing failed. Covers only the SYNCHRONOUS
+    /// swallow sites reachable within this call (fact-embed, forward-reference stub
+    /// entities, and `.with_facts()` pinned entities) — the separate
+    /// `BackgroundIngestor` / `ingest_deferred` path swallows the same class of
+    /// failure but runs on a detached worker after this function has already
+    /// returned, so it cannot contribute here; that path remains observable only via
+    /// its own `tracing`/metrics. See ADR "TD-253 — surface embedder failures via
+    /// EpisodeCommit.embedding_failures".
+    pub embedding_failures: Vec<String>,
 }
 
 // ── Dream pass types ────────────────────────────────────────────────────────

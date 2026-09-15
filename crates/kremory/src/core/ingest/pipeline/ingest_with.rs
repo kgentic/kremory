@@ -288,7 +288,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         // pre-write ordering. Intra-set duplicates (caller passes the same
         // triple twice in their own set) also dedup cleanly via
         // `try_insert_fact_with_group`.
-        let pinned_fact_ids: Vec<i64> = self
+        let (pinned_fact_ids, mut embedding_failures): (Vec<i64>, Vec<String>) = self
             .write_pre_pinned_facts(PrePinnedWriteParams {
                 pre_pinned_facts: &source_params.pre_pinned_facts,
                 episode_id,
@@ -322,6 +322,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 token_usage,
                 stub_entities_inserted: 0,
                 dense_embedded,
+                embedding_failures,
             });
         }
 
@@ -1166,11 +1167,29 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                             &fact_text,
                             self.config.search.embed_task_prefix_enabled,
                         );
-                        if let Ok(embedding) = self.embedder.embed(&prefixed_fact_text).await {
-                            self.graph
-                                .set_fact_embedding(fact_id, &embedding)
-                                .await
-                                .ok();
+                        match self.embedder.embed(&prefixed_fact_text).await {
+                            Ok(embedding) => {
+                                // TD-253: a successful embed can still leave
+                                // `facts.embedding` NULL if the STORE write
+                                // fails — same caller-visible gap as an embed
+                                // failure, so it gets the same accumulator push
+                                // (mirrors the stub-entity loop's
+                                // `store_failed` arm below).
+                                if self
+                                    .graph
+                                    .set_fact_embedding(fact_id, &embedding)
+                                    .await
+                                    .is_err()
+                                {
+                                    embedding_failures.push(fact_text.clone());
+                                }
+                            }
+                            // TD-253: previously silent (no log, no metric) —
+                            // the fact still inserted with `embedding = NULL`,
+                            // invisible until a later `recall()` found nothing.
+                            Err(_) => {
+                                embedding_failures.push(fact_text.clone());
+                            }
                         }
                         inserted_fact_ids.push(fact_id);
                     }
@@ -1364,6 +1383,10 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                                     "stub embedding computed but NOT stored — this stub \
                                      stays invisible to dense retrieval"
                                 );
+                                // TD-253: computed-but-unstored still leaves
+                                // `entities.embedding` NULL — same caller-visible
+                                // gap as an embed failure.
+                                embedding_failures.push(stub_name.clone());
                             }
                         },
                         Err(e) => {
@@ -1379,6 +1402,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                                 "stub embedding FAILED — this stub stays invisible to \
                                  dense retrieval (ingest continues)"
                             );
+                            // TD-253: this loop already logged + counted the
+                            // failure — now also surfaced on EpisodeCommit so a
+                            // caller can act on it instead of only an operator
+                            // watching metrics.
+                            embedding_failures.push(stub_name.clone());
                         }
                     }
                 }
@@ -1449,6 +1477,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             token_usage,
             stub_entities_inserted,
             dense_embedded,
+            embedding_failures,
         })
         }
         .await;
@@ -1525,14 +1554,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
     /// FTS-findable + attributed. `set_entity_embedding` + `insert_episodic_edge`
     /// are UPDATE/INSERT-OR-IGNORE, so they also cover entities that pre-existed
     /// as bare stubs (the FTS-name INSERT, by contrast, is skipped on Duplicate).
-    pub(super) async fn make_pinned_entity_recallable(&self, p: PinnedEntityRecall<'_>) {
+    /// Returns `true` iff the entity's embedding was computed AND stored — `false`
+    /// on either failure (TD-253: both leave `entities.embedding` NULL for this id,
+    /// so the caller cannot distinguish them and does not need to). The channel-3
+    /// attribution edge below is independent and does not affect this return value.
+    pub(super) async fn make_pinned_entity_recallable(&self, p: PinnedEntityRecall<'_>) -> bool {
         let PinnedEntityRecall {
             id,
             group_id,
             episode_id,
         } = p;
         // Channel 2 — vector. WRITE into `entities.embedding` — document-prefix it.
-        match self
+        let embedded = match self
             .embedder
             .embed(&document_embed_text(
                 id,
@@ -1559,9 +1592,11 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         error = %e,
                         "kremory.with_facts.pinned_embedding_stamp_failed"
                     );
+                    false
                 } else {
                     metrics::counter!("kremory.with_facts.pinned_entity_embedded_total")
                         .increment(1);
+                    true
                 }
             }
             Err(e) => {
@@ -1571,8 +1606,9 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     error = %e,
                     "kremory.with_facts.pinned_embedding_failed"
                 );
+                false
             }
-        }
+        };
 
         // Channel 3 — attribution. entity_group_id MUST match the entity's
         // namespace or the Migration-006 composite FK (entity_id, entity_group_id)
@@ -1596,5 +1632,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         } else {
             metrics::counter!("kremory.with_facts.pinned_episodic_edge_total").increment(1);
         }
+
+        embedded
     }
 }

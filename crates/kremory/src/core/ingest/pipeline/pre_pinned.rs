@@ -38,16 +38,25 @@ pub(super) struct PrePinnedWriteParams<'a> {
 }
 
 impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
-    /// Write the caller's pre-pinned facts and return the ids that landed.
+    /// Write the caller's pre-pinned facts and return the ids that landed, plus
+    /// (TD-253) the identifiers of any pinned entity whose embedding FAILED — the
+    /// entity is still pinned/recallable via BM25 + graph traversal, just not via
+    /// dense search. `.1` feeds `IngestionResult::embedding_failures`.
     ///
-    /// Infallible by design — see the module doc.
-    pub(super) async fn write_pre_pinned_facts(&self, p: PrePinnedWriteParams<'_>) -> Vec<i64> {
+    /// Infallible by design — see the module doc. The embedding-failure list is an
+    /// OBSERVABILITY addition, not a change to that contract: nothing here starts
+    /// returning `Err`.
+    pub(super) async fn write_pre_pinned_facts(
+        &self,
+        p: PrePinnedWriteParams<'_>,
+    ) -> (Vec<i64>, Vec<String>) {
         let PrePinnedWriteParams {
             pre_pinned_facts,
             episode_id,
             group_id,
         } = p;
         let mut pinned_fact_ids: Vec<i64> = Vec::new();
+        let mut embedding_failures: Vec<String> = Vec::new();
         let mut pinned_count: u64 = 0;
         for pf in pre_pinned_facts {
             // Auto-stub the subject entity (entity_type_id=0 "Entity") so the
@@ -99,12 +108,16 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             // embedder is NOT the chat LLM — "no second LLM" still holds.
             // Also links the entity to its episode (attribution
             // channel) so it renders under the default TemporalFacts template.
-            self.make_pinned_entity_recallable(PinnedEntityRecall {
-                id: &pf.subject,
-                group_id,
-                episode_id,
-            })
-            .await;
+            if !self
+                .make_pinned_entity_recallable(PinnedEntityRecall {
+                    id: &pf.subject,
+                    group_id,
+                    episode_id,
+                })
+                .await
+            {
+                embedding_failures.push(pf.subject.clone());
+            }
             if let Some(ref obj_id) = pf.object_id {
                 if let Err(e) = self
                     .graph
@@ -124,12 +137,16 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                         );
                     }
                 }
-                self.make_pinned_entity_recallable(PinnedEntityRecall {
-                    id: obj_id,
-                    group_id,
-                    episode_id,
-                })
-                .await;
+                if !self
+                    .make_pinned_entity_recallable(PinnedEntityRecall {
+                        id: obj_id,
+                        group_id,
+                        episode_id,
+                    })
+                    .await
+                {
+                    embedding_failures.push(obj_id.clone());
+                }
             }
 
             // Time-inversion guard — mirror `facade/supersede.rs`'s
@@ -321,6 +338,6 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 "kremory.with_facts.all_deduped_or_failed"
             );
         }
-        pinned_fact_ids
+        (pinned_fact_ids, embedding_failures)
     }
 }

@@ -143,6 +143,7 @@ impl GraphHandle for StubIngestingHandle {
             committed_at: Utc::now(),
             stub_entities_inserted: 0,
             dense_embedded: None,
+            embedding_failures: Vec::new(),
         };
 
         // Phase 2 events only fire when enrich_per_episode = true.
@@ -481,6 +482,7 @@ async fn submit_episode_contradiction_events_reach_sink() {
                 committed_at: Utc::now(),
                 stub_entities_inserted: 0,
                 dense_embedded: None,
+                embedding_failures: Vec::new(),
             })
         }
 

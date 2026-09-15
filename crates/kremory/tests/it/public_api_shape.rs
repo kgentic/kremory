@@ -54,6 +54,7 @@ impl GraphHandle for StubHandle {
             committed_at: Utc::now(),
             stub_entities_inserted: 0,
             dense_embedded: None,
+            embedding_failures: Vec::new(),
         })
     }
 
