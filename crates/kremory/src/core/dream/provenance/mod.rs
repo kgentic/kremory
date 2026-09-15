@@ -78,12 +78,12 @@ pub use inspect::{MutationFilter, MutationRecord};
 ///
 /// # Tracked-kind boundary (4 of 8 are logged today)
 ///
-/// FIVE variants are currently PRODUCED into `graph_mutation_log`, and hence
+/// SIX variants are currently PRODUCED into `graph_mutation_log`, and hence
 /// LOGGED, listable (via `Memory::list_mutations` / `mutation_history`), and
 /// reversible through the unified `Memory::undo` dispatcher:
 /// [`EntityMerge`](Self::EntityMerge), [`EntityEdit`](Self::EntityEdit),
 /// [`EntityDelete`](Self::EntityDelete), [`FactDelete`](Self::FactDelete),
-/// [`FactArchive`](Self::FactArchive).
+/// [`FactArchive`](Self::FactArchive), [`FactSupersede`](Self::FactSupersede).
 ///
 /// [`FactArchive`](Self::FactArchive) joined them on 2026-09-10 (TD-250). It was
 /// RESERVED, which made `Memory::restore_archived_fact` **impossible to call**:
@@ -92,15 +92,21 @@ pub use inspect::{MutationFilter, MutationRecord};
 /// id, and it needed no new public surface to do it, because `list_mutations` was
 /// already the read for exactly this.
 ///
-/// The other three — [`FactSupersede`](Self::FactSupersede),
-/// [`CommunityAssign`](Self::CommunityAssign),
+/// [`FactSupersede`](Self::FactSupersede) joined them on 2026-09-14. It was
+/// RESERVED, which made a `SupersedeRequest::execute()` retraction unenumerable
+/// by `list_mutations` and unreversible except by a consumer who already held the
+/// `fact_id` from BEFORE the bound closed its validity window — a would-be sixth
+/// MCP tool (`kremory_correct`) was proposed and killed on exactly this gap
+/// (`.ai-docs/plans/mcp-agent-api-design-2026-09-14.md` §"the sixth tool"). It is
+/// still ALSO reachable by domain id via `Memory::unsupersede`, but the
+/// `mutation_id` path through `list_mutations` + `undo` is now the primary one.
+///
+/// The other two — [`CommunityAssign`](Self::CommunityAssign),
 /// [`CanonicalForm`](Self::CanonicalForm) — remain RESERVED: they are not written
 /// to the log yet, so `list_mutations(kind = <reserved>)` returns empty BY
 /// CONSTRUCTION, and `Memory::undo` on a would-be row of that kind is a loud
-/// `Error::UndoUnsupportedKind`. (`FactSupersede` is still reversible — via
-/// `Memory::unsupersede`, which takes a domain `fact_id`, not a `mutation_id`.)
-/// The runtime enforcement of this boundary is the `undo` dispatcher's loud
-/// error.
+/// `Error::UndoUnsupportedKind`. The runtime enforcement of this boundary is the
+/// `undo` dispatcher's loud error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[non_exhaustive]
@@ -327,11 +333,24 @@ pub(crate) struct MergeInputs {
 /// intact — supersession only bounds it — so undo clears whichever bound was
 /// set. Both are `Option` because either (or both) may have been NULL before.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)] // planned consumer: `unsupersede` undo sub-phase (Tier 2, §3.1).
 pub(crate) struct FactSupersedePreState {
     pub(crate) fact_id: i64,
     pub(crate) prior_valid_to: Option<String>,
     pub(crate) prior_expired_at: Option<String>,
+}
+
+/// `inputs` for `MutationKind::FactSupersede` — the derivation source for the
+/// consumer INSPECT summary (§3), NOT the undo payload. Mirrors
+/// [`FactArchiveInputs`]: the endpoints are what a consumer locates the record
+/// by, `object_id` is `None` for a literal object, and `valid_to` is the bound
+/// this mutation applied (the summary-relevant fact `pre_state` does not carry).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct FactSupersedeInputs {
+    pub(crate) fact_id: i64,
+    pub(crate) subject_id: String,
+    pub(crate) predicate: String,
+    pub(crate) object_id: Option<String>,
+    pub(crate) valid_to: String,
 }
 
 /// `pre_state` for `MutationKind::FactArchive` (§2.3) — the `facts_archive.id`

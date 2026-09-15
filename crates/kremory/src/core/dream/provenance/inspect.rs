@@ -25,7 +25,8 @@ use crate::core::error::{Error, Result};
 use crate::core::schema::TemporalGraph;
 
 use super::{
-    DeleteEntityInputs, DeleteFactInputs, EditInputs, FactArchiveInputs, MergeInputs, MutationKind,
+    DeleteEntityInputs, DeleteFactInputs, EditInputs, FactArchiveInputs, FactSupersedeInputs,
+    MergeInputs, MutationKind,
 };
 
 // ─── consumer-facing view (§3 inspect surface) ──────────────────────────────
@@ -172,6 +173,25 @@ fn derive_view(kind: MutationKind, inputs_json: &str) -> Result<(Vec<String>, St
             let summary = format!(
                 "archived fact {} ('{}' {})",
                 inputs.fact_id, inputs.subject_id, inputs.predicate
+            );
+            Ok((affected, summary))
+        }
+        MutationKind::FactSupersede => {
+            let inputs: FactSupersedeInputs = serde_json::from_str(inputs_json).map_err(|e| {
+                Error::Other(anyhow::anyhow!(
+                    "inspect: deserialize fact_supersede inputs (mutation un-classifiable): {e}"
+                ))
+            })?;
+            // Same locate-key shape as `fact_archive`: both endpoints, object absent
+            // for a literal. `valid_to` goes in the summary — "bounded" alone does
+            // not tell a consumer WHERE the window closed.
+            let mut affected = vec![inputs.subject_id.clone()];
+            if let Some(obj) = inputs.object_id.clone() {
+                affected.push(obj);
+            }
+            let summary = format!(
+                "superseded fact {} ('{}' {}) — bounded valid_to={}",
+                inputs.fact_id, inputs.subject_id, inputs.predicate, inputs.valid_to
             );
             Ok((affected, summary))
         }

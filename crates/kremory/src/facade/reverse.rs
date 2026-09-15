@@ -560,6 +560,10 @@ pub enum UndoOutcome {
     DeleteFact(DeleteFactOutcome),
     /// A dream's fact archival, reversed — the fact is back in `facts`.
     RestoreArchived(crate::core::dream::provenance::RestoreArchivedOutcome),
+    /// The mutation was a `fact_supersede`; reversed via the same
+    /// [`unsupersede`](super::Memory::unsupersede) mechanism, reached by
+    /// `mutation_id` instead of the domain `fact_id`.
+    Unsupersede(crate::core::dream::provenance::UnsupersedeOutcome),
 }
 
 /// The unified undo dispatcher. Obtain via
@@ -571,9 +575,9 @@ pub enum UndoOutcome {
 /// `mem.undo(record.mutation_id)` without first switching on the kind by hand.
 /// Returns the honest [`UndoOutcome`] carrying the reversed op's counts.
 ///
-/// # The 5-of-8 honesty boundary
+/// # The 6-of-8 honesty boundary
 ///
-/// Five LOGGED, reversible kinds dispatch here: `entity_merge` →
+/// Six LOGGED, reversible kinds dispatch here: `entity_merge` →
 /// [`unmerge`](super::Memory::unmerge), `entity_edit` →
 /// [`undo_entity_edit`](super::Memory::undo_entity_edit), `entity_delete` →
 /// [`undo_delete_entity`](super::Memory::undo_delete_entity), `fact_delete` →
@@ -582,13 +586,15 @@ pub enum UndoOutcome {
 /// performs, reached by `mutation_id` instead of by an `archived_fact_id` no
 /// public read returned (TD-250).
 ///
-/// The other three [`MutationKind`] variants (`fact_supersede` /
-/// `community_assign` / `canonical_form`) are RESERVED — not produced into the
-/// log today — so a would-be row of that kind returns a LOUD
+/// `fact_supersede` → the same [`unsupersede`](super::Memory::unsupersede)
+/// mechanism, reached by `mutation_id` instead of the domain `fact_id` no
+/// public read used to correlate back to a live row (2026-09-14 — the fix
+/// that removed the need for a sixth MCP tool).
+///
+/// The other two [`MutationKind`] variants (`community_assign` /
+/// `canonical_form`) remain RESERVED — not produced into the log today — so a
+/// would-be row of that kind returns a LOUD
 /// [`Error::UndoUnsupportedKind`](crate::core::error::Error::UndoUnsupportedKind).
-/// (`fact_supersede` is reversible, but via its own domain-id method
-/// [`unsupersede`](super::Memory::unsupersede), which takes a `fact_id`, not a
-/// `mutation_id`.)
 ///
 /// Must call `.execute()` (mutating op).
 #[must_use = "UndoRequest must call .execute() to run"]
@@ -618,7 +624,7 @@ impl<'a> UndoRequest<'a> {
     /// - [`Error::UndoWrongNamespace`](crate::core::error::Error::UndoWrongNamespace)
     ///   — `.in_namespace(ns)` was set and its group differs from the mutation's.
     /// - [`Error::UndoUnsupportedKind`](crate::core::error::Error::UndoUnsupportedKind)
-    ///   — the row's kind is one of the four reserved (non-log-dispatchable) kinds.
+    ///   — the row's kind is one of the two reserved (non-log-dispatchable) kinds.
     /// - Whatever the dispatched per-kind undo returns (e.g.
     ///   [`Error::UnmergeOutOfOrder`](crate::core::error::Error::UnmergeOutOfOrder)).
     /// - `Err` if `Memory` was constructed without a `TemporalGraph` (test-stub path).
@@ -712,7 +718,19 @@ impl<'a> UndoRequest<'a> {
                     .await
                     .map_err(MemoryError::Core)?,
             )),
-            // The three RESERVED kinds are never produced into the log today; a
+            // 2026-09-14: reached by `mutation_id`, mirrors the `fact_archive` arm
+            // above — same underlying `unsupersede` mechanism, reached the same
+            // uniform way as every other logged kind instead of requiring the
+            // caller to already know the domain `fact_id`.
+            MutationKind::FactSupersede => Ok(UndoOutcome::Unsupersede(
+                crate::core::dream::provenance::reversal::undo_fact_supersede(
+                    tg,
+                    self.mutation_id,
+                )
+                .await
+                .map_err(MemoryError::Core)?,
+            )),
+            // The two RESERVED kinds are never produced into the log today; a
             // would-be row of that kind is loudly unsupported (R3 honesty).
             other => Err(MemoryError::Core(CoreError::UndoUnsupportedKind {
                 mutation_id: self.mutation_id,
@@ -724,7 +742,7 @@ impl<'a> UndoRequest<'a> {
 
 #[cfg(test)]
 mod undo_dispatch_tests {
-    //! `mem.undo(mutation_id)` dispatches each of the four
+    //! `mem.undo(mutation_id)` dispatches each of the six
     //! LOGGED kinds to the correct per-kind undo (same effect as the per-kind
     //! method), returns `MutationNotFound` for an unknown id, and returns a loud
     //! `UndoUnsupportedKind` for a would-be RESERVED-kind row. Deterministic,
@@ -991,16 +1009,18 @@ mod undo_dispatch_tests {
         let mem = make_memory().await;
         let group = namespace_to_group_id(&ns());
         let now = chrono::Utc::now().to_rfc3339();
-        // Plant a would-be `fact_supersede` row directly — nothing writes this kind
-        // to the log today (the reserved-kind boundary), so `undo` must refuse it
-        // loudly rather than dispatch.
+        // Plant a would-be `community_assign` row directly — nothing writes this
+        // kind to the log today (the reserved-kind boundary), so `undo` must
+        // refuse it loudly rather than dispatch. `fact_supersede` is NOT this
+        // example any more — it became a LOGGED, dispatchable kind on 2026-09-14
+        // (see `undo_routes_fact_supersede_to_unsupersede` below).
         mem.temporal_graph
             .as_ref()
             .unwrap()
             .conn
             .execute(
                 "INSERT INTO graph_mutation_log (kind, group_id, created_at, pre_state, inputs) \
-                 VALUES ('fact_supersede', ?1, ?2, '{}', '{}')",
+                 VALUES ('community_assign', ?1, ?2, '{}', '{}')",
                 libsql::params![group, now],
             )
             .await
@@ -1012,7 +1032,7 @@ mod undo_dispatch_tests {
                 .unwrap()
                 .conn
                 .query(
-                    "SELECT id FROM graph_mutation_log WHERE kind = 'fact_supersede'",
+                    "SELECT id FROM graph_mutation_log WHERE kind = 'community_assign'",
                     (),
                 )
                 .await
@@ -1033,10 +1053,294 @@ mod undo_dispatch_tests {
         match err {
             MemoryError::Core(CoreError::UndoUnsupportedKind { mutation_id, kind }) => {
                 assert_eq!(mutation_id, planted_id);
-                assert_eq!(kind, "fact_supersede", "the offending kind tag is surfaced");
+                assert_eq!(
+                    kind, "community_assign",
+                    "the offending kind tag is surfaced"
+                );
             }
             other => panic!("expected UndoUnsupportedKind, got {other:?}"),
         }
+    }
+
+    /// AC — `mem.undo(mutation_id)` on a LOGGED `fact_supersede` row dispatches to
+    /// the same `unsupersede` mechanism the domain-id door uses, and reports it
+    /// through `UndoOutcome::Unsupersede` — proves the 2026-09-14 fix that made a
+    /// supersede retraction listable + undoable by `mutation_id` (removing the
+    /// need for a sixth MCP tool), the same uniform way as every other logged
+    /// kind.
+    #[tokio::test]
+    async fn undo_routes_fact_supersede_to_unsupersede() {
+        let mem = make_memory().await;
+        let group_ns = ns();
+        let group = namespace_to_group_id(&group_ns);
+        let now = chrono::Utc::now();
+        let valid_from = now - chrono::Duration::days(10);
+
+        let tg = mem.temporal_graph.as_ref().unwrap();
+        tg.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "entity-undo-supersede-subject",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+            group_id: Some(group.as_str()),
+        })
+        .await
+        .expect("seed subject entity");
+        let fact_id = tg
+            .insert_fact_with_group(
+                crate::core::graph::FactInsert::new(
+                    "entity-undo-supersede-subject",
+                    "status",
+                    valid_from,
+                )
+                .object_value("active"),
+                Some(group.as_str()),
+            )
+            .await
+            .expect("seed fact");
+
+        let bound_at = now - chrono::Duration::days(1);
+        let outcome = mem
+            .supersede(fact_id)
+            .in_namespace(group_ns.clone())
+            .at(bound_at)
+            .execute()
+            .await
+            .expect("supersede must succeed");
+        assert!(matches!(
+            outcome,
+            crate::facade::SupersedeOutcome::Bounded { retired: 0 }
+        ));
+
+        let mutation_id = {
+            let records = mem
+                .list_mutations()
+                .kind(crate::core::dream::provenance::MutationKind::FactSupersede)
+                .in_namespace(group_ns.clone())
+                .await
+                .expect("list_mutations must succeed");
+            assert_eq!(
+                records.len(),
+                1,
+                "the supersede must be listable by kind — this is the whole fix"
+            );
+            records[0].mutation_id
+        };
+
+        let undo_outcome = mem
+            .undo(mutation_id)
+            .execute()
+            .await
+            .expect("undo of a fact_supersede row must succeed, not UndoUnsupportedKind");
+        match undo_outcome {
+            UndoOutcome::Unsupersede(
+                crate::core::dream::provenance::UnsupersedeOutcome::Cleared {
+                    fact_id: cleared_id,
+                    cleared_valid_to,
+                    ..
+                },
+            ) => {
+                assert_eq!(cleared_id, fact_id);
+                assert!(cleared_valid_to, "the bound this test set must be cleared");
+            }
+            other => panic!("expected UndoOutcome::Unsupersede(Cleared), got {other:?}"),
+        }
+
+        let fact = tg
+            .get_fact_by_id(fact_id, &group)
+            .await
+            .expect("get_fact_by_id must succeed")
+            .expect("fact must exist");
+        assert_eq!(
+            fact.valid_to, None,
+            "undo must clear the DB row's valid_to bound"
+        );
+    }
+
+    /// Regression for the HIGH-severity gap an adversarial review caught before
+    /// this shipped: a fact superseded TWICE has a second `fact_supersede` row
+    /// whose `prior_valid_to` is the FIRST bound, not `NULL`. Undoing the FIRST
+    /// (older) mutation while the SECOND (newer) one is still live must be
+    /// REFUSED, not silently clobber the live newer bound — `unsupersede`'s
+    /// unconditional NULL-both would have destroyed it while reporting success.
+    #[tokio::test]
+    async fn undo_fact_supersede_out_of_order_is_rejected() {
+        let mem = make_memory().await;
+        let group_ns = ns();
+        let group = namespace_to_group_id(&group_ns);
+        let now = chrono::Utc::now();
+        let valid_from = now - chrono::Duration::days(30);
+
+        let tg = mem.temporal_graph.as_ref().unwrap();
+        tg.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "entity-undo-ooo-subject",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+            group_id: Some(group.as_str()),
+        })
+        .await
+        .expect("seed subject entity");
+        let fact_id = tg
+            .insert_fact_with_group(
+                crate::core::graph::FactInsert::new(
+                    "entity-undo-ooo-subject",
+                    "status",
+                    valid_from,
+                )
+                .object_value("active"),
+                Some(group.as_str()),
+            )
+            .await
+            .expect("seed fact");
+
+        // First supersede: None -> t1.
+        let t1 = now - chrono::Duration::days(20);
+        mem.supersede(fact_id)
+            .in_namespace(group_ns.clone())
+            .at(t1)
+            .execute()
+            .await
+            .expect("first supersede must succeed");
+        let first_mutation_id = {
+            let records = mem
+                .list_mutations()
+                .kind(crate::core::dream::provenance::MutationKind::FactSupersede)
+                .in_namespace(group_ns.clone())
+                .await
+                .expect("list_mutations after first supersede");
+            assert_eq!(records.len(), 1);
+            records[0].mutation_id
+        };
+
+        // Second supersede: t1 -> t2 (a later, narrower bound).
+        let t2 = now - chrono::Duration::days(10);
+        mem.supersede(fact_id)
+            .in_namespace(group_ns.clone())
+            .at(t2)
+            .execute()
+            .await
+            .expect("second supersede must succeed");
+
+        // Undoing the FIRST (older) mutation must be refused — the second bound
+        // is still live and would otherwise be silently destroyed.
+        let err = mem
+            .undo(first_mutation_id)
+            .execute()
+            .await
+            .expect_err("undoing an out-of-order supersede must error, not succeed");
+        match err {
+            MemoryError::Core(CoreError::UndoStale { mutation_id, .. }) => {
+                assert_eq!(mutation_id, first_mutation_id);
+            }
+            other => panic!("expected UndoStale, got {other:?}"),
+        }
+
+        // The live (second) bound must be UNTOUCHED by the rejected undo attempt.
+        let fact = tg
+            .get_fact_by_id(fact_id, &group)
+            .await
+            .expect("get_fact_by_id must succeed")
+            .expect("fact must exist");
+        assert_eq!(
+            fact.valid_to.map(|t| t.timestamp()),
+            Some(t2.timestamp()),
+            "the still-live second bound must survive the rejected out-of-order undo"
+        );
+    }
+
+    /// Companion to the out-of-order test: undoing the fact's supersedes
+    /// newest-first must RESTORE each row's captured prior state, not blind-clear
+    /// to `None` — proves `undo_fact_supersede` reads `prior_valid_to` back
+    /// rather than delegating to `unsupersede`'s unconditional NULL-both.
+    #[tokio::test]
+    async fn undo_fact_supersede_restores_prior_bound_not_blind_clear() {
+        let mem = make_memory().await;
+        let group_ns = ns();
+        let group = namespace_to_group_id(&group_ns);
+        let now = chrono::Utc::now();
+        let valid_from = now - chrono::Duration::days(30);
+
+        let tg = mem.temporal_graph.as_ref().unwrap();
+        tg.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "entity-undo-lifo-subject",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+            group_id: Some(group.as_str()),
+        })
+        .await
+        .expect("seed subject entity");
+        let fact_id = tg
+            .insert_fact_with_group(
+                crate::core::graph::FactInsert::new(
+                    "entity-undo-lifo-subject",
+                    "status",
+                    valid_from,
+                )
+                .object_value("active"),
+                Some(group.as_str()),
+            )
+            .await
+            .expect("seed fact");
+
+        let t1 = now - chrono::Duration::days(20);
+        mem.supersede(fact_id)
+            .in_namespace(group_ns.clone())
+            .at(t1)
+            .execute()
+            .await
+            .expect("first supersede must succeed");
+
+        let t2 = now - chrono::Duration::days(10);
+        mem.supersede(fact_id)
+            .in_namespace(group_ns.clone())
+            .at(t2)
+            .execute()
+            .await
+            .expect("second supersede must succeed");
+
+        let second_mutation_id = {
+            let records = mem
+                .list_mutations()
+                .kind(crate::core::dream::provenance::MutationKind::FactSupersede)
+                .in_namespace(group_ns.clone())
+                .await
+                .expect("list_mutations after second supersede");
+            assert_eq!(records.len(), 2);
+            // Newest-first (undone rows excluded by default) — the live row with
+            // the LATEST created_at is the second supersede.
+            records
+                .iter()
+                .max_by_key(|r| r.created_at.clone())
+                .expect("at least one record")
+                .mutation_id
+        };
+
+        // Undo the SECOND (latest) mutation — must restore to t1, the captured
+        // `prior_valid_to`, NOT to `None`.
+        let outcome = mem
+            .undo(second_mutation_id)
+            .execute()
+            .await
+            .expect("undo of the latest supersede must succeed");
+        match outcome {
+            UndoOutcome::Unsupersede(
+                crate::core::dream::provenance::UnsupersedeOutcome::Cleared {
+                    fact_id: cleared_id,
+                    ..
+                },
+            ) => assert_eq!(cleared_id, fact_id),
+            other => panic!("expected UndoOutcome::Unsupersede(Cleared), got {other:?}"),
+        }
+
+        let fact = tg
+            .get_fact_by_id(fact_id, &group)
+            .await
+            .expect("get_fact_by_id must succeed")
+            .expect("fact must exist");
+        assert_eq!(
+            fact.valid_to.map(|t| t.timestamp()),
+            Some(t1.timestamp()),
+            "undoing the second supersede must restore the FIRST bound, not wipe to None"
+        );
     }
 
     #[tokio::test]

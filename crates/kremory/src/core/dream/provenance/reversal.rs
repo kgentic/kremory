@@ -50,8 +50,8 @@ use crate::core::error::{Error, Result};
 use crate::core::schema::TemporalGraph;
 
 use super::{
-    EntityMergePreState, FactArchivePreState, FactEndpoint, MergeInputs, RestoreArchivedOutcome,
-    UnmergeOutcome, UnsupersedeOutcome,
+    EntityMergePreState, FactArchivePreState, FactEndpoint, FactSupersedeInputs,
+    FactSupersedePreState, MergeInputs, RestoreArchivedOutcome, UnmergeOutcome, UnsupersedeOutcome,
 };
 
 // ─── nogood key ─────────────────────────────────────────────────────────────
@@ -721,6 +721,133 @@ async fn restore_archived_txn(
     Ok(RestoreArchivedOutcome {
         restored_fact_id: archived_fact_id,
         already_live: false,
+    })
+}
+
+/// Reverse a LOGGED `fact_supersede` mutation by its `mutation_id` (2026-09-14,
+/// the fix that removed the need for a sixth MCP tool —
+/// `.ai-docs/plans/mcp-agent-api-design-2026-09-14.md` §"the sixth tool").
+///
+/// Restores the row's captured `prior_valid_to` / `prior_expired_at` directly —
+/// it does NOT delegate to [`unsupersede`], because `unsupersede` unconditionally
+/// NULLs both fields, which is correct only for the single-supersede case. A
+/// fact bounded by TWO supersedes in sequence has a second log row whose
+/// `prior_valid_to` is the FIRST bound, not `NULL`; blindly nulling on undo of
+/// either row would silently discard that history.
+///
+/// **LIFO guard (mirrors [`Error::UnmergeOutOfOrder`]/[`Error::UndoStale`]):**
+/// `bound_valid_to` is a total overwrite, not a delta, so undoing an OLDER
+/// supersede while a NEWER one is still live would clobber the newer bound with
+/// this row's `prior_valid_to` and report success — destroying live data. Before
+/// restoring, this checks the fact's CURRENT `valid_to` still equals what THIS
+/// mutation itself set (`inputs.valid_to`); if a later supersede has since run,
+/// the current value has moved on, and the undo is refused loudly rather than
+/// guessed. A consumer must undo the fact's supersedes newest-first.
+///
+/// Idempotent at the LOG level: a row already marked `undone_at` short-circuits
+/// to `NotSuperseded` WITHOUT touching `facts` again — mirrors
+/// `undo_fact_archive` checking `undone_at` before re-restoring. Note this
+/// reports "not superseded" for THIS row, not a claim that the fact carries no
+/// bound at all — a separate, later `fact_supersede` row may still be live.
+///
+/// # Errors
+///
+/// - [`Error::MutationNotFound`] — `mutation_id` names no `fact_supersede` row.
+/// - [`Error::UndoStale`] — a later supersede on the same fact is still live
+///   (the LIFO guard above).
+pub async fn undo_fact_supersede(
+    graph: &TemporalGraph,
+    mutation_id: i64,
+) -> Result<UnsupersedeOutcome> {
+    let (undone_at, pre_state_json, inputs_json): (Option<String>, String, String) = {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT undone_at, pre_state, inputs FROM graph_mutation_log \
+                 WHERE id = ?1 AND kind = 'fact_supersede'",
+                libsql::params![mutation_id],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Err(Error::MutationNotFound { mutation_id });
+        };
+        (
+            row.get::<Option<String>>(0)?,
+            row.get::<String>(1)?,
+            row.get::<String>(2)?,
+        )
+    };
+
+    let pre: FactSupersedePreState = serde_json::from_str(&pre_state_json).map_err(|e| {
+        Error::Other(anyhow::anyhow!(
+            "undo_fact_supersede: deserialize pre_state for mutation {mutation_id}: {e}"
+        ))
+    })?;
+
+    if undone_at.is_some() {
+        return Ok(UnsupersedeOutcome::NotSuperseded { fact_id: pre.fact_id });
+    }
+
+    let inputs: FactSupersedeInputs = serde_json::from_str(&inputs_json).map_err(|e| {
+        Error::Other(anyhow::anyhow!(
+            "undo_fact_supersede: deserialize inputs for mutation {mutation_id}: {e}"
+        ))
+    })?;
+
+    let (current_valid_to, current_expired_at): (Option<String>, Option<String>) = {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT valid_to, expired_at FROM facts WHERE id = ?1",
+                libsql::params![pre.fact_id],
+            )
+            .await?;
+        let Some(row) = rows.next().await? else {
+            return Err(Error::Other(anyhow::anyhow!(
+                "undo_fact_supersede: no fact with id {} (mutation {mutation_id})",
+                pre.fact_id
+            )));
+        };
+        (row.get::<Option<String>>(0)?, row.get::<Option<String>>(1)?)
+    };
+
+    if current_valid_to.as_deref() != Some(inputs.valid_to.as_str()) {
+        return Err(Error::UndoStale {
+            mutation_id,
+            reason: format!(
+                "fact {} has been superseded again since this mutation ran (current \
+                 valid_to {current_valid_to:?}, this mutation set {:?}) — undo the \
+                 LATEST supersede on this fact first (LIFO)",
+                pre.fact_id, inputs.valid_to
+            ),
+        });
+    }
+
+    graph
+        .conn
+        .execute(
+            "UPDATE facts SET valid_to = ?1, expired_at = ?2 WHERE id = ?3",
+            libsql::params![
+                pre.prior_valid_to.clone(),
+                pre.prior_expired_at.clone(),
+                pre.fact_id
+            ],
+        )
+        .await?;
+
+    let now = chrono::Utc::now().to_rfc3339();
+    graph
+        .conn
+        .execute(
+            "UPDATE graph_mutation_log SET undone_at = ?1 WHERE id = ?2",
+            libsql::params![now, mutation_id],
+        )
+        .await?;
+
+    Ok(UnsupersedeOutcome::Cleared {
+        fact_id: pre.fact_id,
+        cleared_valid_to: pre.prior_valid_to != current_valid_to,
+        cleared_expired_at: pre.prior_expired_at != current_expired_at,
     })
 }
 

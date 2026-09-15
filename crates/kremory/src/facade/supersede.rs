@@ -1,5 +1,8 @@
 use metrics::counter;
 
+use crate::core::dream::provenance::{FactSupersedeInputs, FactSupersedePreState, MutationKind};
+use crate::core::schema::Fact;
+
 use super::*;
 
 // ── SupersedeRequest ─────────────────────────────────────────────────────────
@@ -181,12 +184,40 @@ impl<'a> SupersedeRequest<'a> {
             return Ok(SupersedeOutcome::RejectedTimeInversion);
         }
 
-        // bound_valid_to, NOT invalidate_fact — writes `valid_to`
-        // (world-time), not `expired_at` (system-time). The dream supersession
-        // sweep's `window_closeout` does the system-time close later.
-        tg.bound_valid_to(self.fact_id, valid_to)
+        // bound_valid_to + log the mutation, atomically. `bound_valid_to`'s own
+        // UPDATE and the `graph_mutation_log` INSERT below share this txn for the
+        // same reason TD-250's archive move does: a log row that commits
+        // independently of the bound it describes is worse than no log row — it
+        // would report a supersede that never durably happened, or (the gap this
+        // closes) leave a real one unenumerable by `list_mutations`. Without this,
+        // a retraction was reachable only by a consumer who already held the
+        // `fact_id` from before the bound closed its validity window — the exact
+        // gap that killed the proposed sixth MCP tool
+        // (`.ai-docs/plans/mcp-agent-api-design-2026-09-14.md` §"the sixth tool").
+        let guard = tg.begin_immediate_if_needed().await.map_err(MemoryError::Core)?;
+        let write: crate::core::error::Result<()> = async {
+            // bound_valid_to, NOT invalidate_fact — writes `valid_to`
+            // (world-time), not `expired_at` (system-time). The dream supersession
+            // sweep's `window_closeout` does the system-time close later.
+            tg.bound_valid_to(self.fact_id, valid_to).await?;
+            log_supersede_mutation(
+                tg,
+                LogSupersedeParams {
+                    fact: &fact,
+                    valid_to,
+                    group_id: &group_id,
+                },
+            )
             .await
-            .map_err(MemoryError::Core)?;
+        }
+        .await;
+        match write {
+            Ok(()) => guard.commit().await.map_err(MemoryError::Core)?,
+            Err(e) => {
+                let _ = guard.rollback().await;
+                return Err(MemoryError::Core(e));
+            }
+        }
 
         // fact_id/group_id/reason are KREMORY_DEBUG-gated tracing FIELDS only —
         // never counter labels (cardinality discipline).
@@ -220,6 +251,69 @@ impl<'a> SupersedeRequest<'a> {
 
         Ok(SupersedeOutcome::Bounded { retired })
     }
+}
+
+/// Args for [`log_supersede_mutation`] — an object rather than positional
+/// parameters, which the workspace clippy threshold (3) rejects.
+struct LogSupersedeParams<'a> {
+    /// The fact row as read BEFORE this call's bound — its `valid_to`/
+    /// `expired_at` are the pre-state a later undo restores.
+    fact: &'a Fact,
+    /// The bound this call is applying (not yet reflected in `fact`).
+    valid_to: DateTime<Utc>,
+    group_id: &'a str,
+}
+
+/// Write the `fact_supersede` row to `graph_mutation_log` (mirrors TD-250's
+/// `log_archive_mutation`). Caller must already hold the bound write's
+/// transaction — deliberately NOT self-contained, for the same reason the
+/// archive log write isn't: a log row that commits independently of the bound
+/// it describes is worse than no log row at all.
+async fn log_supersede_mutation(
+    graph: &TemporalGraph,
+    p: LogSupersedeParams<'_>,
+) -> crate::core::error::Result<()> {
+    let LogSupersedeParams {
+        fact,
+        valid_to,
+        group_id,
+    } = p;
+    let now = chrono::Utc::now().to_rfc3339();
+    let pre_state = serde_json::to_string(&FactSupersedePreState {
+        fact_id: fact.id,
+        prior_valid_to: fact.valid_to.map(|t| t.to_rfc3339()),
+        prior_expired_at: fact.expired_at.map(|t| t.to_rfc3339()),
+    })
+    .map_err(|e| {
+        crate::core::error::Error::Other(anyhow::anyhow!(
+            "serialize fact_supersede pre_state: {e}"
+        ))
+    })?;
+    let inputs = serde_json::to_string(&FactSupersedeInputs {
+        fact_id: fact.id,
+        subject_id: fact.subject_id.clone(),
+        predicate: fact.predicate.clone(),
+        object_id: fact.object_id.clone(),
+        valid_to: valid_to.to_rfc3339(),
+    })
+    .map_err(|e| {
+        crate::core::error::Error::Other(anyhow::anyhow!("serialize fact_supersede inputs: {e}"))
+    })?;
+    graph
+        .conn
+        .execute(
+            "INSERT INTO graph_mutation_log (kind, group_id, created_at, pre_state, inputs) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            libsql::params![
+                MutationKind::FactSupersede.as_tag(),
+                group_id,
+                now,
+                pre_state,
+                inputs
+            ],
+        )
+        .await?;
+    Ok(())
 }
 
 /// Typed outcome of a [`SupersedeRequest::execute`] call — NOT a bare

@@ -839,17 +839,17 @@ impl Memory {
     /// `default_namespace`, else ALL namespaces). Default view is LIVE
     /// (still-reversible) mutations only. Read-only — `.await` it.
     ///
-    /// # Tracked-kind boundary (5 of 8)
+    /// # Tracked-kind boundary (6 of 8)
     ///
-    /// FIVE [`MutationKind`] variants are currently LOGGED (hence listable and
+    /// SIX [`MutationKind`] variants are currently LOGGED (hence listable and
     /// reversible via [`undo`](Self::undo)): `EntityMerge`, `EntityEdit`,
-    /// `EntityDelete`, `FactDelete`, `FactArchive`. The other three
-    /// (`FactSupersede`, `CommunityAssign`, `CanonicalForm`) are RESERVED — not yet
-    /// produced into the `graph_mutation_log` — so
-    /// `list_mutations().kind(<a reserved kind>)` returns EMPTY by construction
-    /// (not "nothing changed"). `FactSupersede` is itself reversible, but through
-    /// the domain-id method [`unsupersede`](Self::unsupersede), not this
-    /// inspect+undo surface.
+    /// `EntityDelete`, `FactDelete`, `FactArchive`, `FactSupersede`. The other two
+    /// (`CommunityAssign`, `CanonicalForm`) are RESERVED — not yet produced into
+    /// the `graph_mutation_log` — so `list_mutations().kind(<a reserved kind>)`
+    /// returns EMPTY by construction (not "nothing changed"). `FactSupersede` is
+    /// ALSO reachable through the domain-id method
+    /// [`unsupersede`](Self::unsupersede), but `mutation_id` through this
+    /// inspect+undo surface is now the primary door (2026-09-14).
     ///
     /// **This is where an archived fact's id comes from.** `DreamSummary` reports
     /// `facts_archived` as a COUNT, so before `FactArchive` was logged nothing named
