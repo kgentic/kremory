@@ -131,6 +131,18 @@ It counts entities deleted, so a complete erasure returns `0` whenever the subje
 shared (and therefore correctly pinned). Do not branch on `removed > 0`. A richer return
 shape is a breaking change and is deferred.
 
+### Fixed — BREAKING — `TemporalGraph::get_facts_by_subject_predicate` leaked facts across namespaces
+
+This read had no `group_id` filter at all, despite entities using a composite `(id,
+group_id)` primary key so the same name can exist independently in different namespaces.
+Two unrelated namespaces sharing a subject/predicate name (e.g. both having an entity
+named "alice") could pull the wrong namespace's facts into contradiction detection's
+candidate pool, which could then invalidate them — a namespace-A ingest silently
+mutating namespace-B's data. Now takes `GetFactsBySubjectPredicateParams { subject_id,
+predicate, group_id }` instead of two positional arguments — **the breaking part** —
+and always scopes to the given `group_id`. Callers passing the previous 2-argument form
+must add the namespace they already have (or `"default"` for the unnamespaced case).
+
 ## [0.8.0] - 2026-09-08
 
 ### Changed — BREAKING: `DreamRequest` now requires an explicit `.execute()` terminal
