@@ -166,14 +166,20 @@ impl<'a> RememberRequest<'a> {
         // silently loses dense-arm coverage; check
         // `EpisodeCommit::dense_embedded` to detect it, not this warning.
         if let Some(threshold) = self.memory.episode_content_warn_threshold {
-            let chars = self.content.chars().count();
-            if chars > threshold {
+            // TD-082: a rough token estimate (bytes/4), not a raw char count —
+            // `content.len() / 4` approximates CL100k BPE within ~±15% for
+            // English prose at zero cost (no tokenizer dependency; kremory is
+            // model-agnostic and `tiktoken-rs` is OpenAI-GPT-specific). This is
+            // a SOFT warn only, never enforced, so the estimate's error margin
+            // is acceptable — see the field's own doc comment.
+            let estimated_tokens = self.content.len() / 4;
+            if estimated_tokens > threshold {
                 tracing::warn!(
-                    episode_chars = chars,
+                    episode_estimated_tokens = estimated_tokens,
                     threshold = threshold,
                     "episode content exceeds soft threshold — extraction quality may degrade AND the embedder's own (separate, provider-specific) context window may silently drop the dense-arm; pre-chunk with kremory::split_for_embedding before remember() if this matters, and check EpisodeCommit::dense_embedded"
                 );
-                metrics::counter!("kremory_episode_oversize_total").increment(1);
+                metrics::counter!("kremory_episode_oversize_tokens_estimate_total").increment(1);
             }
         }
 
@@ -470,23 +476,28 @@ mod episode_content_warn_threshold_tests {
             .expect("in-memory Memory construction must not fail")
     }
 
-    /// AC.5 — warn fires when content.chars().count() exceeds threshold.
-    /// Threshold set deliberately small (5 chars) so test content trivially
-    /// triggers; production default of 10_000 is irrelevant here.
+    /// AC.5 — warn fires when the ESTIMATED token count (content.len() / 4,
+    /// TD-082) exceeds threshold. Threshold set deliberately small (5) so test
+    /// content trivially triggers; production default of 10_000 is irrelevant
+    /// here.
     #[tokio::test(flavor = "multi_thread")]
     #[tracing_test::traced_test]
     async fn warn_fires_above_threshold() {
         let mem = make_memory_with_threshold(Some(5)).await;
         let ns = Namespace::new("test-g4-warn-fires");
 
-        // 11 chars > threshold 5 → warn must fire.
+        // 25 chars → estimated 6 tokens (25 / 4) > threshold 5 → warn must fire.
         // .await may fail downstream (null providers + enrichment), but the
         // warn emits BEFORE submit_episode so logs_contain captures it.
-        let _ = mem.remember("hello world").in_namespace(ns).no_wait().await;
+        let _ = mem
+            .remember("hello world, this is long")
+            .in_namespace(ns)
+            .no_wait()
+            .await;
 
         assert!(
             logs_contain("episode content exceeds soft threshold"),
-            "warn must fire when content (11 chars) exceeds threshold (5)"
+            "warn must fire when estimated tokens (6) exceed threshold (5)"
         );
     }
 
@@ -497,12 +508,12 @@ mod episode_content_warn_threshold_tests {
         let mem = make_memory_with_threshold(Some(100)).await;
         let ns = Namespace::new("test-g4-no-warn");
 
-        // 11 chars <= threshold 100 → warn must NOT fire.
+        // 11 chars → estimated 2 tokens (11 / 4) <= threshold 100 → warn must NOT fire.
         let _ = mem.remember("hello world").in_namespace(ns).no_wait().await;
 
         assert!(
             !logs_contain("episode content exceeds soft threshold"),
-            "warn must NOT fire when content (11 chars) is below threshold (100)"
+            "warn must NOT fire when estimated tokens (2) are below threshold (100)"
         );
     }
 

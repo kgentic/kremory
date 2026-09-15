@@ -53,10 +53,15 @@ pub struct MemoryBuilder<L, E> {
     /// Optional path to a custom `provider-rates.toml`. When `Some`, overrides
     /// the bundled rates file at build time.
     provider_rates_path: Option<PathBuf>,
-    /// Soft warning threshold for episode content length (chars).
-    /// Default `Some(10_000)` via `Memory::open` — matches Zep's recommended
-    /// chunk size. `None` disables the warning. Never enforced as a hard limit;
-    /// observability only.
+    /// Soft warning threshold for episode content length, compared against an
+    /// ESTIMATED token count (`content.len() / 4`, TD-082) — not a raw char
+    /// count. Default `Some(10_000)` via `Memory::open` — originally chosen to
+    /// match Zep's recommended chunk size when the comparison was char-based;
+    /// now read as ~10k estimated tokens (≈40k chars), a real loosening of the
+    /// trigger point, deliberate: the warning is soft and never enforced, and
+    /// a token estimate is the more meaningful unit for "may degrade
+    /// extraction quality" than a raw character count. `None` disables the
+    /// warning. Never enforced as a hard limit; observability only.
     episode_content_warn_threshold: Option<usize>,
     /// Custom extractor supplied via `.with_extractor(Arc<impl EntityExtractor>)`.
     /// When `Some`, overrides LLM-derived extraction. Mutually exclusive with
@@ -258,12 +263,15 @@ impl<L, E> MemoryBuilder<L, E> {
         self
     }
 
-    /// Override the soft warn threshold for episode content length (chars).
+    /// Override the soft warn threshold for episode content length, compared
+    /// against an ESTIMATED token count (`content.len() / 4`, TD-082) — not a
+    /// raw char count.
     ///
-    /// Default: `Some(10_000)` (Zep-compatible). Set `None` to disable the
-    /// warning entirely. Never enforced as a hard limit; the threshold only
-    /// drives `tracing::warn!` + a `kremory_episode_oversize_total` counter
-    /// at ingest time so callers can spot extraction-quality risk early.
+    /// Default: `Some(10_000)` (~10k estimated tokens, ≈40k chars). Set `None`
+    /// to disable the warning entirely. Never enforced as a hard limit; the
+    /// threshold only drives `tracing::warn!` + a
+    /// `kremory_episode_oversize_tokens_estimate_total` counter at ingest time
+    /// so callers can spot extraction-quality risk early.
     ///
     /// **This threshold does NOT protect the dense/embedding search arm**.
     /// Extraction sub-chunks internally

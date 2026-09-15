@@ -183,7 +183,11 @@ impl UnionFind {
     }
 
     /// Get all groups (canonical_id → [member_ids]).
-    #[allow(dead_code)]
+    ///
+    /// TD-077: the only caller is `test_union_find_groups` below — `#[cfg(test)]`
+    /// rather than `#[allow(dead_code)]`, since that's what it honestly is today
+    /// (no production caller exists, per a repo-wide grep confirmed 2026-09-14).
+    #[cfg(test)]
     pub(crate) fn groups(&mut self) -> HashMap<String, Vec<String>> {
         let ids: Vec<String> = self.parent.keys().cloned().collect();
         let mut groups: HashMap<String, Vec<String>> = HashMap::new();

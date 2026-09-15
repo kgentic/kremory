@@ -4,7 +4,8 @@
 //!
 //! - [`ingestor`]          — [`BackgroundIngestor`] + [`IngestGuard`] + send/queue ops
 //! - [`deferred_pipeline`] — worker loop, spawn_worker, drain logic, error reporting
-//! - [`verify_stage`]      — Stage 2 hook (no-op stub, not yet wired)
+//! - [`verify_stage`]      — Stage 2 hook: entity extraction + write, called from
+//!   [`deferred_pipeline::process_deferred`] (ADR-049 Stage 2, shipped)
 //!
 //! Shared types live here so both submodules can import without circular deps.
 
