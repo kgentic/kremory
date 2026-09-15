@@ -120,3 +120,12 @@ try {
   await mem.close();
   try { fs.unlinkSync(dbPath); } catch { /* best-effort cleanup */ }
 }
+
+// A custom `withEmbedder` callback (this example uses one, per the module
+// doc above) leaves a napi-rs ThreadsafeFunction handle that keeps the
+// event loop alive past process completion — the same known bridge quirk
+// `09-byom-embedder.mjs` already force-exits for. Discovered here via
+// `scripts/check-sdk-scenarios.sh` (the process printed correct output,
+// including the closing "prompt-ready" block, then never exited on its
+// own). Force exit once everything above has genuinely completed.
+process.exit(0);

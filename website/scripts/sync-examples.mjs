@@ -10,13 +10,22 @@
 // lift the `//!` module doc into prose, and fence the rest as Rust — and asserts
 // its input rather than guessing at it.
 
-import {readFileSync, writeFileSync, mkdirSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdirSync, rmSync} from 'node:fs';
 import {dirname, resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const EXAMPLES_DIR = resolve(HERE, '../../crates/kremory/examples');
 const OUT_DIR = resolve(HERE, '../docs/examples');
+
+// Wipe before regenerating. This whole directory is generated + gitignored,
+// so nothing here is ever hand-edited — but a stale file from a PRIOR run
+// (e.g. `slug.md` left behind after that entry gained a `nodeFile` and now
+// generates `slug.mdx` instead) is not automatically removed by writeFileSync
+// alone, and Docusaurus treats the two as duplicate doc ids and refuses to
+// build. Wiping first makes "what's on disk" always match "what PUBLISHED
+// says should exist" — no orphans possible.
+rmSync(OUT_DIR, {recursive: true, force: true});
 
 // Explicit allowlist, in reading order. Adding an example to the site is a
 // deliberate act — the crate also holds internal diagnostics (alias_probe,
@@ -27,6 +36,12 @@ const PUBLISHED = [
     slug: 'offline-remember-recall',
     title: 'Save something, get it back',
     position: 1,
+    // Node mirror, kept in lockstep by ../../scripts/check-sdk-scenarios.sh
+    // (runs both and asserts they recall the same facts). Add a nodeFile
+    // here ONLY once a real, checked mirror exists for the scenario — see
+    // that script's own header comment for why the pairing must be real,
+    // not just plausible-looking.
+    nodeFile: '../../crates/kremory-napi/examples/offline-remember-recall.mjs',
   },
   {
     file: 'remembers_across_sessions.rs',
@@ -197,7 +212,7 @@ ${linked}
   console.log('sync-examples: examples/README.md -> docs/examples/index.md');
 }
 
-for (const {file, slug, title, position} of PUBLISHED) {
+for (const {file, slug, title, position, nodeFile} of PUBLISHED) {
   const src = resolve(EXAMPLES_DIR, file);
 
   let raw;
@@ -239,26 +254,79 @@ for (const {file, slug, title, position} of PUBLISHED) {
     throw new Error(`${src} has a module doc but no code beneath it.`);
   }
 
-  const page = `---
-title: ${JSON.stringify(title)}
-sidebar_position: ${position}
----
+  // Node mirror, if this scenario has one. Read verbatim — no comment
+  // stripping — because the Node header comments carry napi-rs-specific
+  // caveats (calling-convention gotchas etc.) that are genuinely useful and
+  // have no Rust-side equivalent to duplicate against.
+  let nodeCode = null;
+  let nodeSrc = null;
+  if (nodeFile) {
+    nodeSrc = resolve(HERE, nodeFile);
+    try {
+      nodeCode = readFileSync(nodeSrc, 'utf8').trim();
+    } catch (err) {
+      throw new Error(
+        `Cannot read ${nodeSrc} — ${slug}'s PUBLISHED entry names a nodeFile ` +
+          `that does not exist. Refusing to publish a page missing a promised ` +
+          `tab. (${err.code})`,
+      );
+    }
+  }
 
-{/* GENERATED FILE — do not edit.
-    Source: crates/kremory/examples/${file}
-    Regenerate: npm run sync:examples (runs automatically on prebuild). */}
+  const runLine = `Run it with \`cargo run --example ${file.replace(/\.rs$/, '')}\`.`;
 
-${docLines.join('\n').trim()}
+  const codeSection = nodeCode
+    ? `## The whole program
 
-## The whole program
+${runLine} The Node.js version is checked against it for agreement by
+\`scripts/check-sdk-scenarios.sh\` — the two tabs cannot drift silently.
 
-Run it with \`cargo run --example ${file.replace(/\.rs$/, '')}\`.
+<Tabs groupId="sdk-language">
+<TabItem value="rust" label="Rust" default>
+
+\`\`\`rust
+${code}
+\`\`\`
+
+</TabItem>
+<TabItem value="node" label="Node.js">
+
+\`\`\`js
+${nodeCode}
+\`\`\`
+
+</TabItem>
+</Tabs>
+`
+    : `## The whole program
+
+${runLine}
 
 \`\`\`rust
 ${code}
 \`\`\`
 `;
 
-  writeFileSync(resolve(OUT_DIR, `${slug}.md`), page);
-  console.log(`sync-examples: ${file} -> docs/examples/${slug}.md`);
+  const ext = nodeCode ? 'mdx' : 'md';
+  const imports = nodeCode
+    ? `import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+`
+    : '';
+  const page = `---
+title: ${JSON.stringify(title)}
+sidebar_position: ${position}
+---
+
+${imports}{/* GENERATED FILE — do not edit.
+    Source: crates/kremory/examples/${file}${nodeCode ? ` + ${nodeFile}` : ''}
+    Regenerate: npm run sync:examples (runs automatically on prebuild). */}
+
+${docLines.join('\n').trim()}
+
+${codeSection}`;
+
+  writeFileSync(resolve(OUT_DIR, `${slug}.${ext}`), page);
+  console.log(`sync-examples: ${file}${nodeCode ? ` + node mirror` : ''} -> docs/examples/${slug}.${ext}`);
 }

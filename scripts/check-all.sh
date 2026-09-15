@@ -70,6 +70,17 @@ run e2e-consumer-compiles "" bash -c 'cd e2e-consumer && cargo build --quiet'
 # the same gap that let e2e-consumer rot against 0.8.0 for a release. ~15s total.
 run examples-run "" bash scripts/check-examples.sh
 
+# Cross-language docs-site tabs (website/docs/examples/*.mdx) show a Rust
+# example next to its Node.js mirror. Nothing enforced the two stayed in
+# agreement — a comment in the Node file PROMISED this check existed, and it
+# didn't, for an unknown period, until this session built it for real. Skips
+# if the napi native module isn't built locally (nothing to run the Node side
+# against) rather than failing the whole aggregator on a missing dev-only
+# artifact.
+NAPI_SKIP=""
+ls crates/kremory-napi/*.node >/dev/null 2>&1 || NAPI_SKIP="napi native module not built (run: cd crates/kremory-napi && pnpm build:debug)"
+run sdk-scenarios "$NAPI_SKIP" bash scripts/check-sdk-scenarios.sh
+
 if [[ -n "$RESULTS" ]]; then
   run eval-floor "" bash scripts/check-eval-floor.sh "$RESULTS"
 else
