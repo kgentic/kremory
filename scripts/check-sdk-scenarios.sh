@@ -22,12 +22,17 @@
 #
 # SCOPE
 # -----
-# One pair today — offline_remember_recall / offline-remember-recall.mjs —
-# because that is the only Node example carrying the "Node mirror of ..."
-# header convention. Add a pair here ONLY once both sides exist AND print
-# their recalled facts as bare `subject predicate object` lines (see the
-# extraction regex below) — that convention is what makes the diff possible
-# without parsing full program output.
+# Four pairs today. Each Node file carries a "Node mirror of ..." header
+# naming the Rust example it mirrors. Add a pair here ONLY once both sides
+# exist AND you've picked (or written) an extraction function below that
+# proves they agree on SUBSTANCE — not on byte-identical text. Rust's and
+# Node's default debug/inspect printers format the same data differently on
+# purpose (an `enum` variant name vs. an explicit flattened `outcome` field,
+# array quote style, `snake_case` vs `camelCase` labels, console.log's
+# multi-line wrapping of wide objects) — a raw text diff would fail on a
+# CORRECT binding, which is worse than no check at all. Each extractor below
+# says, in its own comment, exactly which asymmetry it is normalizing past
+# and why that asymmetry is not a bug.
 set -uo pipefail
 cd "$(git rev-parse --show-toplevel)" || exit 1
 
@@ -48,9 +53,14 @@ run_bounded() {
   fi
 }
 
-# One row per mirrored scenario: rust example name, node example path.
+# One row per mirrored scenario: rust example name, node example path, and
+# which extractor function (below) knows how to pull comparable substance
+# out of that scenario's specific print format.
 declare -A SCENARIOS=(
-  [offline-remember-recall]="offline_remember_recall crates/kremory-napi/examples/offline-remember-recall.mjs"
+  [offline-remember-recall]="offline_remember_recall crates/kremory-napi/examples/offline-remember-recall.mjs extract_facts"
+  [remembers-across-sessions]="remembers_across_sessions crates/kremory-napi/examples/remembers-across-sessions.mjs extract_bitemporal"
+  [multi-tenant-isolation]="multi_tenant_isolation crates/kremory-napi/examples/multi-tenant-isolation.mjs extract_verbatim"
+  [undoing-a-correction]="undoing_a_correction crates/kremory-napi/examples/undoing-a-correction.mjs extract_reversal"
 )
 
 # Facts are printed as bare `subject predicate object` lines before either
@@ -61,9 +71,52 @@ extract_facts() {
   sed -n '/--- prompt-ready ---/q; p' "$1" | grep -E '^[a-z0-9_]+ [a-z0-9_]+ .+$'
 }
 
+# multi-tenant-isolation: both examples were written to print the identical
+# narrative text verbatim (no struct/enum auto-formatting involved — every
+# line is a hand-written println/console.log of plain strings). A straight
+# text compare is the right tool here; only strip trailing whitespace so an
+# editor's whitespace-only pass can't cause a false failure.
+extract_verbatim() {
+  sed -e 's/[[:space:]]*$//' "$1"
+}
+
+# remembers-across-sessions: the only asymmetry is cosmetic — Rust's `{:?}`
+# on a `Vec<String>` adds a space after each comma
+# (`["London", "Berlin"]`) that Node's array literal does not
+# (`["London","Berlin"]`), and the trailing timestamp label is
+# `recorded_at=` (Rust) vs `recordedAt=` (Node). Stripping whitespace and
+# underscores and lowercasing collapses both away without touching any
+# actual data value.
+extract_bitemporal() {
+  tr -d ' \t_' <"$1" | tr 'A-Z' 'a-z'
+}
+
+# undoing-a-correction: NOT a cosmetic difference — `UnsupersedeOutcome` is
+# a tagged Rust `enum` (`Cleared { .. }` / `NotSuperseded { .. }`, so Debug
+# printing uses the variant name as the tag) but the napi binding
+# deliberately flattens it to one JS struct with an explicit `outcome:
+# "cleared" | "not_superseded"` string field instead (see
+# `UnsupersedeOutcome` in index.d.ts) — plus Node's console.log wraps a
+# 5-key object across multiple lines. Comparing raw text would fail on a
+# CORRECT binding, so pull out only the two things that are actually
+# supposed to agree: the recalled-fact lines (identical labels on both
+# sides) and the ordered sequence of outcome tags, normalized to the same
+# spelling. The Node example also logs an extra "supersede result" line
+# with its OWN outcome ("bounded") that the Rust example never prints at
+# all — excluded explicitly, not just skipped by accident.
+extract_reversal() {
+  {
+    grep -E "^(recorded|after 'correction'|after undo)[[:space:]]*:" "$1" \
+      | tr -d " \t\"'" | tr 'A-Z' 'a-z'
+    grep -v 'supersede result' "$1" \
+      | grep -oE "outcome: '[a-z_]+'|Cleared|NotSuperseded" \
+      | sed -E "s/outcome: '([a-z_]+)'/\1/; s/^Cleared\$/cleared/; s/^NotSuperseded\$/not_superseded/"
+  }
+}
+
 fails=0
 for slug in "${!SCENARIOS[@]}"; do
-  read -r rust_example node_path <<<"${SCENARIOS[$slug]}"
+  read -r rust_example node_path extractor <<<"${SCENARIOS[$slug]}"
 
   rust_log="/tmp/check-sdk-scenarios-${slug}-rust.log"
   node_log="/tmp/check-sdk-scenarios-${slug}-node.log"
@@ -82,23 +135,23 @@ for slug in "${!SCENARIOS[@]}"; do
     continue
   fi
 
-  rust_facts=$(extract_facts "$rust_log")
-  node_facts=$(extract_facts "$node_log")
+  rust_facts=$("$extractor" "$rust_log")
+  node_facts=$("$extractor" "$node_log")
 
   if [[ -z "$rust_facts" ]]; then
-    echo "FAIL  $slug: Rust example printed no recognisable fact lines — extraction regex or example output has drifted" >&2
+    echo "FAIL  $slug: Rust example produced nothing $extractor recognised — extractor or example output has drifted" >&2
     fails=$((fails + 1))
     continue
   fi
 
   if [[ "$rust_facts" != "$node_facts" ]]; then
-    echo "FAIL  $slug: Rust and Node recalled DIFFERENT facts — the docs-site tabs would show inconsistent examples" >&2
+    echo "FAIL  $slug: Rust and Node disagree on substance — the docs-site tabs would show inconsistent examples" >&2
     diff <(echo "$rust_facts") <(echo "$node_facts") | sed 's/^/        /' >&2
     fails=$((fails + 1))
     continue
   fi
 
-  echo "  ok    $slug ($(echo "$rust_facts" | wc -l | tr -d ' ') facts agree)"
+  echo "  ok    $slug ($(echo "$rust_facts" | wc -l | tr -d ' ') lines agree)"
 done
 
 echo

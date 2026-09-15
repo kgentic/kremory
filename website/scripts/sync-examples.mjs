@@ -48,12 +48,14 @@ const PUBLISHED = [
     slug: 'remembers-across-sessions',
     title: 'Remembering when things changed',
     position: 2,
+    nodeFile: '../../crates/kremory-napi/examples/remembers-across-sessions.mjs',
   },
   {
     file: 'multi_tenant_isolation.rs',
     slug: 'multi-tenant-isolation',
     title: 'One database, many customers',
     position: 10,
+    nodeFile: '../../crates/kremory-napi/examples/multi-tenant-isolation.mjs',
   },
   {
     file: 'correcting_the_record.rs',
@@ -102,6 +104,7 @@ const PUBLISHED = [
     slug: 'undoing-a-correction',
     title: 'When the correction itself was wrong',
     position: 4,
+    nodeFile: '../../crates/kremory-napi/examples/undoing-a-correction.mjs',
   },
   {
     file: 'domain_entity_types.rs',

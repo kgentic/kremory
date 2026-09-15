@@ -65,6 +65,25 @@ echo OK` is a valid smoke check for any one of them.
 | `opts.withEmbedder` (BYOM embedder bridge) | `09-byom-embedder.mjs` | partial — `Memory.open` with a custom embedder is executed and asserted; the ingest-to-recall round trip is exercised too, but does NOT succeed — it hits a pre-existing, already-tracked bridge bug (`__test__/smoke-embedder.test.mjs` `test.skip('T2: ...')`, "InvalidArg, Given napi value is not an array"). Re-running it against this build surfaces a WORSE symptom than documented — see Finding F48 below. |
 | `unmerge` (undo an entity merge) | `10-unmerge.ts` (type-check only) | NOT executed — see the file's header comment: triggering a real entity merge requires `dream()`'s cross-episode reconciliation to make an LLM/similarity-driven merge decision, which is not reliably reproducible as a deterministic example. Type-checked via `tsc` against `../index.d.ts` instead (mirrors `__test__/types.check.ts`'s own convention for shape-only verification). |
 
+## Docs-site mirrors — narrative scenario ↔ Rust example
+
+The table above covers the ten capability-smoke-test examples (`01`-`10`). A
+second, smaller set exists for a different purpose: each is a faithful Node
+mirror of one specific narrative example in `crates/kremory/examples/*.rs`,
+kept in lockstep by `scripts/check-sdk-scenarios.sh` (runs both, diffs the
+substance they print) and wired into the public docs site
+(`website/scripts/sync-examples.mjs`'s `nodeFile` field) as a Rust/Node.js
+language tab on that scenario's page. Add a new one here only once you have
+a real Rust twin AND a `check-sdk-scenarios.sh` extractor that proves they
+agree — a tab that isn't checked is a promise the repo can't keep.
+
+| Node file | Mirrors | Docs page |
+|---|---|---|
+| `offline-remember-recall.mjs` | `offline_remember_recall.rs` | "Save something, get it back" |
+| `remembers-across-sessions.mjs` | `remembers_across_sessions.rs` | "Remembering when things changed" |
+| `multi-tenant-isolation.mjs` | `multi_tenant_isolation.rs` | "One database, many customers" |
+| `undoing-a-correction.mjs` | `undoing_a_correction.rs` | "When the correction itself was wrong" |
+
 ## Automated smoke check
 
 `pnpm test:examples` (`examples/run-all.mjs`) runs every `.mjs` file in this
