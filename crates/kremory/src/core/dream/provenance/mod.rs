@@ -636,6 +636,14 @@ pub enum UnsupersedeOutcome {
         fact_id: i64,
         cleared_valid_to: bool,
         cleared_expired_at: bool,
+        /// `true` if the domain-time contradiction-resolver marker
+        /// (`invalid_at`) was also cleared. Without this, a fact that
+        /// contradiction detection retired (which sets `expired_at` AND
+        /// `invalid_at` together) came back visible to recall after
+        /// `unsupersede` but stayed permanently excluded from cross-episode
+        /// merge, archival and supersession — all three gate on
+        /// `invalid_at IS NULL` (TD-178).
+        cleared_invalid_at: bool,
     },
     /// The fact had no bound set — nothing to clear (honest no-op, not a lie).
     NotSuperseded { fact_id: i64 },

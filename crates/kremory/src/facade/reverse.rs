@@ -98,8 +98,9 @@ impl RestoreArchivedRequest<'_> {
 
 // ── UnsupersedeRequest ─────────────────────────────────────────────────────
 
-/// Clear a supersession bound (`valid_to` / `expired_at`) set by
-/// `supersede(...)`, re-opening the fact as currently-true. Obtain via
+/// Clear a supersession bound (`valid_to` / `expired_at` / `invalid_at`) set
+/// by `supersede(...)` or by contradiction detection, re-opening the fact as
+/// currently-true and re-eligible for consolidation (TD-178). Obtain via
 /// `mem.unsupersede(fact_id)`.
 ///
 /// Idempotent: a fact with no bound set returns `NotSuperseded` (an honest

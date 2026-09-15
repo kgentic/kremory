@@ -848,15 +848,22 @@ pub async fn undo_fact_supersede(
         fact_id: pre.fact_id,
         cleared_valid_to: pre.prior_valid_to != current_valid_to,
         cleared_expired_at: pre.prior_expired_at != current_expired_at,
+        // `SupersedeRequest::execute()` only ever binds `valid_to`/`expired_at`
+        // (see `facade/supersede.rs`) — it never touches `invalid_at`, which is
+        // exclusively a contradiction-resolver marker (`facts.rs::
+        // invalidate_fact_with_reason`). So restoring THIS mutation's captured
+        // prior state never clears it; that column is untouched by construction.
+        cleared_invalid_at: false,
     })
 }
 
 // ─── unsupersede (§4.5) ─────────────────────────────────────────────────────
 
-/// Clear a supersession bound (`valid_to` / `expired_at`) set by `supersede(...)`,
-/// re-opening the fact as currently-true (§4.5). Idempotent: a fact with neither
-/// bound set returns [`UnsupersedeOutcome::NotSuperseded`] (an honest no-op). A
-/// missing `fact_id` is a hard `Error`.
+/// Clear a supersession bound (`valid_to` / `expired_at` / `invalid_at`) set by
+/// `supersede(...)` or by contradiction detection, re-opening the fact as
+/// currently-true AND re-eligible for consolidation (§4.5, TD-178). Idempotent:
+/// a fact with none of the three set returns [`UnsupersedeOutcome::NotSuperseded`]
+/// (an honest no-op). A missing `fact_id` is a hard `Error`.
 #[doc(hidden)]
 pub async fn unsupersede(graph: &TemporalGraph, fact_id: i64) -> Result<UnsupersedeOutcome> {
     let guard = graph.begin_immediate_if_needed().await?;
@@ -882,10 +889,10 @@ pub async fn unsupersede(graph: &TemporalGraph, fact_id: i64) -> Result<Unsupers
 async fn unsupersede_txn(graph: &TemporalGraph, fact_id: i64) -> Result<UnsupersedeOutcome> {
     let conn = &graph.conn;
 
-    let (valid_to, expired_at): (Option<String>, Option<String>) = {
+    let (valid_to, expired_at, invalid_at): (Option<String>, Option<String>, Option<String>) = {
         let mut rows = conn
             .query(
-                "SELECT valid_to, expired_at FROM facts WHERE id = ?1",
+                "SELECT valid_to, expired_at, invalid_at FROM facts WHERE id = ?1",
                 libsql::params![fact_id],
             )
             .await?;
@@ -894,17 +901,30 @@ async fn unsupersede_txn(graph: &TemporalGraph, fact_id: i64) -> Result<Unsupers
                 "unsupersede: no fact with id {fact_id}"
             )));
         };
-        (row.get::<Option<String>>(0)?, row.get::<Option<String>>(1)?)
+        (
+            row.get::<Option<String>>(0)?,
+            row.get::<Option<String>>(1)?,
+            row.get::<Option<String>>(2)?,
+        )
     };
 
     let cleared_valid_to = valid_to.is_some();
     let cleared_expired_at = expired_at.is_some();
-    if !cleared_valid_to && !cleared_expired_at {
+    let cleared_invalid_at = invalid_at.is_some();
+    if !cleared_valid_to && !cleared_expired_at && !cleared_invalid_at {
         return Ok(UnsupersedeOutcome::NotSuperseded { fact_id });
     }
 
+    // TD-178: `invalidate_fact_with_reason` (contradiction detection) sets
+    // `expired_at` AND `invalid_at` together as one retirement. Clearing only
+    // `expired_at` here used to leave `invalid_at` behind — invisible to
+    // recall (which never checks it), but permanently excluded from
+    // cross-episode merge, archival and supersession, which all gate on
+    // `invalid_at IS NULL`. Undo must be symmetric with the operation it
+    // reverses: clear both, unconditionally (NULLing an already-NULL column
+    // is a no-op).
     conn.execute(
-        "UPDATE facts SET valid_to = NULL, expired_at = NULL WHERE id = ?1",
+        "UPDATE facts SET valid_to = NULL, expired_at = NULL, invalid_at = NULL WHERE id = ?1",
         libsql::params![fact_id],
     )
     .await?;
@@ -913,5 +933,6 @@ async fn unsupersede_txn(graph: &TemporalGraph, fact_id: i64) -> Result<Unsupers
         fact_id,
         cleared_valid_to,
         cleared_expired_at,
+        cleared_invalid_at,
     })
 }

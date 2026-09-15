@@ -1264,6 +1264,9 @@ pub struct JsUnsupersedeOutcome {
     pub cleared_valid_to: bool,
     /// `true` if the system-time `expired_at` bound was cleared.
     pub cleared_expired_at: bool,
+    /// `true` if the contradiction-resolver's domain-time marker (`invalid_at`)
+    /// was also cleared, making the fact re-eligible for consolidation (TD-178).
+    pub cleared_invalid_at: bool,
 }
 
 /// Convert a substrate `kremory::UnsupersedeOutcome` to `JsUnsupersedeOutcome`.
@@ -1273,17 +1276,20 @@ pub fn unsupersede_outcome_to_js(o: kremory::UnsupersedeOutcome) -> JsUnsupersed
             fact_id,
             cleared_valid_to,
             cleared_expired_at,
+            cleared_invalid_at,
         } => JsUnsupersedeOutcome {
             outcome: "cleared".to_string(),
             fact_id,
             cleared_valid_to,
             cleared_expired_at,
+            cleared_invalid_at,
         },
         kremory::UnsupersedeOutcome::NotSuperseded { fact_id } => JsUnsupersedeOutcome {
             outcome: "not_superseded".to_string(),
             fact_id,
             cleared_valid_to: false,
             cleared_expired_at: false,
+            cleared_invalid_at: false,
         },
         // Non-exhaustive guard: unknown future variant maps to an honest marker
         // with fact_id = -1 (no real fact id is negative).
@@ -1292,6 +1298,7 @@ pub fn unsupersede_outcome_to_js(o: kremory::UnsupersedeOutcome) -> JsUnsupersed
             fact_id: -1,
             cleared_valid_to: false,
             cleared_expired_at: false,
+            cleared_invalid_at: false,
         },
     }
 }

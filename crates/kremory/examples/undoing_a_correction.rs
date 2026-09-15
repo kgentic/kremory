@@ -20,7 +20,7 @@
 //! `UnsupersedeOutcome` is an enum, not a boolean:
 //!
 //! ```text
-//!   Cleared { fact_id, cleared_valid_to, cleared_expired_at }
+//!   Cleared { fact_id, cleared_valid_to, cleared_expired_at, cleared_invalid_at }
 //!   NotSuperseded { fact_id }
 //! ```
 //!

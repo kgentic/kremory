@@ -602,11 +602,13 @@ impl TryFrom<UndoOutcome> for UndoOutcomeWire {
                     fact_id,
                     cleared_valid_to,
                     cleared_expired_at,
+                    cleared_invalid_at,
                 } => Ok(Self::Unsupersede(UnsupersedeOutcomeWire {
                     fact_id,
                     cleared: true,
                     cleared_valid_to,
                     cleared_expired_at,
+                    cleared_invalid_at,
                 })),
                 UnsupersedeOutcome::NotSuperseded { fact_id } => {
                     Ok(Self::Unsupersede(UnsupersedeOutcomeWire {
@@ -614,6 +616,7 @@ impl TryFrom<UndoOutcome> for UndoOutcomeWire {
                         cleared: false,
                         cleared_valid_to: false,
                         cleared_expired_at: false,
+                        cleared_invalid_at: false,
                     }))
                 }
                 other => Err(format!(
@@ -685,6 +688,7 @@ mod tests {
             cleared: true,
             cleared_valid_to: true,
             cleared_expired_at: false,
+            cleared_invalid_at: false,
         });
 
         let json = serde_json::to_value(&wire).expect("wire type must serialize");

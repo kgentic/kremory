@@ -30,6 +30,7 @@ use kremory::core::dream::{
 };
 use kremory::core::graph::{
     InsertEntityWithGroupParams, InsertEpisodeParams, InsertEpisodicEdgeParams,
+    InvalidateFactWithReasonParams,
 };
 use kremory::core::schema::TemporalGraph;
 
@@ -963,6 +964,70 @@ async fn unsupersede_clears_bound() {
         again,
         kremory::facade::UnsupersedeOutcome::NotSuperseded { .. }
     ));
+}
+
+/// TD-178: contradiction detection retires a fact by setting `expired_at` AND
+/// `invalid_at` together (`invalidate_fact_with_reason`). `unsupersede` must
+/// undo BOTH, symmetrically — clearing only `expired_at` used to leave the
+/// fact visible again to recall (which never checks `invalid_at`) but
+/// permanently excluded from cross-episode merge, archival and supersession,
+/// which all gate on `invalid_at IS NULL`. This is the exact two-column
+/// fixture `unsupersede_clears_bound` never drove (register note: "the only
+/// test exercising unsupersede never sets invalid_at").
+#[tokio::test]
+async fn unsupersede_clears_invalid_at_set_by_contradiction_detection() {
+    let graph = TemporalGraph::open_in_memory().await.expect("open");
+    insert_bare(&graph, "bob").await;
+    insert_bare(&graph, "carol").await;
+    let fact_id = plant_fact(&graph, "bob", "knows", "carol").await;
+
+    let now = chrono::Utc::now();
+    graph
+        .invalidate_fact_with_reason(InvalidateFactWithReasonParams {
+            fact_id,
+            expired_at: now,
+            invalid_at: now,
+        })
+        .await
+        .expect("invalidate_fact_with_reason (simulates contradiction detection)");
+
+    let outcome = unsupersede(&graph, fact_id).await.expect("unsupersede");
+    match outcome {
+        kremory::facade::UnsupersedeOutcome::Cleared {
+            cleared_expired_at,
+            cleared_invalid_at,
+            ..
+        } => {
+            assert!(cleared_expired_at, "expired_at bound was cleared");
+            assert!(
+                cleared_invalid_at,
+                "TD-178: invalid_at must be cleared too — otherwise the fact looks fully \
+                 restored to recall but stays permanently invisible to dream consolidation"
+            );
+        }
+        other => panic!("expected Cleared, got {other:?}"),
+    }
+
+    let invalid_at: Option<String> = {
+        let mut rows = graph
+            .conn
+            .query(
+                "SELECT invalid_at FROM facts WHERE id = ?1",
+                libsql::params![fact_id],
+            )
+            .await
+            .expect("read invalid_at");
+        rows.next()
+            .await
+            .expect("row")
+            .expect("fact")
+            .get::<Option<String>>(0)
+            .expect("invalid_at col")
+    };
+    assert!(
+        invalid_at.is_none(),
+        "invalid_at must be NULL after unsupersede — TD-178"
+    );
 }
 
 // ── TD-203 D1 — merge must not manufacture self-loops, and undo must revive ──

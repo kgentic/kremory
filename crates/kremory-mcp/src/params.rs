@@ -506,6 +506,11 @@ pub struct UnsupersedeOutcomeWire {
     pub cleared: bool,
     pub cleared_valid_to: bool,
     pub cleared_expired_at: bool,
+    /// `true` if the contradiction-resolver's domain-time marker (`invalid_at`)
+    /// was also cleared — without this, a fact reversed via this path stayed
+    /// permanently invisible to cross-episode merge/archival/supersession
+    /// even though recall showed it as fully restored (TD-178).
+    pub cleared_invalid_at: bool,
 }
 
 /// Wire mirror of `kremory::UndoOutcome` (§3.1) — what `kremory_undo`
