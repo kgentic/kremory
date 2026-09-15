@@ -29,7 +29,7 @@ pub(crate) use bulk_invalidation_guard::{
     BulkInvalidationCheck, BulkInvalidationDecision, BulkInvalidationRecord,
 };
 pub use facts::{FactInsert, InvalidateFactWithReasonParams};
-pub use queries::{BatchForgetCounts, GetNeighboursAtParams};
+pub use queries::{BatchForgetCounts, GetFactsBySubjectPredicateParams, GetNeighboursAtParams};
 
 #[cfg(test)]
 mod tests;

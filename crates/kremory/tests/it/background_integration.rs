@@ -352,7 +352,11 @@ async fn rql_graph_contradiction_invalidates_superseded_fact() {
     // After invalidation, Fact#1 has expired_at set so it is excluded.
     let active_facts = graph
         .graph()
-        .get_facts_by_subject_predicate("app", "go_live")
+        .get_facts_by_subject_predicate(kremory::core::graph::GetFactsBySubjectPredicateParams {
+            subject_id: "app",
+            predicate: "go_live",
+            group_id: "default",
+        })
         .await
         .expect("get_facts_by_subject_predicate failed");
 

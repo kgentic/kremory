@@ -258,9 +258,18 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 None
             };
 
+            // TD-254: scope both candidate pools to this episode's own namespace
+            // — see the sibling call site in ingest_with.rs for the full
+            // rationale (unscoped pools can leak facts across namespaces).
             let pool_a = self
                 .graph
-                .get_facts_by_subject_predicate(&subject_id, &fact.predicate)
+                .get_facts_by_subject_predicate(
+                    crate::core::graph::GetFactsBySubjectPredicateParams {
+                        subject_id: &subject_id,
+                        predicate: &fact.predicate,
+                        group_id: deferred_effective_gid,
+                    },
+                )
                 .await?;
 
             let pool_b_hits = self
@@ -268,7 +277,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 .fts_search_facts(FtsSearchFactsParams {
                     query: &fact.predicate,
                     limit: 10,
-                    filters: &SearchFilters::new(),
+                    filters: &SearchFilters::for_group(deferred_effective_gid),
                 })
                 .await?;
             let pool_b: Vec<crate::core::schema::Fact> =

@@ -24,6 +24,14 @@ pub struct BatchForgetCounts {
     pub edges: u64,
 }
 
+/// Bundled params for [`TemporalGraph::get_facts_by_subject_predicate`] —
+/// args-as-object (`too_many_arguments` threshold 3, `&self` counts).
+pub struct GetFactsBySubjectPredicateParams<'a> {
+    pub subject_id: &'a str,
+    pub predicate: &'a str,
+    pub group_id: &'a str,
+}
+
 pub struct GetNeighboursAtParams<'a> {
     pub entity_id: &'a str,
     pub hops: u32,
@@ -297,12 +305,25 @@ impl TemporalGraph {
         Ok(facts)
     }
 
-    /// Get active (non-expired) facts for a subject + predicate combination.
+    /// Get active (non-expired) facts for a subject + predicate combination,
+    /// scoped to `group_id` (TD-254). `subject_id` alone is NOT unique across
+    /// namespaces — entities use a composite `(id, group_id)` primary key
+    /// specifically so the same name can exist independently in different
+    /// namespaces. Before this fix, this query had no `group_id` filter at
+    /// all, so contradiction detection's candidate pool (the caller of this
+    /// fn) could pull in and potentially invalidate an unrelated namespace's
+    /// facts whenever a subject/predicate name collided across namespaces —
+    /// a real cross-namespace data leak, not a theoretical one (a common
+    /// short name like "status" or "the team" is enough).
     pub async fn get_facts_by_subject_predicate(
         &self,
-        subject_id: &str,
-        predicate: &str,
+        params: GetFactsBySubjectPredicateParams<'_>,
     ) -> Result<Vec<Fact>> {
+        let GetFactsBySubjectPredicateParams {
+            subject_id,
+            predicate,
+            group_id,
+        } = params;
         let mut rows = self
             .conn
             .query(
@@ -310,8 +331,8 @@ impl TemporalGraph {
                         valid_from, valid_to, recorded_at, expired_at, invalid_at, group_id, confidence, source_episode_id,
                         memory_type, content_hash, access_count
                  FROM facts
-                 WHERE subject_id = ?1 AND predicate = ?2 AND expired_at IS NULL",
-                libsql::params![subject_id, predicate],
+                 WHERE subject_id = ?1 AND predicate = ?2 AND expired_at IS NULL AND group_id = ?3",
+                libsql::params![subject_id, predicate, group_id],
             )
             .await?;
         let mut facts = Vec::new();

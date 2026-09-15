@@ -897,9 +897,21 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 let object_value = object_value.as_deref();
 
                 // Get candidate pools for contradiction detection
+                // TD-254: both pool_a and pool_b MUST be scoped to this episode's
+                // own namespace. Neither was — subject_id alone is not unique
+                // across namespaces (entities use a composite (id, group_id) key),
+                // so an unscoped candidate pool could pull in, and contradiction
+                // detection could then invalidate, an unrelated namespace's facts
+                // whenever a subject/predicate name collided across namespaces.
                 let pool_a = match self
                     .graph
-                    .get_facts_by_subject_predicate(&subject_id, &fact.predicate)
+                    .get_facts_by_subject_predicate(
+                        crate::core::graph::GetFactsBySubjectPredicateParams {
+                            subject_id: &subject_id,
+                            predicate: &fact.predicate,
+                            group_id: effective_gid,
+                        },
+                    )
                     .await
                 {
                     Ok(p) => p,
@@ -912,7 +924,7 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                     .fts_search_facts(FtsSearchFactsParams {
                         query: &fact.predicate,
                         limit: 10,
-                        filters: &SearchFilters::new(),
+                        filters: &SearchFilters::for_group(effective_gid),
                     })
                     .await
                 {

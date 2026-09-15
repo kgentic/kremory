@@ -1296,18 +1296,126 @@ async fn test_get_facts_by_subject_predicate() {
         .unwrap();
 
     let works_at_facts = g
-        .get_facts_by_subject_predicate("alice", "works_at")
+        .get_facts_by_subject_predicate(GetFactsBySubjectPredicateParams {
+            subject_id: "alice",
+            predicate: "works_at",
+            group_id: "default",
+        })
         .await
         .unwrap();
     assert_eq!(works_at_facts.len(), 1);
     assert_eq!(works_at_facts[0].object_id.as_deref(), Some("acme"));
 
     let title_facts = g
-        .get_facts_by_subject_predicate("alice", "has_title")
+        .get_facts_by_subject_predicate(GetFactsBySubjectPredicateParams {
+            subject_id: "alice",
+            predicate: "has_title",
+            group_id: "default",
+        })
         .await
         .unwrap();
     assert_eq!(title_facts.len(), 1);
     assert_eq!(title_facts[0].object_value.as_deref(), Some("Engineer"));
+}
+
+/// TD-254: `get_facts_by_subject_predicate` must be scoped to `group_id` —
+/// `subject_id` alone is not unique across namespaces (entities use a
+/// composite `(id, group_id)` primary key). Before the fix this query had no
+/// `group_id` filter at all, so a same-named subject/predicate in an
+/// UNRELATED namespace would leak into the caller's candidate pool.
+#[tokio::test]
+async fn test_get_facts_by_subject_predicate_is_namespace_scoped() {
+    let g = TemporalGraph::open_in_memory().await.unwrap();
+    for ns in ["tenant_a", "tenant_b"] {
+        g.insert_entity_with_group(InsertEntityWithGroupParams {
+            id: "alice",
+            entity_type_id: 0,
+            properties: serde_json::json!({}),
+            group_id: Some(ns),
+        })
+        .await
+        .unwrap();
+    }
+    g.insert_entity_with_group(InsertEntityWithGroupParams {
+        id: "acme",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+        group_id: Some("tenant_a"),
+    })
+    .await
+    .unwrap();
+    g.insert_entity_with_group(InsertEntityWithGroupParams {
+        id: "globex",
+        entity_type_id: 0,
+        properties: serde_json::json!({}),
+        group_id: Some("tenant_b"),
+    })
+    .await
+    .unwrap();
+    let t0 = Utc::now() - Duration::hours(1);
+    // Same subject + predicate name in BOTH namespaces — a real-world name
+    // collision (e.g. "alice"/"status") across two unrelated tenants.
+    // DIFFERENT objects deliberately: `content_hash` (subject+predicate+
+    // object, no group_id — a separate, already-known, deliberately-deferred
+    // design tension pinned by `test_try_insert_fact_with_group_dedups_cross_variant`'s
+    // "Path X caller-wins" semantics) would otherwise reject the second
+    // insert as a duplicate of the first, which is NOT what this test is
+    // about — this test is scoped to the READ-PATH candidate-pool leak only.
+    g.insert_fact_with_group(
+        FactInsert::new("alice", "works_at", t0).object_id("acme"),
+        Some("tenant_a"),
+    )
+    .await
+    .unwrap();
+    g.insert_fact_with_group(
+        FactInsert::new("alice", "works_at", t0).object_id("globex"),
+        Some("tenant_b"),
+    )
+    .await
+    .unwrap();
+
+    let tenant_a_facts = g
+        .get_facts_by_subject_predicate(GetFactsBySubjectPredicateParams {
+            subject_id: "alice",
+            predicate: "works_at",
+            group_id: "tenant_a",
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        tenant_a_facts.len(),
+        1,
+        "must see only tenant_a's own fact, not tenant_b's: {tenant_a_facts:?}"
+    );
+    assert_eq!(
+        tenant_a_facts[0].object_id.as_deref(),
+        Some("acme"),
+        "must be tenant_a's own object, not tenant_b's leaked in: {tenant_a_facts:?}"
+    );
+    assert_eq!(
+        tenant_a_facts[0].group_id.as_deref(),
+        Some("tenant_a"),
+        "the returned fact must actually belong to tenant_a"
+    );
+
+    let tenant_b_facts = g
+        .get_facts_by_subject_predicate(GetFactsBySubjectPredicateParams {
+            subject_id: "alice",
+            predicate: "works_at",
+            group_id: "tenant_b",
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        tenant_b_facts.len(),
+        1,
+        "must see only tenant_b's own fact, not tenant_a's: {tenant_b_facts:?}"
+    );
+    assert_eq!(
+        tenant_b_facts[0].object_id.as_deref(),
+        Some("globex"),
+        "must be tenant_b's own object, not tenant_a's leaked in: {tenant_b_facts:?}"
+    );
 }
 
 #[tokio::test]
