@@ -25,7 +25,7 @@ use chrono::{DateTime, Utc};
 use kremory::{
     DeleteEntityOutcome, DeleteFactOutcome, EditEntityOutcome, MutationKind, MutationRecord,
     Namespace, RecallTemplate, RetrievedContext, RetrievedFact, SourceKind, SourceRef,
-    StructuredFact, UndoOutcome, UnmergeOutcome,
+    StructuredFact, UndoOutcome, UnmergeOutcome, UnsupersedeOutcome,
 };
 use thiserror::Error;
 
@@ -34,7 +34,7 @@ use crate::params::{
     DreamParams, EditEntityOutcomeWire, ListMutationsParams, MutationRecordWire, RecallFormat,
     RecallParams, RecallTemplateWire, RememberOutput, RememberParams, RetrievedContextWire,
     RetrievedFactWire, SourceKindWire, SourceRefWire, StructuredFactWire, TypeProposalWire,
-    UndoOutcomeWire, UndoParams, UnmergeOutcomeWire,
+    UndoOutcomeWire, UndoParams, UnmergeOutcomeWire, UnsupersedeOutcomeWire,
 };
 
 #[derive(Debug, Error)]
@@ -238,6 +238,7 @@ impl From<kremory::EpisodeCommit> for RememberOutput {
             episode_entity_id: c.episode_entity_id,
             committed_at: c.committed_at.to_rfc3339(),
             stub_entities_inserted: c.stub_entities_inserted,
+            embedding_failures: c.embedding_failures,
         }
     }
 }
@@ -593,6 +594,34 @@ impl TryFrom<UndoOutcome> for UndoOutcomeWire {
                     already_live: o.already_live,
                 },
             )),
+            // `UnsupersedeOutcome` is `#[non_exhaustive]` (this crate is outside its
+            // defining crate), so this inner match needs its own wildcard — the
+            // same loud-error posture as the outer match's catch-all, one layer in.
+            UndoOutcome::Unsupersede(o) => match o {
+                UnsupersedeOutcome::Cleared {
+                    fact_id,
+                    cleared_valid_to,
+                    cleared_expired_at,
+                } => Ok(Self::Unsupersede(UnsupersedeOutcomeWire {
+                    fact_id,
+                    cleared: true,
+                    cleared_valid_to,
+                    cleared_expired_at,
+                })),
+                UnsupersedeOutcome::NotSuperseded { fact_id } => {
+                    Ok(Self::Unsupersede(UnsupersedeOutcomeWire {
+                        fact_id,
+                        cleared: false,
+                        cleared_valid_to: false,
+                        cleared_expired_at: false,
+                    }))
+                }
+                other => Err(format!(
+                    "kremory_undo: UnsupersedeOutcome carries a variant kremory-mcp's \
+                     UnsupersedeOutcomeWire does not yet mirror ({other:?}) — kremory added a \
+                     new UnsupersedeOutcome variant that this crate has not caught up with yet"
+                )),
+            },
             other => Err(format!(
                 "kremory_undo: UndoOutcome carries a variant kremory-mcp's UndoOutcomeWire \
                  does not yet mirror ({other:?}) — kremory added a new log-dispatchable \
@@ -641,6 +670,34 @@ mod tests {
             json.get("already_live").and_then(serde_json::Value::as_bool),
             Some(false),
             "an idempotent no-op must stay distinguishable from a real restore: {json}"
+        );
+    }
+
+    /// Sibling of `the_restore_archived_wire_variant_serializes_like_its_siblings`
+    /// for the `fact_supersede` undo path (2026-09-14): same reasoning, same
+    /// bug class avoided. `UnsupersedeOutcome` is `#[non_exhaustive]` from a
+    /// module private to `kremory`, so — same caveat — this pins the WIRE
+    /// type's serialization, not the conversion function itself.
+    #[test]
+    fn the_unsupersede_wire_variant_serializes_like_its_siblings() {
+        let wire = UndoOutcomeWire::Unsupersede(crate::params::UnsupersedeOutcomeWire {
+            fact_id: 7,
+            cleared: true,
+            cleared_valid_to: true,
+            cleared_expired_at: false,
+        });
+
+        let json = serde_json::to_value(&wire).expect("wire type must serialize");
+
+        assert_eq!(
+            json.get("fact_id").and_then(serde_json::Value::as_i64),
+            Some(7),
+            "the agent needs the fact id whose bound it just cleared: {json}"
+        );
+        assert_eq!(
+            json.get("cleared").and_then(serde_json::Value::as_bool),
+            Some(true),
+            "a real clear must stay distinguishable from the honest no-op: {json}"
         );
     }
 

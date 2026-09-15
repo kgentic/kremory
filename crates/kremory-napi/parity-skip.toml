@@ -500,11 +500,6 @@ reason = "ADR-051 Phase 4: paired timeout knob for with_await_extraction. Same n
 revisit = "v0.3.0"
 
 [[skip]]
-symbol = "Memory::wait_for_processing"
-reason = "ADR-051 Phase 4: poll episodes.episode_processing_status until Verified/Failed/timeout. Expose on napi surface as Memory.waitForProcessing(episodeId: number, timeoutMs: number) in v0.3.0 when napi consumers need read-your-writes semantics on async extraction."
-revisit = "v0.3.0"
-
-[[skip]]
 symbol = "Memory::temporal_graph_for_test"
 reason = "Test-only accessor (cfg(any(test, feature = 'test-utils'))). Never available in release builds; not part of stable API surface. No napi exposure needed."
 revisit = "never"

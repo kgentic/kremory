@@ -30,8 +30,8 @@ use kremory::{Memory, Namespace, SourceKind};
 pub use convert::{
     JsBatchOptions, JsBatchStatus, JsCancelOutcome, JsConsolidationOpsRan, JsDeleteEntityOutcome,
     JsDeleteFactOutcome, JsDreamOpts, JsDreamPassOpts, JsDreamStatusResult, JsDreamSummary,
-    JsEditEntityOptions, JsEditEntityOutcome, JsEpisode, JsIngestResult, JsIngestStatusResult,
-    JsMetadataFilter, JsMutationFilter, JsMutationRecord, JsOpenOptions, JsRecallOptions,
+    JsEditEntityOptions, JsEditEntityOutcome, JsEpisode, JsForgetOutcome, JsIngestResult,
+    JsIngestStatusResult, JsMetadataFilter, JsMutationFilter, JsMutationRecord, JsOpenOptions, JsRecallOptions,
     JsRememberOptions, JsRestoreArchivedOutcome, JsRetrievedContext, JsStructuredFact,
     JsSupersedeOutcome, JsTypeProposal, JsUndoOutcome, JsUnmergeOutcome, JsUnsupersedeOutcome,
 };
@@ -255,6 +255,16 @@ impl JsMemory {
             .map_err(|e| napi::Error::from_reason(format!("kremory remember failed: {e}")))?;
 
         let mut warnings: Vec<String> = Vec::new();
+
+        // TD-253: surface substrate embed failures onto the ONE wire field JS
+        // already reads (`IngestResult.warnings`) rather than adding a second
+        // one — `commit.embedding_failures` names each fact/entity whose
+        // embedding call (or the store that followed it) failed; the row is
+        // still persisted and recallable via BM25 + graph traversal, just not
+        // via dense search until re-embedded.
+        for failure in &commit.embedding_failures {
+            warnings.push(format!("embedding failed, not dense-searchable: {failure}"));
+        }
 
         // Post-ingest: write source_uri if both source_id + source_uri supplied.
         //
@@ -480,17 +490,21 @@ impl JsMemory {
     /// (no per-call namespace AND no default registered on the handle), the call
     /// rejects with a namespace-required error.
     ///
-    /// Returns the count of ENTITY rows deleted (the previous doc said "episode
-    /// rows" — wrong).
+    /// Returns the full per-table breakdown (`ForgetOutcome`) — until the Node
+    /// parity pass (2026-09-14) this returned a bare `number` of ENTITY rows
+    /// deleted only, which was actively misleading (see below).
     ///
-    /// ⚠️ `0` does NOT mean nothing was erased. Shared-entity preservation pins any
-    /// subject that also appears in another source, which is the normal case, so a
-    /// complete erasure routinely returns `0` while facts, edges and the episode
-    /// itself were removed. The Rust surface now returns the full per-table outcome
-    /// (`ForgetOutcome`); exposing that here is deferred to the Node parity pass —
-    /// this binding keeps its existing `number` contract until then.
+    /// ⚠️ `entities === 0` does NOT mean nothing was erased. Shared-entity
+    /// preservation pins any subject that also appears in another source, which
+    /// is the normal case, so a complete erasure routinely leaves `entities: 0`
+    /// while `facts`/`edges`/`episodes` were removed. Check `isEmpty` for the
+    /// honest "did anything happen?" answer.
     #[napi]
-    pub async fn forget(&self, source_id: String, namespace: Option<String>) -> napi::Result<f64> {
+    pub async fn forget(
+        &self,
+        source_id: String,
+        namespace: Option<String>,
+    ) -> napi::Result<JsForgetOutcome> {
         let ns = namespace
             .as_deref()
             .map(Namespace::new)
@@ -510,8 +524,7 @@ impl JsMemory {
             .await
             .map_err(|e| napi::Error::from_reason(format!("kremory forget failed: {e}")))?;
 
-        // u64 → f64: safe up to 2^53; delete counts never approach that limit.
-        Ok(deleted.entities as f64)
+        Ok(convert::forget_outcome_to_js(deleted))
     }
 
     /// Bound a fact's world-time `valid_to` window explicitly — the
@@ -1172,6 +1185,7 @@ impl JsMemory {
             committed_at: chrono::Utc::now(),
             stub_entities_inserted: 0,
             dense_embedded: None,
+            embedding_failures: Vec::new(),
         };
 
         let status = self
@@ -1204,6 +1218,7 @@ impl JsMemory {
             committed_at: chrono::Utc::now(),
             stub_entities_inserted: 0,
             dense_embedded: None,
+            embedding_failures: Vec::new(),
         };
 
         let timeout = std::time::Duration::from_millis(timeout_ms as u64);
@@ -1217,6 +1232,36 @@ impl JsMemory {
             })?;
 
         Ok(convert::ingest_status_to_js(status))
+    }
+
+    /// Block until `episodeId`'s Phase-2 enrichment reaches a terminal
+    /// `episodes.episode_processing_status` (`Verified` / `Failed`), or the
+    /// timeout elapses.
+    ///
+    /// Wraps `Memory::wait_for_processing`. `episodeId` is the RAW EPISODE
+    /// ROWID — parse it from `IngestResult.episodeEntityId`, NOT `runId` (that
+    /// is a separate identifier for `statusOf`/`awaitEnrichment`, which poll a
+    /// DIFFERENT in-memory run-tracking table, not this column). `timeoutMs`
+    /// is mandatory — pass a sensible default such as `30_000` (30s).
+    ///
+    /// Node parity pass (2026-09-14): tracked in `parity-skip.toml` since
+    /// ADR-051 Phase 4 shipped the Rust side; this closes that gap.
+    ///
+    /// # Errors
+    ///
+    /// Rejects if Phase-2 extraction reached `Failed`, or if `timeoutMs`
+    /// elapsed before a terminal status was reached.
+    #[napi]
+    pub async fn wait_for_processing(
+        &self,
+        episode_id: i64,
+        timeout_ms: i64,
+    ) -> napi::Result<()> {
+        let timeout = std::time::Duration::from_millis(timeout_ms as u64);
+        self.inner
+            .wait_for_processing(episode_id, timeout)
+            .await
+            .map_err(|e| napi::Error::from_reason(format!("kremory waitForProcessing failed: {e}")))
     }
 
     /// Block until the dream-phase run identified by `handleId` reaches a
@@ -1301,6 +1346,7 @@ impl JsMemory {
             committed_at: chrono::Utc::now(),
             stub_entities_inserted: 0,
             dense_embedded: None,
+            embedding_failures: Vec::new(),
         };
 
         let outcome = self

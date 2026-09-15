@@ -196,6 +196,11 @@ pub struct RememberOutput {
     /// Number of stub entities inserted for forward references in this
     /// episode.
     pub stub_entities_inserted: usize,
+    /// TD-253: identifiers (fact triple text, or entity name) for every
+    /// fact/entity whose embedding FAILED during this ingest. The row is
+    /// still persisted and recallable via BM25 + graph traversal — just not
+    /// via dense/vector search until re-embedded. Empty when nothing failed.
+    pub embedding_failures: Vec<String>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -486,6 +491,23 @@ pub struct RestoreArchivedOutcomeWire {
     pub already_live: bool,
 }
 
+/// Wire mirror of `kremory::UnsupersedeOutcome` — what `kremory_undo` reversed
+/// when the mutation was a `fact_supersede` (2026-09-14, the fix that removed
+/// the need for a sixth MCP tool — `.ai-docs/plans/mcp-agent-api-design-2026-09-14.md`
+/// §"the sixth tool"). Flattened from the substrate's two-variant enum
+/// (`Cleared` / `NotSuperseded`) into one struct — `cleared` is `false` and
+/// both bound flags are `false` for the honest no-op case, never a lie.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct UnsupersedeOutcomeWire {
+    /// The fact id the bound was cleared on (or would have been).
+    pub fact_id: i64,
+    /// `true` if either bound was cleared; `false` if the fact had no bound set
+    /// — an honest no-op, nothing to undo.
+    pub cleared: bool,
+    pub cleared_valid_to: bool,
+    pub cleared_expired_at: bool,
+}
+
 /// Wire mirror of `kremory::UndoOutcome` (§3.1) — what `kremory_undo`
 /// ACTUALLY reversed. Internally tagged on `reversed_kind` so every per-kind
 /// count survives to the wire (no flattening to a string — the exact class
@@ -503,4 +525,7 @@ pub enum UndoOutcomeWire {
     DeleteFact(DeleteFactOutcomeWire),
     /// The mutation was a `fact_archive` — a fact a dream retired, now restored.
     RestoreArchived(RestoreArchivedOutcomeWire),
+    /// The mutation was a `fact_supersede` — a bound cleared, the fact re-opened
+    /// as currently-true.
+    Unsupersede(UnsupersedeOutcomeWire),
 }

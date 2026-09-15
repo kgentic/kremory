@@ -1429,6 +1429,41 @@ pub fn delete_fact_outcome_to_js(o: kremory::DeleteFactOutcome) -> JsDeleteFactO
     }
 }
 
+/// Outcome of `JsMemory.forget` — mirrors `kremory::ForgetOutcome`. Was a bare
+/// `number` (entity count only) until the Node parity pass (2026-09-14): the
+/// Rust facade always returned the full per-table breakdown, and `0` entities
+/// routinely masked a real erasure (shared-entity preservation), so the JS
+/// caller had no honest way to tell "nothing happened" from "the entities
+/// were pinned but everything else was removed."
+#[napi(object, js_name = "ForgetOutcome")]
+pub struct JsForgetOutcome {
+    /// Entity rows deleted. `0` is normal and correct when every subject is
+    /// shared with a source that was not erased.
+    pub entities: f64,
+    /// Fact rows deleted — both those whose endpoints went, and (on the
+    /// source-scoped path) those sourced from an erased episode.
+    pub facts: f64,
+    /// Episode rows deleted: the stored source text itself.
+    pub episodes: f64,
+    /// `episodic_edges` rows deleted.
+    pub edges: f64,
+    /// `true` when this erasure removed nothing at all — the only honest way
+    /// to ask "did anything happen?"; `entities === 0` alone is NOT that
+    /// answer (see the struct doc comment).
+    pub is_empty: bool,
+}
+
+/// Convert a substrate `kremory::ForgetOutcome` to `JsForgetOutcome`.
+pub fn forget_outcome_to_js(o: kremory::ForgetOutcome) -> JsForgetOutcome {
+    JsForgetOutcome {
+        entities: o.entities as f64,
+        facts: o.facts as f64,
+        episodes: o.episodes as f64,
+        edges: o.edges as f64,
+        is_empty: o.is_empty(),
+    }
+}
+
 /// Outcome of `JsMemory.undo` — the unified undo dispatcher.
 /// Mirrors `kremory::UndoOutcome` as a FLAT JS object carrying the dispatched
 /// `kind` PLUS exactly one populated per-kind outcome field (the other three are
@@ -1933,4 +1968,13 @@ mod tests {
              a fall-through"
         );
     }
+
+    // No unit test for `forget_outcome_to_js` here: `kremory::ForgetOutcome`
+    // is `#[non_exhaustive]` from OUTSIDE its defining crate, so this crate
+    // cannot construct a test value at all (same limitation documented on
+    // the `UnsupersedeOutcomeWire`/`RestoreArchivedOutcomeWire` tests in
+    // kremory-mcp for the identical reason). The field mapping is verified
+    // by the type checker (every named field must exist on both sides) and
+    // by `crates/kremory`'s own `ForgetOutcome`-producing tests; a real
+    // end-to-end check needs a JS runtime harness this crate does not have.
 }
