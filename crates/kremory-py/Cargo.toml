@@ -1,0 +1,49 @@
+# Deliberately NOT a member of the root workspace (`../../Cargo.toml`'s
+# `[workspace]`) — that workspace's `[profile.release]` sets `panic = "abort"`,
+# which would abort the whole HOST Python interpreter on any Rust panic inside
+# this extension module (PyO3 needs an UNWIND to convert a panic into a Python
+# exception). The empty `[workspace]` table below terminates Cargo's ancestor
+# search at THIS manifest, making it its own independent workspace root with
+# its own `[profile.release]` — proven empirically (2026-09-14) to work
+# regardless of physical nesting location; Cargo's own error message on a
+# nested-but-unlisted crate names this exact fix. See
+# `spike/python-binding-2026-09-14/README.md` §"Traps to carry into the
+# build" #1, and `spike/python-binding-2026-09-14/spike-b-Cargo.toml` (the
+# proven precedent this mirrors, minus the spike's separate-checkout `kremory
+# = { path = "../kremory-src/crates/kremory" }`, which was a spike-only
+# scratch-directory artifact — the real path here is a normal sibling under
+# `crates/`).
+[workspace]
+
+[package]
+name = "kremory-py"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86"
+publish = false
+
+[lib]
+name = "kremory_py"
+crate-type = ["cdylib"]
+
+[dependencies]
+# PATH dependency — DELIBERATE, not a placeholder pending a version-dep swap.
+# The spike README's trap #3 claimed a path dep "cannot produce a publishable
+# sdist" and left it "entirely unexercised" — that claim was WRONG, corrected
+# 2026-09-14 by actually running `maturin sdist` (not re-reading the doc):
+# `cargo package`'s vendoring copies this dependency's source into the sdist
+# tarball at the SAME relative path (`kremory-py/` beside `kremory/`), so the
+# `path = "../kremory"` line still resolves after extraction. Verified by
+# building the extracted tarball from a location with ZERO access to this
+# repo — it compiled clean. A crates.io version dependency was ALSO tested and
+# works, but a path dependency is arguably BETTER here: it always vendors the
+# exact current source tree at sdist-build time, with no risk of drifting
+# behind whatever version happens to be published on crates.io. See the ADR
+# "kremory-py lives outside the root Cargo workspace" for the full comparison.
+kremory = { path = "../kremory" }
+
+[profile.release]
+# Deliberately NOT panic = "abort" (the kremory workspace sets that at
+# ../../Cargo.toml) — a Rust panic must UNWIND into PyO3 so it becomes a
+# Python exception, never abort the host interpreter.
+opt-level = 2
