@@ -10,8 +10,8 @@ use crate::core::contradiction::{DetectParams, TwoPoolDetector};
 use crate::core::embed_prefix::{document_embed_text, query_embed_text};
 use crate::core::extraction_window::ExtractionWindowSplitter;
 use crate::core::graph::{
-    EpisodeInsert, FactInsert, InsertEntityWithGroupParams, InsertEpisodicEdgeParams,
-    InvalidateFactWithReasonParams, PriorEpisodesParams,
+    BulkInvalidationDecision, EpisodeInsert, FactInsert, InsertEntityWithGroupParams,
+    InsertEpisodicEdgeParams, InvalidateFactWithReasonParams, PriorEpisodesParams,
 };
 use crate::core::intelligence::{
     EntityExtractor, ExtractedEntity, ExtractedFact, ExtractionContext, ExtractionResult,
@@ -865,6 +865,27 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 None
             };
 
+            // TD-177 finding #1: the bulk-invalidation interlock (below) MUST be
+            // checked against a FIXED baseline taken ONCE before this loop, not
+            // re-queried fresh per fact. `all_facts` can contain several facts in
+            // ONE episode, each independently triggering contradiction detection;
+            // re-querying `live_count` after each fact's invalidations already
+            // shrank it lets several individually-under-threshold batches
+            // cumulatively wipe a large fraction of the namespace without any
+            // single check ever seeing the true aggregate. Adversarial review
+            // caught this in the first cut — verified via a synthetic scenario
+            // (5 facts, each contradicting ~20-24% of the THEN-current live
+            // count, cumulatively wiping 74% of the original namespace while
+            // every individual check reported "allowed").
+            let episode_live_count_baseline =
+                match crate::core::graph::count_live_facts_in_group(&self.graph, effective_gid)
+                    .await
+                {
+                    Ok(n) => n,
+                    Err(e) => break 'phases Err(e),
+                };
+            let mut episode_invalidated_so_far: usize = 0;
+
             for fact in &all_facts {
                 // Resolve subject and object IDs through the merge map. The RULE
                 // is a pure function with its own tests (`fact_rules.rs`).
@@ -994,43 +1015,72 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
                 // The resolver ran during THIS ingest, whose reference time is
                 // `ref_time`; stamping it is coherent and stays correct now that a
                 // fact can carry its own earlier `valid_at`.
-                for fact_id in &contradiction_result.contradictions {
-                    if let Err(e) = self
-                        .graph
-                        .invalidate_fact_with_reason(InvalidateFactWithReasonParams {
-                            fact_id: *fact_id,
-                            expired_at: Utc::now(),
-                            invalid_at: ref_time,
-                        })
-                        .await
-                    {
-                        break 'phases Err(e);
-                    }
-                    invalidated_fact_ids.push(*fact_id);
+                // TD-177: an interlock on bulk fact retirement. Contradiction
+                // detection can invalidate multiple facts from a SINGLE new fact
+                // (`contradiction_result.contradictions`), and had no check on how
+                // many relative to the namespace's size. Worked example (TD-167):
+                // 81 of 1,021 facts invalidated over 8 sessions, ≥31% wrongly
+                // (multi-valued predicates treated as functional) — nothing
+                // objected. Checked against `episode_live_count_baseline` (fixed
+                // once above the fact loop) + `episode_invalidated_so_far`
+                // (cumulative across every fact THIS episode has already
+                // invalidated) — NOT a fresh per-fact query — so several
+                // individually-small batches within one episode can't
+                // cumulatively wipe a large fraction of the namespace while each
+                // one individually looks fine (finding #1, adversarial review).
+                // If blocked, none of THIS fact's contradicted facts are
+                // invalidated and the fact being ingested still saves normally —
+                // failing toward KEEPING facts live, never toward failing the
+                // ingest.
+                let this_batch_size = contradiction_result.contradictions.len();
+                let interlock_decision = crate::core::graph::record_bulk_invalidation_decision(
+                    crate::core::graph::BulkInvalidationRecord {
+                        group_id: effective_gid,
+                        mechanism: "contradiction_detection",
+                        candidate_count: episode_invalidated_so_far + this_batch_size,
+                        live_count: episode_live_count_baseline,
+                    },
+                );
+                if interlock_decision == BulkInvalidationDecision::Allow {
+                    episode_invalidated_so_far += this_batch_size;
+                    for fact_id in &contradiction_result.contradictions {
+                        if let Err(e) = self
+                            .graph
+                            .invalidate_fact_with_reason(InvalidateFactWithReasonParams {
+                                fact_id: *fact_id,
+                                expired_at: Utc::now(),
+                                invalid_at: ref_time,
+                            })
+                            .await
+                        {
+                            break 'phases Err(e);
+                        }
+                        invalidated_fact_ids.push(*fact_id);
 
-                    // ── Fire-site: on_contradiction ─────────────────────────────────
-                    // BUILT here because it needs `pool_a`/`pool_b`, which are scoped to
-                    // this loop iteration, but DELIVERED after the commit. The payload
-                    // rule itself — including why a prior fact missing from both pools
-                    // yields `None` rather than a default-filled event — is documented and
-                    // tested on `fact_rules::contradiction_event`.
-                    let contradiction_event = if sink.is_some() {
-                        fact_rules::contradiction_event(fact_rules::ContradictionEventInput {
-                            pool_a: &pool_a,
-                            pool_b: &pool_b,
+                        // ── Fire-site: on_contradiction ─────────────────────────────────
+                        // BUILT here because it needs `pool_a`/`pool_b`, which are scoped to
+                        // this loop iteration, but DELIVERED after the commit. The payload
+                        // rule itself — including why a prior fact missing from both pools
+                        // yields `None` rather than a default-filled event — is documented and
+                        // tested on `fact_rules::contradiction_event`.
+                        let contradiction_event = if sink.is_some() {
+                            fact_rules::contradiction_event(fact_rules::ContradictionEventInput {
+                                pool_a: &pool_a,
+                                pool_b: &pool_b,
+                                prior_fact_id: *fact_id,
+                                new_fact: fact,
+                                subject_id: &subject_id,
+                                ref_time,
+                                detected_at: Utc::now(),
+                            })
+                        } else {
+                            None
+                        };
+                        deferred.push(DeferredEmission::Contradiction {
+                            event: contradiction_event,
                             prior_fact_id: *fact_id,
-                            new_fact: fact,
-                            subject_id: &subject_id,
-                            ref_time,
-                            detected_at: Utc::now(),
-                        })
-                    } else {
-                        None
-                    };
-                    deferred.push(DeferredEmission::Contradiction {
-                        event: contradiction_event,
-                        prior_fact_id: *fact_id,
-                    });
+                        });
+                    }
                 }
 
                 // Within-episode DUPLICATE pre-check (SQL-only).

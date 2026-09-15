@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 
 use crate::core::schema::{Entity, Fact};
 
+mod bulk_invalidation_guard;
 mod entities;
 mod entity_groups;
 mod episodes;
@@ -22,6 +23,10 @@ pub use entity_groups::{
 };
 pub use episodes::{
     EpisodeInsert, InsertEpisodeParams, InsertEpisodicEdgeParams, PriorEpisodesParams,
+};
+pub(crate) use bulk_invalidation_guard::{
+    check_bulk_invalidation_interlock, count_live_facts_in_group, record_bulk_invalidation_decision,
+    BulkInvalidationCheck, BulkInvalidationDecision, BulkInvalidationRecord,
 };
 pub use facts::{FactInsert, InvalidateFactWithReasonParams};
 pub use queries::{BatchForgetCounts, GetNeighboursAtParams};

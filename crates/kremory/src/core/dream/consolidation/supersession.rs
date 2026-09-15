@@ -186,11 +186,36 @@ pub(crate) async fn window_closeout(graph: &TemporalGraph, group_id: &str) -> Re
         }
         drop(rows);
 
+        // TD-177: an interlock on bulk fact retirement. Even though window
+        // close-out only retires facts whose world-time window has objectively
+        // already ended (deterministic, not a judgment call), a single sweep
+        // wanting to retire an unusually large fraction of a namespace in one
+        // pass is still a symptom worth surfacing — e.g. a batch of facts
+        // inserted with wrong `valid_to` dates upstream. Checked BEFORE the
+        // retirement loop so this is all-or-nothing per sweep: if blocked, none
+        // of this sweep's candidates are retired (they remain live and will be
+        // re-considered by the NEXT sweep) rather than the sweep itself failing.
+        let interlock_decision = crate::core::graph::check_bulk_invalidation_interlock(
+            crate::core::graph::BulkInvalidationCheck {
+                graph,
+                group_id,
+                mechanism: "window_closeout",
+                candidate_count: candidates.len(),
+            },
+        )
+        .await?;
+
         // Collect the retired fact ids; the per-fact decision records are emitted ONLY
         // after this txn durably commits (see the Ok arm) so a mid-sweep rollback never
         // leaves an un-revertable decision_total increment.
         let mut retired_ids: Vec<i64> = Vec::new();
-        for cand in &candidates {
+        let candidates_to_retire: &[WindowCloseoutCandidate] =
+            if interlock_decision == crate::core::graph::BulkInvalidationDecision::Allow {
+                &candidates
+            } else {
+                &[]
+            };
+        for cand in candidates_to_retire {
             // Set `expired_at = valid_to` — the demonstrated window-close time, NOT
             // `now` (the fact expired when its world-time window ended, not when the
             // sweep noticed). `invalidate_fact` runs `UPDATE facts SET expired_at=?1
@@ -658,6 +683,146 @@ mod tests {
             second.count, 0,
             "second run retires 0 — the fact now has expired_at set (excluded)"
         );
+    }
+
+    // ── TD-177: bulk-invalidation interlock ──────────────────────────────────────
+
+    /// The false-positive case FIRST (TD-177 explicit requirement): an ordinary
+    /// window close-out — a handful of closed-window facts in a namespace well
+    /// over the floor — must NOT trip the guard. 2 closed-window facts out of 20
+    /// live facts total (10%) is ordinary maintenance, not an incident.
+    #[tokio::test]
+    async fn window_closeout_ordinary_batch_under_threshold_is_not_blocked() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let now = Utc::now();
+
+        // 18 padding facts, still open-ended (not closeout candidates).
+        for i in 0..18 {
+            plant_fact(
+                &graph,
+                "g1",
+                &format!("entity{i}"),
+                "status",
+                "active",
+                now - Duration::days(30),
+                None,
+                None,
+                None,
+                0,
+            )
+            .await;
+        }
+        // 2 closed-window candidates (10% of the 20 live facts).
+        let closed1 = plant_fact(
+            &graph,
+            "g1",
+            "bob",
+            "lived_in",
+            "Portland",
+            now - Duration::days(30),
+            Some(now - Duration::days(1)),
+            None,
+            None,
+            0,
+        )
+        .await;
+        let closed2 = plant_fact(
+            &graph,
+            "g1",
+            "carol",
+            "lived_in",
+            "Seattle",
+            now - Duration::days(30),
+            Some(now - Duration::days(1)),
+            None,
+            None,
+            0,
+        )
+        .await;
+
+        let result = supersession(SupersessionParams {
+            graph: &graph,
+            group_id: "g1",
+            budget: &mut budget(),
+            include_llm_nominate: false,
+            model_id: "gemma4:e4b",
+        })
+        .await
+        .expect("supersession");
+
+        assert_eq!(
+            result.count, 2,
+            "10% of the namespace is ordinary maintenance — must retire normally, not be blocked"
+        );
+        assert!(read_expired_at(&graph, closed1).await.is_some());
+        assert!(read_expired_at(&graph, closed2).await.is_some());
+    }
+
+    /// The genuine-incident case: a single window-closeout sweep wanting to
+    /// retire well over 25% of a namespace's live facts in one pass is refused.
+    /// The candidate facts stay live (expired_at still NULL) rather than being
+    /// silently retired — the sweep completes (returns Ok(0)), it just applies
+    /// nothing this round.
+    #[tokio::test]
+    async fn window_closeout_blocks_a_bulk_wipe_and_leaves_facts_live() {
+        let graph = TemporalGraph::open_in_memory().await.expect("open");
+        let now = Utc::now();
+
+        // 14 padding facts (still open-ended) + 6 closed-window candidates = 20
+        // live facts total. 6/20 = 30%, above the 25% threshold.
+        for i in 0..14 {
+            plant_fact(
+                &graph,
+                "g1",
+                &format!("entity{i}"),
+                "status",
+                "active",
+                now - Duration::days(30),
+                None,
+                None,
+                None,
+                0,
+            )
+            .await;
+        }
+        let mut candidate_ids = Vec::new();
+        for i in 0..6 {
+            let id = plant_fact(
+                &graph,
+                "g1",
+                &format!("closed_entity{i}"),
+                "lived_in",
+                "Nowhere",
+                now - Duration::days(30),
+                Some(now - Duration::days(1)),
+                None,
+                None,
+                0,
+            )
+            .await;
+            candidate_ids.push(id);
+        }
+
+        let result = supersession(SupersessionParams {
+            graph: &graph,
+            group_id: "g1",
+            budget: &mut budget(),
+            include_llm_nominate: false,
+            model_id: "gemma4:e4b",
+        })
+        .await
+        .expect("supersession must succeed even when the interlock blocks the batch");
+
+        assert_eq!(
+            result.count, 0,
+            "TD-177: the interlock must block this batch (6 of 20 = 30%, above threshold)"
+        );
+        for id in candidate_ids {
+            assert!(
+                read_expired_at(&graph, id).await.is_none(),
+                "blocked candidate {id} must remain live, not be silently retired"
+            );
+        }
     }
 
     // ── LLM-nominate lane is stub-off: requesting it is a documented no-op ───────
