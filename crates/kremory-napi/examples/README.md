@@ -65,49 +65,72 @@ echo OK` is a valid smoke check for any one of them.
 | `opts.withEmbedder` (BYOM embedder bridge) | `09-byom-embedder.mjs` | partial — `Memory.open` with a custom embedder is executed and asserted; the ingest-to-recall round trip is exercised too, but does NOT succeed — it hits a pre-existing, already-tracked bridge bug (`__test__/smoke-embedder.test.mjs` `test.skip('T2: ...')`, "InvalidArg, Given napi value is not an array"). Re-running it against this build surfaces a WORSE symptom than documented — see Finding F48 below. |
 | `unmerge` (undo an entity merge) | `10-unmerge.ts` (type-check only) | NOT executed — see the file's header comment: triggering a real entity merge requires `dream()`'s cross-episode reconciliation to make an LLM/similarity-driven merge decision, which is not reliably reproducible as a deterministic example. Type-checked via `tsc` against `../index.d.ts` instead (mirrors `__test__/types.check.ts`'s own convention for shape-only verification). |
 
-## Findings surfaced while writing these
+## Automated smoke check
 
-Ten genuine issues were found by actually running new example content
-against the locally built native module (none previously logged) — see
+`pnpm test:examples` (`examples/run-all.mjs`) runs every `.mjs` file in this
+directory (excluding itself) with a per-file timeout, and fails loud (exit 1,
+listing which file(s) failed) if any exits non-zero or hangs past its
+timeout. `10-unmerge.ts` is covered separately by `pnpm test:types`.
+
+This exists **because** these examples had silently rotted before: F43 and
+F44 below were fixed in the Rust/napi source on 2026-09-07, but the example
+files that had been written to *demonstrate* those bugs were never updated
+to match, and nothing ran them to notice — until this check was added and
+re-running every example by hand caught it (2026-09-15). Requires the same
+prerequisites as running any example manually (native module built, an LLM
+provider env var set) — see "Prerequisites" above. There is no CI on this
+crate (org-wide GitHub Actions billing is suspended), so **run this manually
+before any napi release**, the same way `run-e2e-consumer.sh` is a manual,
+mandatory pre-release gate on the Rust side.
+
+## Findings surfaced while writing these (re-verified 2026-09-15)
+
+Ten issues were originally found by actually running new example content
+against the locally built native module — see
 `docs/specs/public-docs-and-api-surface-audit/phase1-findings.md`, findings
-**F40-F49**, appended by this same change. All are logged as **NOT FIXED**
-— fixing any of them requires either a `crates/kremory/src` or
-`crates/kremory-napi/src` change (out of this task's scope: writing and
-running examples against the EXISTING build) or a maintainer product
-decision. Summary (see the findings doc for full citations):
+**F40-F49**. That doc's own per-finding "Disposition" lines are the source
+of truth and were already current; what was stale was THIS file and three
+of the example files themselves, which still asserted the old bugs after the
+fixes landed. Re-verified by actually re-running every example
+(2026-09-15): **F43 and F44 no longer reproduce** — `examples/03-*.mjs` and
+`examples/06-*.mjs` have been updated to assert the fixed (correct) behavior
+instead of the historical bug. Current status of all ten, cross-checked
+against the findings doc:
 
-- **F40** — none of `supersede` / `deleteFact` / `restoreArchivedFact` /
+- **F40** — OPEN. None of `supersede` / `deleteFact` / `restoreArchivedFact` /
   `unsupersede`'s required `factId: number` argument is discoverable from
-  any public read path.
-- **F41** — `awaitDream` / `cancelDream` require a dream-run `handleId`
-  that no public JS (or Rust facade) call can produce, because
-  `Memory.dream()` always blocks inline.
-- **F42** — `recallBySourceId`'s "Known gap" doc comment (sourceUri always
-  null) is STALE — sourceUri actually round-trips correctly (the fix it
-  describes as missing already landed, TD-003 Phase G).
-- **F43** — `awaitBatch` can NEVER report done for a batch of 2+ episodes
-  sharing one `batchId` — always times out (a real substrate bug in
-  `batch_status_increment_completed`/`_skipped`, which never bumps `total`
-  past 1).
-- **F44** — `restoreArchivedFact`'s documented idempotency
-  (`alreadyLive: true`) is unreachable via the natural double-call
-  sequence — the second call throws instead.
-- **F45** — the BYOE `extractor.extract` callback's real calling
-  convention (`(null, text)`, a leaked napi-rs error-first callback)
-  matches NEITHER of the two shapes `index.d.ts` documents for it; `name`
-  must be a plain string, not the documented `name(): string` method.
-- **F46** — `{ embedder, extractor }`'s documented "NoLlm typestate" is not
-  honoured — an LLM env var is still required to open a Memory this way.
-- **F47** — BYOE-created entities fail to embed unless `embeddingDim`
-  equals 384, regardless of the configured custom dimension.
-- **F48** — the already-tracked BYOM-embedder ingest bug (`T2` in
-  `smoke-embedder.test.mjs`) now HANGS instead of failing fast on this
-  build — a failure-mode regression, not a new root cause.
-- **F49** — `__test__/episode-parity.test.mjs` is stale and currently fails
-  (`mem.getBySourceId is not a function`) against the real API surface;
-  since it's in the default `pnpm test` glob, `pnpm test` does not pass
-  cleanly on a fresh checkout today.
+  any public read path. Still demonstrated in `06-reversibility-and-undo.mjs`.
+- **F41** — Fixed (doc), 2026-09-07. `awaitDream`/`cancelDream` are documented
+  as currently unreachable rather than claiming a handleId a caller can't get.
+- **F42** — Fixed (doc), 2026-09-07. The stale "sourceUri always null" note
+  was deleted (TD-003 Phase G already closed the gap it described).
+- **F43** — **Fixed (code), 2026-09-07** (TD-251 follow-on work). `awaitBatch`
+  now correctly reports done for a batch of 2+ episodes —
+  `batch_status_increment_completed`/`_skipped` bump `total` on every arm,
+  not just the first insert. `03-ingest-batch-and-async-status.mjs` now
+  asserts the 3-episode batch completes, not that it times out.
+- **F44** — **Fixed (code), 2026-09-07**. `restoreArchivedFact`'s
+  idempotency (`alreadyLive: true` on a repeat call) is reachable again —
+  `restore_archived_txn` now checks `facts` (already-live) before
+  `facts_archive` presence. `06-reversibility-and-undo.mjs` now asserts the
+  second call returns `alreadyLive: true`, not that it throws.
+- **F45** — Fixed (doc), 2026-09-07. The BYOE `extractor.extract` callback
+  shape in `index.d.ts` now matches the real napi-rs calling convention.
+- **F46** — Fixed (code), 2026-09-07. `{ embedder, extractor }`'s "NoLlm
+  typestate" is honoured when no LLM env var is present; `07-byoe-*.mjs` and
+  `__test__/byoe-nollm-open.test.mjs` both pass this cleanly.
+- **F47** — OPEN. BYOE-created entities still fail to embed unless
+  `embeddingDim` equals 384, regardless of the configured custom dimension.
+- **F48** — OPEN. The already-tracked BYOM-embedder ingest bug still hangs
+  rather than failing fast. `09-byom-embedder.mjs` races the call against a
+  15s timeout and reports ground truth either way (exits 0, self-documenting
+  — this is intentional, not a gap in the example).
+- **F49** — Fixed (test), 2026-09-07. `episode-parity.test.mjs` was renamed
+  to the real `recallBySourceId` API; all 3 of its tests pass given a
+  correctly configured LLM provider (the model actually pulled locally
+  matters — `gemma4:e4b`, not just any Ollama model).
 
-None of these were worked around silently — each is demonstrated and
-commented on explicitly in its example file (see the Index table above), and
-none required touching `src/` to write or run the examples themselves.
+None of these were worked around silently — each open one is still
+demonstrated and commented on explicitly in its example file, and none of
+today's re-verification required touching `crates/kremory/src` or
+`crates/kremory-napi/src`.

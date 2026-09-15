@@ -108,29 +108,21 @@ try {
   }
   console.log(`[03] rememberBatch committed ${batchResults.length} episode(s)`);
 
-  // ── awaitBatch: single-episode batch works; multi-episode NEVER completes ──
+  // ── awaitBatch: single- and multi-episode batches both complete ──
   //
-  // Finding F43 (logged in phase1-findings.md), discovered by actually
-  // running this example: `awaitBatch` correctly reports done for a batch of
-  // ONE episode sharing a `batchId`, but for 2+ episodes sharing the SAME
-  // `batchId` it can NEVER report done — it always times out.
-  //
-  // Root cause (`crates/kremory/src/memory/engine_handle.rs`,
-  // `batch_status_increment_completed`/`_skipped`): on the INLINE path (the
-  // only path reachable from this binding — there is no `no_wait` knob on
-  // `RememberOptions`), each episode call does
-  // `map.entry(batch_id).and_modify(|s| s.completed += 1).or_insert(BatchStatus
-  // { total: 1, completed: 1, .. })`. `total` is set to `1` ONLY by the very
-  // first `or_insert` for that key; every subsequent episode sharing the same
-  // `batchId` takes the `.and_modify` branch, which bumps `completed` (or
-  // `skipped`) but NEVER `total`. After 3 episodes: `{ total: 1, completed: 3
-  // }`. `BatchStatus::is_done()` is `completed + skipped + failed == total`
-  // — `3 == 1` is false, forever. This is a substrate bug
-  // (`crates/kremory/src/memory/engine_handle.rs`), not napi-specific — it
-  // would reproduce identically via the pure-Rust `Memory::remember_batch()`
-  // + `Memory::await_batch()` facade. Out of scope to fix here (constrained
-  // to writing/running examples, not touching `src/`); demonstrated below
-  // rather than silently worked around, per this task's own instructions.
+  // Finding F43 (logged in phase1-findings.md) originally reported that
+  // `awaitBatch` could never report done for 2+ episodes sharing a
+  // `batchId` — `total` was only set by the first episode's `or_insert`,
+  // never bumped by later episodes' `.and_modify`, so `is_done()` could
+  // never match. RE-VERIFIED 2026-09-15 (re-running this example against
+  // the current build): this no longer reproduces. It was fixed by TD-251
+  // (`crates/kremory/src/memory/engine_handle.rs`,
+  // `batch_status_increment_completed`/`_skipped` now bump `total` on both
+  // the `.and_modify` and `.or_insert` arms, and batch registration itself
+  // increments `total` per episode — see `batch_status_accumulates` and
+  // `cancel_never_wedges_its_batch` on the Rust side). F43 is stale; the
+  // finding is retained here only as history, not as a currently-reproducing
+  // gap.
   console.log('[03] awaitBatch on a SINGLE-episode batch (this shape works)');
   const soloBatchId = 'demo-batch-solo';
   await mem.rememberBatch({
@@ -142,15 +134,14 @@ try {
   assert.equal(soloStatus.total, 1);
   assert.equal(soloStatus.completed + soloStatus.skipped + soloStatus.failed, soloStatus.total);
 
-  console.log(`[03] awaitBatch("${batchId}", 5000) on the 3-episode batch — EXPECTED to time out (Finding F43)`);
-  await assert.rejects(
-    () => mem.awaitBatch(batchId, 5_000),
-    (err) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, /timed out/i);
-      console.log('[03] confirmed: multi-episode awaitBatch times out as predicted:', err.message);
-      return true;
-    },
+  console.log(`[03] awaitBatch("${batchId}", 5000) on the 3-episode batch`);
+  const multiStatus = await mem.awaitBatch(batchId, 5_000);
+  console.log('[03] multi-episode batch status (done):', multiStatus);
+  assert.equal(multiStatus.total, 3, 'total must count all 3 episodes sharing this batchId (TD-251)');
+  assert.equal(
+    multiStatus.completed + multiStatus.skipped + multiStatus.failed,
+    multiStatus.total,
+    'batch must report done — see TD-251',
   );
 
   // ── statusOf / awaitEnrichment / cancel: DOCUMENTED-UNREACHABLE in practice ─

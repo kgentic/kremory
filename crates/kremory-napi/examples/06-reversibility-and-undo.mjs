@@ -129,39 +129,24 @@ try {
   assert.equal(restoreOutcome.restoredFactId, directFactId);
   assert.equal(restoreOutcome.alreadyLive, false);
 
-  // ── Finding F44 (logged in phase1-findings.md) ───────────────────────────
+  // ── Finding F44 (logged in phase1-findings.md) — FIXED 2026-09-07 ────────
   //
-  // `restoreArchivedFact`'s doc comment claims: "Idempotent: if the fact is
-  // already live returns already_live = true and writes nothing." Calling it
-  // a SECOND time on the id just restored above does NOT do that — it
-  // THROWS "no facts_archive row with id N". Root cause, traced to
-  // `crates/kremory/src/core/dream/provenance/reversal.rs`
-  // `restore_archived_txn`: a successful restore's LAST step is `DELETE FROM
-  // facts_archive WHERE id = ?1` (cleanup). The function's FIRST check on
-  // every call is "does a facts_archive row with this id exist?" — if not,
-  // hard error, unconditionally, BEFORE the `already_live` branch (which
-  // checks `facts` for a live row) ever runs. So the one code path that
-  // could return the documented `{ alreadyLive: true }` is unreachable for
-  // the most natural repeat-call shape: restore once (which deletes the
-  // archive row as its own cleanup step), then restore again (archive row is
-  // now gone, so the *first* check throws before the *second* check is ever
-  // reached). The `already_live` branch appears to exist for a DIFFERENT
-  // scenario (a facts_archive row surviving stale after some other reversal
-  // path re-inserted the live row without cleaning it up) — not the
-  // straightforward double-call case a consumer would most obviously try.
-  console.log(`[06] restoreArchivedFact(${directFactId}) AGAIN — demonstrates the actual (not documented) behaviour`);
-  await assert.rejects(
-    () => mem.restoreArchivedFact(directFactId),
-    (err) => {
-      assert.ok(err instanceof Error);
-      assert.match(err.message, /no facts_archive row/i);
-      console.log(
-        '[06] confirmed: second restoreArchivedFact call throws rather than returning { alreadyLive: true } (Finding F44):',
-        err.message,
-      );
-      return true;
-    },
-  );
+  // Originally: `restoreArchivedFact`'s documented idempotency
+  // (`already_live: true` on a repeat call) was unreachable via the natural
+  // double-call sequence — the first check was `facts_archive` presence,
+  // but a successful restore's own last step deletes that row, so the
+  // second call threw "no facts_archive row" before the idempotent branch
+  // ever ran. RE-VERIFIED 2026-09-15 (re-running this example against the
+  // current build): this no longer reproduces. Fixed by reordering
+  // `restore_archived_txn` (`core/dream/provenance/reversal.rs`) to check
+  // `facts` (already-live) FIRST; a genuinely bogus id still falls through
+  // to the `facts_archive` check and errors loudly. F44 is stale; retained
+  // here only as history.
+  console.log(`[06] restoreArchivedFact(${directFactId}) AGAIN — must be idempotent`);
+  const restoreAgain = await mem.restoreArchivedFact(directFactId);
+  console.log('[06] restoreArchivedFact (again) result:', restoreAgain);
+  assert.equal(restoreAgain.restoredFactId, directFactId);
+  assert.equal(restoreAgain.alreadyLive, true, 'second call must report already_live per the documented contract');
 
   // ── deleteFact + undoDeleteFact (via the per-kind undo method) ───────────
   const undoFactId = 3;

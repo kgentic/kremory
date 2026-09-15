@@ -33,7 +33,8 @@
     "prepublishOnly": "napi prepublish -t npm",
     "version": "napi version",
     "test": "node --test __test__/*.test.mjs",
-    "test:types": "tsc --noEmit --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck __test__/types.check.ts",
+    "test:types": "tsc --noEmit --target es2022 --module nodenext --moduleResolution nodenext --strict --skipLibCheck __test__/types.check.ts examples/10-unmerge.ts",
+    "test:examples": "node examples/run-all.mjs",
     "test:all": "pnpm build:debug && pnpm test:types && pnpm test"
   },
   "repository": {
