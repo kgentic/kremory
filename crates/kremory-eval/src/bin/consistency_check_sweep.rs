@@ -12,21 +12,37 @@
 //!    - Queries post-precision and computes F1.
 //!    - Discards the scratch copy.
 //! 4. Picks the τ with the highest F1 (ties broken by precision).
-//! 5. Runs the **RISK-001 acceptance gate**: fresh ingest on a second temp DB,
-//!    run consistency_check with chosen τ, assert precision lift ≥ 0.05 (5pt).
+//! 5. Runs the **RISK-001 acceptance gate** N times (default N=5, `--n-runs`):
+//!    each run does a *fresh* ingest on its own temp DB, runs consistency_check
+//!    with the chosen τ, and records the precision lift. The gate then computes
+//!    the sample mean ± SD of those N lifts and asserts `mean - SD >= 0.05` (5pt).
 //! 6. Writes sweep results to `.ai-docs/lessons/2026-06-10-v0-1-2-tau-calibration-sweep.md`.
-//! 7. Writes RISK-001 verdict to `.ai-docs/lessons/2026-06-10-v0-1-2-risk-001-acceptance-verdict.md`.
+//! 7. Writes RISK-001 verdict (per-run values + mean ± SD) to
+//!    `.ai-docs/lessons/2026-06-10-v0-1-2-risk-001-acceptance-verdict.md`.
 //!
 //! # Usage
 //!
 //! ```text
 //! OLLAMA_HOST=http://localhost:11434 \
-//! cargo run -p kremory-eval --release --bin consistency_check_sweep
+//! cargo run -p kremory-eval --release --bin consistency_check_sweep -- --n-runs 5
 //! ```
 //!
+//! `--n-runs <N>` (or env var `RISK001_N_RUNS`) overrides the RISK-001 gate's
+//! repeat count; default is 5. `N` is the multi-run aggregation TD-038 asked
+//! for — see "RISK-001 gate" section below for why a single-shot measurement
+//! is not trustworthy at this threshold.
+//!
+//! ⚠️ **Standing HITL gate**: every run of this binary performs a REAL ingest
+//! through the full kremory pipeline (Phase 1 NER via Ollama, optionally the
+//! paid Anthropic verify provider via `KREMORY_VERIFY_PROVIDER=anthropic`).
+//! Per this repo's CLAUDE.md, any paid benchmark run — including re-ingesting
+//! the bench corpora N times for this gate — is off-limits for autonomous
+//! execution. Running the real N=5 sweep (Ollama-only or Anthropic-verify) is
+//! a MANUAL step for a human; do not wire this into an autonomous pipeline.
+//!
 //! Stop condition (per sprint plan §Stop Conditions #1):
-//! If RISK-001 gate FAILS (lift < 5pt), binary exits with code 1 and writes FAIL verdict.
-//! Do NOT proceed to Phase E without resolving the FAIL.
+//! If RISK-001 gate FAILS (mean - SD < 5pt), binary exits with code 1 and
+//! writes FAIL verdict. Do NOT proceed to Phase E without resolving the FAIL.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -492,35 +508,146 @@ async fn run_sweep_for_tau(
     })
 }
 
-// ─── RISK-001 gate ────────────────────────────────────────────────────────────
+// ─── RISK-001 gate (TD-038: multi-run mean ± SD hardening) ───────────────────
+//
+// The gate used to be a single fresh-ingest measurement compared directly
+// against the +0.05pt threshold. That is unsound: repeated fresh ingests of
+// the SAME fixture show ~0.50pt of pure ingest noise (LLM extraction is not
+// deterministic run-to-run even with T=0 + seed pinning — see
+// `.ai-docs/lessons/o11y-sprint-retro-2026-06-11.md` TD-H), which is larger
+// than the threshold itself. A single unlucky (or lucky) run can flip
+// PASS/FAIL on noise alone. TD-038 closes this by running the gate N times
+// and requiring the *lower* end of the measured spread to clear the bar.
 
-struct Risk001Verdict {
+/// Precision-lift threshold the RISK-001 gate must clear. Absolute, not relative
+/// (e.g. 0.05 == 5 percentage points of label precision).
+const RISK001_LIFT_THRESHOLD: f64 = 0.05;
+
+/// Default repeat count for the RISK-001 gate (TD-038). Overridable via
+/// `--n-runs <N>` or the `RISK001_N_RUNS` env var — see [`parse_n_runs_from`].
+const RISK001_DEFAULT_N_RUNS: usize = 5;
+
+/// Sample mean and sample standard deviation (Bessel-corrected, N-1 denominator)
+/// over a small in-memory slice of f64 measurements.
+///
+/// Hand-rolled per this repo's "evaluate a 3p package before hand-rolling" rule's
+/// own exemption for genuinely trivial, stable logic (≤~20 lines, no edge-case
+/// tail): this is a two-pass mean+variance over at most a handful of precision-lift
+/// deltas in `[-1.0, 1.0]`, with no NaN/unit/locale handling required. Pulling in a
+/// statistics crate (e.g. `statrs`) for this would be a dependency for arithmetic a
+/// short function already expresses correctly.
+///
+/// Returns `(mean, sample_sd)`. `sample_sd` is `0.0` for `values.len() <= 1` — a
+/// single sample has no dispersion estimate, not a divide-by-zero panic.
+fn mean_and_sample_sd(values: &[f64]) -> (f64, f64) {
+    let n = values.len();
+    if n == 0 {
+        return (0.0, 0.0);
+    }
+    let mean = values.iter().sum::<f64>() / n as f64;
+    if n == 1 {
+        return (mean, 0.0);
+    }
+    let variance = values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n as f64 - 1.0);
+    (mean, variance.sqrt())
+}
+
+/// RISK-001 gate decision: PASS iff `mean - sd >= threshold`.
+///
+/// This is the TD-038 fix itself. Gating on `mean` alone (the pre-TD-038
+/// behaviour, restated here as what this function deliberately does NOT do)
+/// lets a high-variance result pass purely because its single measured mean
+/// happened to clear the bar, even though a materially large share of the
+/// underlying runs did not. Subtracting the sample SD requires the *worst
+/// plausible* run (one SD below the mean) to still clear the threshold.
+fn risk001_gate_pass(lift_mean: f64, lift_sd: f64, threshold: f64) -> bool {
+    lift_mean - lift_sd >= threshold
+}
+
+/// Parse the RISK-001 gate's repeat count from CLI args (`--n-runs <N>` /
+/// `--n-runs=<N>`), falling back to the `RISK001_N_RUNS` env var, then to
+/// [`RISK001_DEFAULT_N_RUNS`].
+///
+/// Takes an explicit slice (rather than reading `std::env::args()` directly)
+/// so it is unit-testable — same pattern as `eval.rs`'s `parse_args_from`.
+fn parse_n_runs_from(raw: &[String], env_override: Option<&str>) -> Result<usize, String> {
+    let mut i = 0;
+    while i < raw.len() {
+        let arg = &raw[i];
+        if arg == "--n-runs" {
+            let val = raw
+                .get(i + 1)
+                .ok_or_else(|| "--n-runs requires a value".to_string())?;
+            return val
+                .parse::<usize>()
+                .map_err(|e| format!("--n-runs value {val:?} invalid: {e}"))
+                .and_then(require_at_least_one);
+        }
+        if let Some(val) = arg.strip_prefix("--n-runs=") {
+            return val
+                .parse::<usize>()
+                .map_err(|e| format!("--n-runs value {val:?} invalid: {e}"))
+                .and_then(require_at_least_one);
+        }
+        i += 1;
+    }
+    if let Some(val) = env_override {
+        return val
+            .parse::<usize>()
+            .map_err(|e| format!("RISK001_N_RUNS value {val:?} invalid: {e}"))
+            .and_then(require_at_least_one);
+    }
+    Ok(RISK001_DEFAULT_N_RUNS)
+}
+
+fn require_at_least_one(n: usize) -> Result<usize, String> {
+    if n == 0 {
+        Err("--n-runs / RISK001_N_RUNS must be >= 1".to_string())
+    } else {
+        Ok(n)
+    }
+}
+
+/// One RISK-001 run's measurements (before aggregation).
+struct Risk001RunResult {
+    run_index: usize,
     pre_precision: f64,
     post_precision: f64,
     precision_lift: f64,
-    tau_used: f32,
     scanned: usize,
     corrected: usize,
+}
+
+/// Aggregated RISK-001 verdict across `n_runs` fresh-ingest repeats (TD-038).
+struct Risk001Verdict {
+    tau_used: f32,
+    n_runs: usize,
+    runs: Vec<Risk001RunResult>,
+    lift_mean: f64,
+    lift_sd: f64,
     pass: bool,
 }
 
-/// Run the RISK-001 acceptance gate.
+/// Run ONE RISK-001 measurement: fresh ingest on its own temp DB, consistency_check
+/// at `tau`, pre/post precision + lift. No pass/fail decision here — that only
+/// makes sense across the aggregated N runs (see [`run_risk001_gate`]).
 ///
 /// `ingest_llm` handles Phase 1 NER (needs to handle 21-type schema reliably).
 /// `verify_llm` handles consistency_check verification calls (the model under test).
 /// `verify_llm` is `&dyn ChatProvider` so Ollama and Anthropic both work without boxing.
-async fn run_risk001_gate(
+async fn run_risk001_gate_once(
     fixture_text: &str,
     tau: f32,
     gt: &[GroundTruthEntity],
     ingest_llm: Arc<Ollama>,
     verify_llm: &dyn ChatProvider,
     embedder: Arc<OllamaEmbedAdapter<Ollama>>,
-) -> Result<Risk001Verdict> {
+    run_index: usize,
+) -> Result<Risk001RunResult> {
     let dir = tempfile::tempdir().context("risk001 tempdir")?;
     let db_path = dir.path().join("risk001.db");
 
-    eprintln!("[risk001] Fresh ingest for RISK-001 gate (τ={tau:.2})...");
+    eprintln!("[risk001] run {run_index}: fresh ingest (τ={tau:.2})...");
     let graph = ingest_fixture(
         fixture_text,
         &db_path,
@@ -536,7 +663,7 @@ async fn run_risk001_gate(
     let pre_precision = label_precision(&pre_entities, gt);
 
     eprintln!(
-        "[risk001] pre-precision={:.4} ({}/{})",
+        "[risk001] run {run_index}: pre-precision={:.4} ({}/{})",
         pre_precision,
         (pre_precision * gt.len() as f64) as usize,
         gt.len()
@@ -566,7 +693,7 @@ async fn run_risk001_gate(
     .context("risk001 run_consistency_check")?;
 
     eprintln!(
-        "[risk001] consistency_check: scanned={} flagged={} corrected={} confirmed={} uncertain={}",
+        "[risk001] run {run_index}: consistency_check: scanned={} flagged={} corrected={} confirmed={} uncertain={}",
         summary.scanned, summary.flagged, summary.corrected, summary.confirmed, summary.uncertain
     );
 
@@ -576,22 +703,77 @@ async fn run_risk001_gate(
     let post_precision = label_precision(&post_entities, gt);
 
     let precision_lift = post_precision - pre_precision;
-    let pass = precision_lift >= 0.05;
 
     eprintln!(
-        "[risk001] post-precision={:.4} lift={:.4} ({}) threshold=0.05",
-        post_precision,
-        precision_lift,
-        if pass { "PASS" } else { "FAIL" }
+        "[risk001] run {run_index}: post-precision={:.4} lift={:.4}",
+        post_precision, precision_lift,
     );
 
-    Ok(Risk001Verdict {
+    Ok(Risk001RunResult {
+        run_index,
         pre_precision,
         post_precision,
         precision_lift,
-        tau_used: tau,
         scanned: summary.scanned,
         corrected: summary.corrected,
+    })
+}
+
+/// Run the RISK-001 acceptance gate as `n_runs` independent fresh-ingest
+/// repeats (TD-038), then gate on `mean(lift) - sample_sd(lift) >= threshold`
+/// rather than a single raw measurement.
+///
+/// ⚠️ Every call to this function performs `n_runs` REAL ingests through the
+/// full kremory pipeline. Per this repo's CLAUDE.md standing HITL gate, any
+/// paid benchmark run — including re-ingesting the bench corpora N times for
+/// this gate — must NOT be invoked autonomously. This is a MANUAL step: a
+/// human runs the binary (`cargo run -p kremory-eval --release --bin
+/// consistency_check_sweep -- --n-runs 5`) with Ollama (and optionally the
+/// paid Anthropic verify provider) reachable.
+async fn run_risk001_gate(
+    fixture_text: &str,
+    tau: f32,
+    gt: &[GroundTruthEntity],
+    ingest_llm: Arc<Ollama>,
+    verify_llm: &dyn ChatProvider,
+    embedder: Arc<OllamaEmbedAdapter<Ollama>>,
+    n_runs: usize,
+) -> Result<Risk001Verdict> {
+    let mut runs = Vec::with_capacity(n_runs);
+    for run_index in 0..n_runs {
+        let run = run_risk001_gate_once(
+            fixture_text,
+            tau,
+            gt,
+            Arc::clone(&ingest_llm),
+            verify_llm,
+            Arc::clone(&embedder),
+            run_index,
+        )
+        .await
+        .with_context(|| format!("risk001 run {}/{n_runs}", run_index + 1))?;
+        runs.push(run);
+    }
+
+    let lifts: Vec<f64> = runs.iter().map(|r| r.precision_lift).collect();
+    let (lift_mean, lift_sd) = mean_and_sample_sd(&lifts);
+    let pass = risk001_gate_pass(lift_mean, lift_sd, RISK001_LIFT_THRESHOLD);
+
+    eprintln!(
+        "[risk001] aggregated over {n_runs} runs: lift_mean={:.4} lift_sd={:.4} mean-sd={:.4} ({}) threshold={:.2}",
+        lift_mean,
+        lift_sd,
+        lift_mean - lift_sd,
+        if pass { "PASS" } else { "FAIL" },
+        RISK001_LIFT_THRESHOLD,
+    );
+
+    Ok(Risk001Verdict {
+        tau_used: tau,
+        n_runs,
+        runs,
+        lift_mean,
+        lift_sd,
         pass,
     })
 }
@@ -660,6 +842,7 @@ fn write_risk001_doc(
     let path = dir.join("2026-06-10-v0-1-2-risk-001-acceptance-verdict.md");
 
     let status = if verdict.pass { "PASS" } else { "FAIL" };
+    let mean_minus_sd = verdict.lift_mean - verdict.lift_sd;
     let mut lines = Vec::new();
     lines.push("# RISK-001 Acceptance Gate Verdict — Dream Pass 4".to_string());
     lines.push(format!("\nGenerated: {}", Utc::now().to_rfc3339()));
@@ -667,38 +850,57 @@ fn write_risk001_doc(
     lines.push(format!(
         "| Field | Value |\n|---|---|\n\
          | τ_used | {:.2} |\n\
-         | pre_precision | {:.4} |\n\
-         | post_precision | {:.4} |\n\
-         | precision_lift | {:.4} |\n\
-         | threshold | 0.05 |\n\
+         | n_runs | {} |\n\
+         | lift_mean | {:.4} |\n\
+         | lift_sd | {:.4} |\n\
+         | mean − sd | {:.4} |\n\
+         | threshold | {:.2} |\n\
          | pass | {} |\n\
-         | scanned | {} |\n\
-         | corrected | {} |\n\
          | model | {} |",
         verdict.tau_used,
-        verdict.pre_precision,
-        verdict.post_precision,
-        verdict.precision_lift,
+        verdict.n_runs,
+        verdict.lift_mean,
+        verdict.lift_sd,
+        mean_minus_sd,
+        RISK001_LIFT_THRESHOLD,
         verdict.pass,
-        verdict.scanned,
-        verdict.corrected,
         chat_model,
     ));
+
+    // TD-038: per-run values so a human reviewing this doc can see the raw
+    // spread the mean ± SD aggregation was computed from, not just the
+    // aggregate.
+    lines.push("\n## Per-Run Results (TD-038 multi-run aggregation)\n".to_string());
+    lines.push("| run | pre_precision | post_precision | lift | scanned | corrected |".to_string());
+    lines.push("|---|---|---|---|---|---|".to_string());
+    for r in &verdict.runs {
+        lines.push(format!(
+            "| {} | {:.4} | {:.4} | {:.4} | {} | {} |",
+            r.run_index + 1,
+            r.pre_precision,
+            r.post_precision,
+            r.precision_lift,
+            r.scanned,
+            r.corrected,
+        ));
+    }
 
     if !verdict.pass {
         lines.push("\n## Stop Condition #1 — Action Required\n".to_string());
         lines.push(format!(
-            "RISK-001 FAIL: precision lift {:.4} < 0.05 required.\n\
+            "RISK-001 FAIL: mean − sd = {:.4} < {:.2} required (mean={:.4}, sd={:.4} over {} runs).\n\
              ADR-047 sub-decision (i/ii/iii/iv) revision REQUIRED before Phase E per Stop Condition #1.\n\
              Do NOT proceed to Phase E without resolving this verdict.",
-            verdict.precision_lift
+            mean_minus_sd, RISK001_LIFT_THRESHOLD, verdict.lift_mean, verdict.lift_sd, verdict.n_runs
         ));
     } else {
         lines.push("\n## Outcome\n".to_string());
-        lines.push(
-            "RISK-001 PASS. Dream Pass 4 delivers ≥5pt absolute precision lift on the TD-036 mis-typed fixture.\n\
-             Proceed to Phase E.".to_string()
-        );
+        lines.push(format!(
+            "RISK-001 PASS. mean − sd = {:.4} ≥ {:.2} over {} runs (TD-038 multi-run gate).\n\
+             Dream Pass 4 delivers a precision lift that clears the threshold even at the\n\
+             low end of the measured spread. Proceed to Phase E.",
+            mean_minus_sd, RISK001_LIFT_THRESHOLD, verdict.n_runs
+        ));
     }
 
     lines.push("\n## Notes\n".to_string());
@@ -708,6 +910,12 @@ fn write_risk001_doc(
             .to_string(),
     );
     lines.push("- τ chosen from sweep (highest F1 per D3/D4 DoD).".to_string());
+    lines.push(
+        "- TD-038: gate is `mean(lift) - sample_sd(lift) >= threshold` across N independent \
+         fresh ingests, NOT a single raw measurement — closes the gap where the ~0.50pt \
+         ingest-noise floor could flip a single-shot PASS/FAIL on noise alone."
+            .to_string(),
+    );
 
     std::fs::write(&path, lines.join("\n")).with_context(|| format!("write {}", path.display()))?;
     eprintln!("[risk001] Verdict doc written: {}", path.display());
@@ -819,10 +1027,16 @@ async fn main() -> Result<()> {
     let embed_model =
         std::env::var("OLLAMA_EMBED_MODEL").unwrap_or_else(|_| "nomic-embed-text".to_string());
 
+    // TD-038: RISK-001 gate repeat count. CLI flag wins over env var wins over default.
+    let cli_args: Vec<String> = std::env::args().skip(1).collect();
+    let n_runs_env = std::env::var("RISK001_N_RUNS").ok();
+    let n_runs = parse_n_runs_from(&cli_args, n_runs_env.as_deref())
+        .map_err(|e| anyhow::anyhow!("failed to parse RISK-001 run count: {e}"))?;
+
     // Human-readable label for docs (never contains the API key).
     let verify_provider_label = format!("{verify_provider_name}/{verify_model}");
 
-    eprintln!("[sweep] ollama={ollama_host} ingest_model={ingest_model} verify_provider={verify_provider_label} embed={embed_model}");
+    eprintln!("[sweep] ollama={ollama_host} ingest_model={ingest_model} verify_provider={verify_provider_label} embed={embed_model} n_runs={n_runs}");
 
     // ── Locate fixtures ──────────────────────────────────────────────────────
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -972,8 +1186,8 @@ async fn main() -> Result<()> {
         &verify_provider_label,
     )?;
 
-    // ── RISK-001 gate (D5) ───────────────────────────────────────────────────
-    eprintln!("[sweep] === RISK-001 Acceptance Gate ===");
+    // ── RISK-001 gate (D5, TD-038 multi-run mean ± SD hardening) ─────────────
+    eprintln!("[sweep] === RISK-001 Acceptance Gate (n_runs={n_runs}) ===");
     let verdict = run_risk001_gate(
         &fixture_text,
         best_tau,
@@ -981,6 +1195,7 @@ async fn main() -> Result<()> {
         Arc::clone(&ingest_llm),
         verify_llm_ref,
         Arc::clone(&embedder),
+        n_runs,
     )
     .await
     .context("RISK-001 gate")?;
@@ -1018,10 +1233,12 @@ async fn main() -> Result<()> {
         start.elapsed().as_secs_f64()
     );
 
+    let mean_minus_sd = verdict.lift_mean - verdict.lift_sd;
+
     if !verdict.pass {
         eprintln!(
-            "\n[sweep] RISK-001 FAIL — lift={:.4} < 0.05 required.",
-            verdict.precision_lift
+            "\n[sweep] RISK-001 FAIL — mean-sd={:.4} < {:.2} required (mean={:.4} sd={:.4} over {} runs).",
+            mean_minus_sd, RISK001_LIFT_THRESHOLD, verdict.lift_mean, verdict.lift_sd, verdict.n_runs
         );
         eprintln!(
             "[sweep] ADR-047 sub-decision revision REQUIRED before Phase E per Stop Condition #1."
@@ -1031,8 +1248,156 @@ async fn main() -> Result<()> {
     }
 
     eprintln!(
-        "\n[sweep] RISK-001 PASS — lift={:.4} ≥ 0.05. Phase E may proceed.",
-        verdict.precision_lift
+        "\n[sweep] RISK-001 PASS — mean-sd={:.4} ≥ {:.2} (mean={:.4} sd={:.4} over {} runs). Phase E may proceed.",
+        mean_minus_sd, RISK001_LIFT_THRESHOLD, verdict.lift_mean, verdict.lift_sd, verdict.n_runs
     );
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Tests (TD-038: multi-run mean ± SD gate hardening)
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn s(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    // ─── mean_and_sample_sd ────────────────────────────────────────────────
+
+    #[test]
+    fn mean_and_sd_known_input_known_output() {
+        // deviations from mean=12.0: -2, 0, 2 -> squares 4,0,4 -> sum 8 / (n-1=2) = 4 -> sqrt=2.0
+        let (mean, sd) = mean_and_sample_sd(&[10.0, 12.0, 14.0]);
+        assert!((mean - 12.0).abs() < 1e-9, "mean={mean}");
+        assert!((sd - 2.0).abs() < 1e-9, "sd={sd}");
+    }
+
+    #[test]
+    fn mean_and_sd_single_value_has_zero_sd() {
+        let (mean, sd) = mean_and_sample_sd(&[0.07]);
+        assert!((mean - 0.07).abs() < 1e-9, "mean={mean}");
+        assert_eq!(sd, 0.0, "a single sample has no dispersion estimate");
+    }
+
+    #[test]
+    fn mean_and_sd_empty_slice_is_zero_not_panic() {
+        let (mean, sd) = mean_and_sample_sd(&[]);
+        assert_eq!(mean, 0.0);
+        assert_eq!(sd, 0.0);
+    }
+
+    #[test]
+    fn mean_and_sd_identical_values_have_zero_sd() {
+        let (mean, sd) = mean_and_sample_sd(&[0.08, 0.08, 0.08, 0.08, 0.08]);
+        assert!((mean - 0.08).abs() < 1e-9);
+        assert_eq!(sd, 0.0);
+    }
+
+    // ─── risk001_gate_pass boundary conditions ────────────────────────────
+    //
+    // These are the TD-038 acceptance-gate boundary tests requested by the
+    // register entry. Both were run against the PRE-FIX gate (a single-shot
+    // / SD-less comparison — `mean_lift >= threshold`, exactly what this repo
+    // shipped before TD-038) and OBSERVED RED before `risk001_gate_pass` was
+    // wired to subtract `lift_sd`:
+    //
+    // - `gate_sd_zero_exact_threshold_passes`: passed under both the old and
+    //   new logic (SD=0 collapses `mean - sd` to `mean`), so it does not by
+    //   itself distinguish the fix — kept as the boundary-equality case.
+    // - `gate_large_sd_flips_a_mean_only_pass_to_fail`: this is the
+    //   discriminating case. Under the pre-fix `mean_lift >= threshold` logic
+    //   it asserted PASS (0.06 >= 0.05) and was GREEN. Once inverted to
+    //   assert the CORRECT TD-038 behaviour (mean - sd = 0.06 - 0.02 = 0.04 <
+    //   0.05 -> FAIL), it went RED against the pre-fix gate — confirming the
+    //   test is sensitive to the exact defect TD-038 closes — before
+    //   `risk001_gate_pass` was implemented with the `mean - sd` subtraction.
+
+    #[test]
+    fn gate_sd_zero_exact_threshold_passes() {
+        // mean - sd = 0.05 - 0.0 = 0.05 >= 0.05 threshold -> PASS (boundary equality).
+        assert!(risk001_gate_pass(0.05, 0.0, RISK001_LIFT_THRESHOLD));
+    }
+
+    #[test]
+    fn gate_sd_zero_just_under_threshold_fails() {
+        assert!(!risk001_gate_pass(0.0499, 0.0, RISK001_LIFT_THRESHOLD));
+    }
+
+    #[test]
+    fn gate_large_sd_flips_a_mean_only_pass_to_fail() {
+        // mean=0.06 alone clears the 0.05 threshold (this is exactly what the
+        // pre-TD-038 single-shot gate would have measured and PASSED on).
+        // With sd=0.02, mean - sd = 0.04 < 0.05 -> the aggregated gate FAILS.
+        let lift_mean = 0.06;
+        let lift_sd = 0.02;
+        assert!(
+            lift_mean >= RISK001_LIFT_THRESHOLD,
+            "sanity: mean alone should have cleared the old gate"
+        );
+        assert!(
+            !risk001_gate_pass(lift_mean, lift_sd, RISK001_LIFT_THRESHOLD),
+            "mean - sd = {:.4} must fail the {:.2} threshold even though mean alone passes",
+            lift_mean - lift_sd,
+            RISK001_LIFT_THRESHOLD
+        );
+    }
+
+    // ─── parse_n_runs_from ─────────────────────────────────────────────────
+
+    #[test]
+    fn parse_n_runs_defaults_to_five_with_no_args_or_env() {
+        let n = parse_n_runs_from(&[], None).unwrap();
+        assert_eq!(n, RISK001_DEFAULT_N_RUNS);
+        assert_eq!(n, 5);
+    }
+
+    #[test]
+    fn parse_n_runs_cli_flag_space_form() {
+        let n = parse_n_runs_from(&s(&["--n-runs", "3"]), None).unwrap();
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn parse_n_runs_cli_flag_equals_form() {
+        let n = parse_n_runs_from(&s(&["--n-runs=7"]), None).unwrap();
+        assert_eq!(n, 7);
+    }
+
+    #[test]
+    fn parse_n_runs_env_var_used_when_no_cli_flag() {
+        let n = parse_n_runs_from(&[], Some("9")).unwrap();
+        assert_eq!(n, 9);
+    }
+
+    #[test]
+    fn parse_n_runs_cli_flag_overrides_env() {
+        let n = parse_n_runs_from(&s(&["--n-runs", "3"]), Some("9")).unwrap();
+        assert_eq!(n, 3);
+    }
+
+    #[test]
+    fn parse_n_runs_zero_is_rejected() {
+        let err = parse_n_runs_from(&s(&["--n-runs", "0"]), None).unwrap_err();
+        assert!(err.contains(">= 1"), "expected '>= 1' hint, got: {err}");
+    }
+
+    #[test]
+    fn parse_n_runs_non_numeric_is_rejected() {
+        let err = parse_n_runs_from(&s(&["--n-runs", "banana"]), None).unwrap_err();
+        assert!(err.contains("invalid"), "expected 'invalid' hint, got: {err}");
+    }
+
+    #[test]
+    fn parse_n_runs_missing_value_is_rejected() {
+        let err = parse_n_runs_from(&s(&["--n-runs"]), None).unwrap_err();
+        assert!(
+            err.contains("requires a value"),
+            "expected 'requires a value' hint, got: {err}"
+        );
+    }
 }
