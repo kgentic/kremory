@@ -159,6 +159,7 @@ mod spike_validation_multi_chunk;
 mod story_156_rename_sweep;
 mod stub_handle_compiles;
 mod supersede_dream_closes_window;
+mod td061_secret_scan_ingest_boundary;
 mod td066_increment1_content_fusion;
 mod td112_reembed_all_entity_embeddings;
 mod td112_reembed_all_fact_embeddings;

@@ -261,6 +261,40 @@ bumpalo = "3.20.2"
 sha2 = "0.10"
 # regex: prompt-injection sanitizer patterns (T1.4 — basket #68)
 regex = "1"
+# TD-061: ingest-boundary secret scanner. Evaluated per Rule 33 before
+# hand-rolling (crates.io search 2026-09-16, `curl -A ... crates.io/api/v1/crates/<name>`
+# for download/maintenance data):
+#   - `ripsecrets` (12.7K downloads, declining, last publish 2025-05-27 — >1yr
+#     stale): HAS a `[lib]` target, but its only public fn (`find_secrets`)
+#     walks filesystem `&[PathBuf]` via the `grep`/`ignore` crates (a git-repo
+#     CLI scanner's internals) — wrong shape for scanning an in-memory ingest
+#     string; would require writing content to a temp file. Rejected: wrong
+#     shape + stale.
+#   - `secretshape` (0.1.0, 127 downloads, single version, created 2026-07-14):
+#     right shape (in-memory, provider-prefix + entropy) but unproven —
+#     rejected on maintenance-signal grounds (Rule 33's "no adoption without
+#     the maintenance/supply-chain check").
+#   - `secrets_scanner` (this dep): ADOPTED. `default-features = false` drops
+#     the CLI-only deps (clap, walkdir, rayon, libc, env_logger, agent-config)
+#     and leaves a pure in-memory scan/redact API: `Scanner::from_bundled()`
+#     (no filesystem/env access — deterministic, safe for a OnceLock static)
+#     + `scan_content(path, &str) -> Vec<Finding>` +
+#     `scan_and_redact_content(path, &str) -> ScanOutput<String>` (the exact
+#     "LLM redaction proxy" shape its own doc comment names). Bundled ruleset
+#     is gitleaks' default 222-rule TOML (AWS/GitHub/generic-api-key/
+#     private-key/JWT all present — grepped `assets/gitleaks.toml` for each
+#     id), i.e. the exact reference TD-061 cites, plus its OWN Aho-Corasick +
+#     Shannon-entropy pre-filter — the resolution path's "reuse entropy fn"
+#     goal is achieved by inheriting the crate's (equivalent, industry-rule-
+#     driven) entropy gate rather than re-deriving `resolver.rs:37`'s
+#     NER-specific one against a from-scratch ruleset. 11.6K downloads, MIT,
+#     last published 2026-08-13 (~1mo old at eval time). Immature crate
+#     (created 2026-06-16), accepted because gitleaks-format-rule compliance
+#     + `no_run` doctest coverage + `#![deny(clippy::unwrap_used)]` signal a
+#     maintained, not a drive-by, crate — and the alternative is re-deriving
+#     a gitleaks-equivalent 222-rule TOML ruleset by hand, which is a strictly
+#     worse security posture than depending on the industry-standard one.
+secrets_scanner = { version = "0.2.3", default-features = false }
 zspell = "0.5"
 stop-words = "0.8"
 unicode-segmentation = "1.11"

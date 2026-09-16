@@ -115,6 +115,9 @@ pub use core::intelligence::{EntityExtractor, ExtractionContext, ExtractionResul
 
 // Convenience re-exports from core::config (ADR D15)
 pub use core::config::Config as CoreConfig;
+// TD-061: ingest-boundary secret-scan mode, the parameter type for
+// `MemoryBuilder::with_secret_scan_mode`.
+pub use core::config::SecretScanMode;
 
 // Embedding observability wrapper (ADR D10)
 pub use core::embedding::TokenTrackingEmbedder;

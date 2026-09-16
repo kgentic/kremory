@@ -12,7 +12,7 @@ use super::*;
 
 use crate::core::background::{BackgroundIngestor, IngestorConfig};
 use crate::core::chat_tracking::TokenTrackingChatProvider;
-use crate::core::config::PipelineConfigOverrides;
+use crate::core::config::{PipelineConfigOverrides, SecretScanMode};
 use crate::core::error::Error as CoreError;
 use crate::core::provider::DynEmbeddingProvider;
 use crate::memory::{
@@ -537,6 +537,26 @@ impl<L, E> MemoryBuilder<L, E> {
     /// Mirrors [`PipelineConfigBuilder::contradiction_detection_enabled`](crate::core::config::PipelineConfigBuilder::contradiction_detection_enabled).
     pub fn with_contradiction_detection_enabled(mut self, v: bool) -> Self {
         self.config_overrides.contradiction_detection_enabled = Some(v);
+        self
+    }
+
+    /// Enable/disable the ingest-boundary secret scan (TD-061). Default: `true`.
+    /// `false` skips the scan entirely — byte-identical to pre-TD-061 ingest.
+    ///
+    /// Mirrors [`PipelineConfigBuilder::secret_scan_enabled`](crate::core::config::PipelineConfigBuilder::secret_scan_enabled).
+    pub fn with_secret_scan_enabled(mut self, v: bool) -> Self {
+        self.config_overrides.secret_scan_enabled = Some(v);
+        self
+    }
+
+    /// Flag-and-log a detected secret (default,
+    /// [`SecretScanMode::FlagOnly`]) vs redact the matched span out of the
+    /// episode text BEFORE it is stored/extracted/embedded
+    /// ([`SecretScanMode::Redact`]).
+    ///
+    /// Mirrors [`PipelineConfigBuilder::secret_scan_mode`](crate::core::config::PipelineConfigBuilder::secret_scan_mode).
+    pub fn with_secret_scan_mode(mut self, mode: SecretScanMode) -> Self {
+        self.config_overrides.secret_scan_mode = Some(mode);
         self
     }
 
@@ -1106,6 +1126,20 @@ impl IntoFuture for MemoryBuilder<WithLlm, WithEmbedder> {
             // always consumes `&mut self`, so `mut self` is used in every cfg.
             derive_allowed_from_seed_if_unset(&mut self);
 
+            // TD-061: warm the ingest-boundary secret scanner's ruleset NOW
+            // (construction time), not lazily on first `remember()`. Measured
+            // cold-init cost is ~13.7s in an unoptimized debug build (regex +
+            // Aho-Corasick compilation over the bundled 222-rule ruleset,
+            // paid exactly once per process via the module's `OnceLock`).
+            // Left lazy, that cost silently lands on whichever `remember()`
+            // call happens to run first — which is what broke
+            // `td251_cancel_wedges_batch`'s tight per-trial timeout budget.
+            // `spawn_blocking` because ruleset compilation is CPU-bound sync
+            // work, not something that should occupy an async worker thread.
+            if self.config_overrides.secret_scan_enabled != Some(false) {
+                let _ = tokio::task::spawn_blocking(crate::core::secret_scan::warm).await;
+            }
+
             // Initialize provider rates (idempotent). Errors are logged but not
             // fatal — cost counters will skip emission with a one-shot warn.
             if let Some(ref custom_path) = self.provider_rates_path {
@@ -1443,6 +1477,15 @@ impl IntoFuture for MemoryBuilder<NoLlm, WithEmbedder> {
             // `derive_allowed_from_seed_if_unset` is a no-op without `ner` but
             // always consumes `&mut self`, so `mut self` is used in every cfg.
             derive_allowed_from_seed_if_unset(&mut self);
+
+            // TD-061: warm the ingest-boundary secret scanner's ruleset NOW
+            // (construction time), not lazily on first `remember()` — see the
+            // sibling `IntoFuture` impl above for the full rationale and the
+            // measured ~13.7s debug-build cold-init cost this avoids smuggling
+            // into whichever `remember()` call happens to run first.
+            if self.config_overrides.secret_scan_enabled != Some(false) {
+                let _ = tokio::task::spawn_blocking(crate::core::secret_scan::warm).await;
+            }
 
             // Row 4: gliner set but no LLM → Err
             #[cfg(feature = "ner")]

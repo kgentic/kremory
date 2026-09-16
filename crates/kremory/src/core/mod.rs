@@ -178,6 +178,12 @@ pub mod schema;
 /// Post-RRF recall scoring axes: ScoringWeights, per-intent weight lookup,
 /// temporal-recency boost, read-side-pure (no `execute(`).
 pub(crate) mod scoring;
+/// Ingest-boundary secret scanner (TD-061). Crate-internal — consumed by
+/// `ingest::pipeline::ingest_with` before an episode's text is persisted or
+/// embedded; consumers configure it via `PipelineConfig::secret_scan`
+/// (builder: `MemoryBuilder::with_secret_scan_mode` /
+/// `with_secret_scan_enabled`), not by naming this module's types directly.
+pub(crate) mod secret_scan;
 pub mod search;
 pub mod sink;
 pub mod speculative_cache;

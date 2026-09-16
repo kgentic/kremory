@@ -220,6 +220,20 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
         let content_type = content_type.unwrap_or(ContentType::Text);
         let token_usage = TokenUsage::default();
 
+        // 0. Secret scan (TD-061) — MUST run before the episode insert below,
+        // which is the real storage boundary here (embedding happens later
+        // still, at "Dense episode arm"). `text` is shadowed with the scan
+        // outcome's text: byte-identical to the input unless
+        // `SecretScanMode::Redact` is configured AND a hit fired, in which
+        // case every matched span is already replaced before ANY downstream
+        // consumer (episode insert, extraction, embedding) sees the raw
+        // secret. See `core::secret_scan` module doc for the crate-selection
+        // rationale and the "never let `Finding::matched` leave this module"
+        // invariant.
+        let secret_scan =
+            crate::core::secret_scan::scan_ingest_text(text, &self.config.secret_scan);
+        let text: &str = secret_scan.text.as_str();
+
         // 1. Store episode (namespace-scoped via group_id).
         //    source_id / source_uri / recorded_at from SourceParams are written to the
         //    Migration 007 columns so that recall_by_source_id can find this episode.
@@ -237,6 +251,23 @@ impl<L: ChatProvider + 'static, Emb: EmbeddingProvider> Engine<L, Emb> {
             .graph
             .insert_episode_with_group(episode, group_id)
             .await?;
+
+        // Flag (never silently drop) a secret-scan hit now that there is an
+        // episode_id to attribute it to. Fires regardless of mode — a
+        // `Redact` hit still needs to be observable in logs/metrics even
+        // though the persisted text no longer carries the raw secret. Only
+        // `rule_id`s are logged/counted — see the module doc comment for why
+        // `Finding::matched` (the raw secret) must never appear here.
+        if secret_scan.has_hits() {
+            counter!("kremory.ingest.secret_scan.hits_total")
+                .increment(secret_scan.rule_ids.len() as u64);
+            tracing::warn!(
+                episode_id,
+                rule_ids = ?secret_scan.rule_ids,
+                mode = ?self.config.secret_scan.mode,
+                "kremory.ingest.secret_scan_hit"
+            );
+        }
 
         // Prior-turn replay. Fetch the preceding turns of THIS
         // conversation so the extractor can resolve references in `text`.

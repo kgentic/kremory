@@ -188,6 +188,56 @@ impl Default for EntropyConfig {
     }
 }
 
+/// What [`Engine::ingest_with`](crate::core::ingest::pipeline::ingest_with)'s
+/// secret scan (TD-061) does with a hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SecretScanMode {
+    /// Leave the episode text untouched; record the hit (structured log +
+    /// counter, see `core::secret_scan`) so it is never silently dropped.
+    /// **Default** — matches the register's "flag+log" resolution: redaction
+    /// mutates stored content, which is a bigger behavioural change than most
+    /// consumers opt into implicitly, so the safer default surfaces the leak
+    /// without altering what was ingested.
+    #[default]
+    FlagOnly,
+    /// Replace every detected secret span in the episode text with a
+    /// non-reversible marker (`[REDACTED_SECRET]`) BEFORE the episode is
+    /// inserted, extracted, or embedded — the redacted text is what gets
+    /// persisted. A hit is still logged + counted (same as `FlagOnly`); this
+    /// mode only changes what ends up in storage, not whether the hit is
+    /// observable.
+    Redact,
+}
+
+/// Ingest-boundary secret/API-key/token detection (TD-061).
+///
+/// Gates [`core::secret_scan::scan_ingest_text`](crate::core::secret_scan::scan_ingest_text),
+/// called from `ingest_with` on the raw episode text BEFORE it is inserted,
+/// extracted, or embedded (see that module's doc comment for the crates.io
+/// evaluation behind the underlying scanner).
+#[derive(Debug, Clone)]
+pub struct SecretScanConfig {
+    /// Default: `true`. `false` skips the scan entirely (byte-identical to
+    /// pre-TD-061 behaviour) — the off switch is required for the same reason
+    /// every other ingest-gating knob on this struct has one: a lever with no
+    /// control arm cannot be measured, and a consumer whose corpus is
+    /// synthetic test fixtures full of fake-but-shaped secrets (JWTs, PEM
+    /// blocks in fixture data) needs a way to turn the noise off.
+    pub enabled: bool,
+    /// Default: [`SecretScanMode::FlagOnly`]. See that enum's variants for
+    /// the flag-vs-redact tradeoff.
+    pub mode: SecretScanMode,
+}
+
+impl Default for SecretScanConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            mode: SecretScanMode::FlagOnly,
+        }
+    }
+}
+
 /// Hybrid search parameters controlling how BM25 and vector scores are combined.
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
@@ -572,6 +622,13 @@ pub(crate) struct PipelineConfigOverrides {
     /// should not have to reach for. Its nine sibling knobs all have builder
     /// methods for exactly that reason; this one was simply missed.
     pub contradiction_detection_enabled: Option<bool>,
+    /// Explicit override for [`PipelineConfig::secret_scan`]'s
+    /// [`SecretScanConfig::enabled`] (TD-061). `None` leaves the default `true`.
+    pub secret_scan_enabled: Option<bool>,
+    /// Explicit override for [`PipelineConfig::secret_scan`]'s
+    /// [`SecretScanConfig::mode`] (TD-061). `None` leaves the default
+    /// [`SecretScanMode::FlagOnly`].
+    pub secret_scan_mode: Option<SecretScanMode>,
 }
 
 impl PipelineConfigOverrides {
@@ -620,6 +677,12 @@ impl PipelineConfigOverrides {
         }
         if let Some(v) = self.extraction_arm_budget_ms {
             builder = builder.extraction_arm_budget_ms(v);
+        }
+        if let Some(v) = self.secret_scan_enabled {
+            builder = builder.secret_scan_enabled(v);
+        }
+        if let Some(v) = self.secret_scan_mode {
+            builder = builder.secret_scan_mode(v);
         }
         builder
     }
@@ -673,6 +736,8 @@ pub struct PipelineConfig {
     pub minhash: MinHashConfig,
     /// Entropy pre-filter parameters.
     pub entropy: EntropyConfig,
+    /// Ingest-boundary secret/token scan parameters (TD-061).
+    pub secret_scan: SecretScanConfig,
     /// Hybrid search fusion parameters.
     pub search: SearchConfig,
     /// Entity types the pipeline will extract and index (empty = all types).
@@ -824,6 +889,7 @@ impl PipelineConfig {
                 extraction_window: ExtractionWindowConfig::default(),
                 minhash: MinHashConfig::default(),
                 entropy: EntropyConfig::default(),
+                secret_scan: SecretScanConfig::default(),
                 search: SearchConfig::default(),
                 allowed_entity_types: Vec::new(),
                 allowed_edge_types: Vec::new(),
@@ -923,6 +989,21 @@ impl PipelineConfigBuilder {
 
     pub fn entropy_threshold(mut self, v: f64) -> Self {
         self.inner.entropy.entropy_threshold = v;
+        self
+    }
+
+    // ── SecretScanConfig (TD-061) ────────────────────────────────────────────
+
+    /// `false` skips the ingest-boundary secret scan entirely. Default: `true`.
+    pub fn secret_scan_enabled(mut self, v: bool) -> Self {
+        self.inner.secret_scan.enabled = v;
+        self
+    }
+
+    /// Flag-and-log a hit (default) vs redact the matched span before the
+    /// episode is stored/extracted/embedded. See [`SecretScanMode`].
+    pub fn secret_scan_mode(mut self, mode: SecretScanMode) -> Self {
+        self.inner.secret_scan.mode = mode;
         self
     }
 
