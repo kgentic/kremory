@@ -8,6 +8,15 @@ in **camelCase**. The reversibility surface is fully mirrored:
 - Undo: `memory.undo(mutationId)` (the unified dispatcher) plus the per-kind `memory.unmerge` /
   `memory.undoEntityEdit` / `memory.undoDeleteEntity` / `memory.undoDeleteFact`, and the direct
   mutations `memory.editEntity` / `memory.deleteEntity` / `memory.deleteFact`.
+- `memory.forget(...)` returns the full per-table breakdown (`JsForgetOutcome`: `entities`, `facts`,
+  `episodes`, `edges`, `isEmpty`), not just an entity count — `entities === 0` is the normal case
+  when shared-entity preservation kept the subject alive, so `isEmpty` is the honest "did anything
+  happen?" check (TD-247, verified 2026-09-16 against current source, not assumed from an older plan
+  doc — it had already been fixed by the time this page was checked).
+- Archived-fact reversal (`MutationKind::FactArchive`, TD-250) is reachable from JS today via the
+  same generic `memory.undo(mutationId)` dispatcher — `list_mutations({ kind: "fact_archive" })`
+  finds it, `undo(mutationId)` reverses it, and the outcome converts to `RestoreArchivedOutcome`.
+  No separate JS method was needed; it was never actually missing once `undo` is generic.
 - `DreamSummary` mirrors as `JsDreamSummary` with the honest fields (`crossEpisodeWouldMerge` vs
   `crossEpisodeMerged`, `budgetExhausted`, …).
 
@@ -22,4 +31,4 @@ in **camelCase**. The reversibility surface is fully mirrored:
 
 ---
 
-*API reference current as of kremory v0.7 (2026-09-07). Facade design: outside-in API design. Temporal model: two independent clocks (transaction time + valid time). BYOM contract: bring-your-own-model, no bundled embedder. Dream reversibility: every committed mutation is reversible. Content recall: BM25/FTS5 search over raw episode text. Crate topology: single crate + cargo features.*
+*API reference current as of kremory v0.9.0 (2026-09-16). Facade design: outside-in API design. Temporal model: two independent clocks (transaction time + valid time). BYOM contract: bring-your-own-model, no bundled embedder. Dream reversibility: every committed mutation is reversible. Content recall: BM25/FTS5 search over raw episode text. Crate topology: single crate + cargo features.*

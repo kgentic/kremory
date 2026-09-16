@@ -160,37 +160,42 @@ call `.execute()`. Like `dream()`, `supersede()` is rejected on `AppendOnly` nam
 This explicit terminal makes the intent visible in code review.
 
 ```rust
+use kremory::ForgetOutcome;
+
 // Forget everything in the default namespace
-let entities_removed: u64 = mem.forget().execute().await?;
+let outcome: ForgetOutcome = mem.forget().execute().await?;
 
 // Forget a specific namespace
-let entities_removed = mem.forget()
+let outcome = mem.forget()
     .in_namespace(Namespace::new("tenant-acme"))
     .execute()
     .await?;
 
 // Right-to-erasure: everything ONE source contributed, leaving other sources intact
-let entities_removed = mem.forget()
+let outcome = mem.forget()
     .in_namespace(ns)
     .by_source_id("support-chat-4417")
     .execute()
     .await?;
 ```
 
-### ⚠️ The return value counts ENTITIES, so a successful erasure often returns `0`
+### ⚠️ `ForgetOutcome` is per-TABLE, and reading only one field is how you conclude nothing happened
 
+`ForgetOutcome { entities, facts, episodes, edges }` reports each table separately.
 Shared-entity preservation pins any subject that also appears in **another** source — the
 normal case, since the same person appears in several documents. So a complete, correct
-`by_source_id` erasure removes that source's facts and returns **0 entities**.
+`by_source_id` erasure can legitimately report **`entities: 0`** while `facts`/`episodes`/`edges`
+were all removed.
 
 ```rust ignore
-// WRONG — a full erasure legitimately reports 0
-if removed > 0 { println!("erased"); }
+// WRONG — a full erasure legitimately reports entities: 0
+if outcome.entities > 0 { println!("erased"); }
 ```
 
-Treat a successful `Ok(_)` as the erasure having happened. The count tells you how many
-entities became orphaned, not whether the operation worked. A richer return shape is
-tracked but would be a breaking change.
+Use `outcome.is_empty()` for the honest "did anything happen?" check — it is `false` whenever
+*any* of the four counts is nonzero, which a single-field check cannot express. Treat a
+successful `Ok(_)` as the erasure having happened; the individual counts tell you which tables
+it touched, not whether the operation worked.
 
 Runnable: `cargo run --example gdpr_erasure_by_source` — it asserts both halves, that the
 erased source is gone **and** that another source's facts about the same person survive.

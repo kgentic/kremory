@@ -114,7 +114,7 @@
 //! spec is grounded in drives `mode=recall`/`mode=content`/`mode=hybrid`
 //! directly for its own three-way surface comparison (see spec §1.1's
 //! table) and must not be broken out from under it mid-run.
-//! | `DELETE /namespaces/{ns}` | `Memory::forget` | `200 {"deleted"}` |
+//! | `DELETE /namespaces/{ns}` | `Memory::forget` | `200 {entities,facts,episodes,edges,is_empty}` (TD-247) |
 //! | `POST /consolidation/{cycle}?namespace=` | `handlers::do_dream` | `200` (422 if `?namespace=` omitted) |
 
 use std::sync::Arc;
@@ -1152,12 +1152,20 @@ async fn delete_namespace(
         .execute()
         .await
         .map_err(ToolError::from)?;
-    // Response shape unchanged: `deleted` stays the ENTITY count this endpoint has
-    // always returned. The Rust surface now carries the full per-table outcome
-    // (`ForgetOutcome`), and `deleted: 0` on a real erasure is misleading for the
-    // documented reason — but widening this JSON is HTTP-surface work, sequenced
-    // after the crate ships, not smuggled in as a build fix.
-    Ok(Json(serde_json::json!({ "deleted": deleted.entities })))
+    // Full per-table outcome (TD-247) — `deleted: 0` on a real erasure was
+    // misleading (shared-entity preservation routinely leaves `entities: 0`
+    // while facts/episodes/edges were removed; see `ForgetOutcome::is_empty`
+    // for the honest "did anything happen?" check). This was deliberately
+    // deferred until "after the crate ships" — it has (0.8.0 and 0.9.0 are
+    // both live) — so this widens the response to match, mirroring the shape
+    // already shipped for `kremory-napi`'s `forget()` (`JsForgetOutcome`).
+    Ok(Json(serde_json::json!({
+        "entities": deleted.entities,
+        "facts": deleted.facts,
+        "episodes": deleted.episodes,
+        "edges": deleted.edges,
+        "is_empty": deleted.is_empty(),
+    })))
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -2166,7 +2174,15 @@ mod tests {
         let resp = router.clone().oneshot(with_ns).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
 
-        // DELETE /namespaces/{ns} → 200 + {deleted}.
+        // DELETE /namespaces/{ns} → 200 + the full per-table outcome (TD-247).
+        // `ns` had a real pinned fact written into it earlier in this test
+        // (the `Zephyrine` fixture the GET /search assertions above check
+        // for), so this is a REAL erasure, not an empty no-op — the
+        // discriminating case the old `{"deleted": <entities>}` shape could
+        // not represent: entity-count alone can legitimately read `0` on a
+        // real erasure (shared-entity preservation), so the strong assertion
+        // here is `is_empty` being `false`, not any single field being
+        // nonzero.
         let del = Request::builder()
             .method("DELETE")
             .uri(format!("/namespaces/{ns}"))
@@ -2175,9 +2191,17 @@ mod tests {
         let resp = router.oneshot(del).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
         let json = body_json(resp.into_body()).await;
-        assert!(
-            json["deleted"].is_u64(),
-            "DELETE must return a numeric deleted count: {json}"
+        for field in ["entities", "facts", "episodes", "edges"] {
+            assert!(
+                json[field].is_u64(),
+                "DELETE must return a numeric {field} count: {json}"
+            );
+        }
+        assert_eq!(
+            json["is_empty"].as_bool(),
+            Some(false),
+            "DELETE erased a real pinned fact — is_empty must be false, not just \
+             some individual count field: {json}"
         );
     }
 
