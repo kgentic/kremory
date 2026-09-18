@@ -14,7 +14,11 @@
 //! | 4 | `all_namespaces_present`| Each expected namespace has ≥1 fact in the graph                 |
 //! | 5 | `episode_edge_presence` | Every entity has ≥1 `episodic_edge` row                          |
 //! | 6 | `no_transitive_merge_chain` | No entity is the SURVIVOR of one live merge and the VICTIM   |
-//! |   |                         | of another (see "Why invariant 6 is different" below)            |
+//! |   |                         | of another (see "Why invariant 6 is different" below). Also      |
+//! |   |                         | REPORTS fan-ins (TD-256) — N entities absorbed into one keeper   |
+//! |   |                         | that is never itself absorbed. A fan-in forms no chain, so this  |
+//! |   |                         | invariant was blind to it; on the full corpus that is 4 chains   |
+//! |   |                         | vs 20 fan-ins. Reported in the value string, NEVER failed.       |
 //! | 7 | `world_time_grounding`  | `valid_from` shows real episode-anchored date resolution, not    |
 //! |   |                         | ingest wall-clock (see below — breaks convention)                |
 //!
@@ -515,6 +519,17 @@ struct MergeEndpoints {
     loser: String,
 }
 
+/// Distinct losers absorbed by one keeper before it counts as a fan-in (TD-256).
+///
+/// 2 is the lowest value that can detect anything, and is also the value at which
+/// a legitimate two-variant canonicalisation is flagged — which is exactly why
+/// fan-ins are reported rather than failed. Raising this to 3 drops the signal on
+/// `.context/full-corpus.db` from 20 findings to 6 and hides every 2-way date
+/// collapse. Must stay in lockstep with `FANIN_MIN_LOSERS` in
+/// `bench/locomo/harness.py`; the shared fixture test below is what holds them
+/// together.
+const FANIN_MIN_LOSERS: usize = 2;
+
 /// Check invariant 6: no entity is the survivor of one live merge and the victim
 /// of another.
 ///
@@ -579,14 +594,44 @@ async fn check_no_transitive_merge_chain(
     let mut chained: Vec<&String> = survivors.intersection(&victims).collect();
     chained.sort();
 
+    // FAN-IN (TD-256) — mirrors `check_graph_integrity` in `bench/locomo/harness.py`.
+    // The chain signal above needs one entity to be BOTH survivor and victim. N
+    // entities absorbed into ONE keeper that is never itself absorbed forms no
+    // chain, so the intersection is empty and the graph reports clean. That is the
+    // shape that dominates real data: on `.context/full-corpus.db` (113 live
+    // merges) there are 4 chained entities and 20 fan-ins, 19 of them collapsing
+    // DISTINCT CALENDAR DATES ('3 july 2023' absorbed 9 other July dates).
+    //
+    // REPORTED, NEVER FAILED. At the only threshold that detects anything (2
+    // distinct losers) a legitimate two-variant canonicalisation is
+    // indistinguishable from damage without reading the names — which is what
+    // `star_merge_is_not_a_chain` pins. The pass/fail decision below stays on
+    // chains alone; the fan-in numbers ride along in the value string so a reader
+    // of a GREEN report still sees them.
+    //
+    // Losers are DE-DUPLICATED: the log genuinely records the same loser twice
+    // (two keepers on the full corpus do this), and counting rows rather than
+    // distinct entities would promote a one-loser merge into a fan-in.
+    let mut fanin_entities = 0usize;
+    let mut worst_fanin = 0usize;
+    for losers in absorbed.values() {
+        let distinct: HashSet<&String> = losers.iter().collect();
+        if distinct.len() >= FANIN_MIN_LOSERS {
+            fanin_entities += 1;
+            worst_fanin = worst_fanin.max(distinct.len());
+        }
+    }
+    let fanin_summary = format!("fanins={} (worst={})", fanin_entities, worst_fanin);
+
     if chained.len() <= allow_chain_count {
         return Ok(InvariantResult::pass(
             "no_transitive_merge_chain",
             format!(
-                "chained={} (allowed={}) across {} live merges",
+                "chained={} (allowed={}) across {} live merges, {}",
                 chained.len(),
                 allow_chain_count,
-                merge_count
+                merge_count,
+                fanin_summary
             ),
         ));
     }
@@ -611,9 +656,10 @@ async fn check_no_transitive_merge_chain(
         "no_transitive_merge_chain",
         format!("chained entities ≤ {}", allow_chain_count),
         format!(
-            "chained={} across {} live merges",
+            "chained={} across {} live merges, {}",
             chained.len(),
-            merge_count
+            merge_count,
+            fanin_summary
         ),
         format!("transitive merge chains: {}", detail),
     ))
@@ -1155,6 +1201,105 @@ mod tests {
             result.actual.contains("chained=0"),
             "actual: {}",
             result.actual
+        );
+    }
+
+    /// TD-256, THE BLIND SPOT. Three dates absorbed into one keeper that is never
+    /// itself absorbed: `survivors ∩ victims` is EMPTY, so the chain signal reads
+    /// clean. The invariant still PASSES — fan-ins never fail a run — but the
+    /// count must reach the report, because a reader of a green report is exactly
+    /// who needs to see it.
+    #[tokio::test]
+    async fn fanin_is_reported_but_does_not_fail_the_invariant() {
+        let graph = empty_graph().await;
+        insert_merge(&graph, "3 july 2023", "5 july 2023", false).await;
+        insert_merge(&graph, "3 july 2023", "6 july 2023", false).await;
+        insert_merge(&graph, "3 july 2023", "20 july 2023", false).await;
+
+        let result = chain_result(&graph, 0).await;
+        assert!(result.passed, "fan-ins must never fail a run: {:?}", result);
+        assert!(
+            result.actual.contains("chained=0"),
+            "no chain exists — that is the whole point: {}",
+            result.actual
+        );
+        assert!(
+            result.actual.contains("fanins=1 (worst=3)"),
+            "fan-in must reach a GREEN report: {}",
+            result.actual
+        );
+    }
+
+    /// The log really does record the same loser twice (two keepers do this on
+    /// `.context/full-corpus.db`). Counting rows rather than DISTINCT entities
+    /// would promote a one-loser merge into a fan-in.
+    #[tokio::test]
+    async fn duplicate_loser_rows_do_not_inflate_a_fanin() {
+        let graph = empty_graph().await;
+        insert_merge(&graph, "1 february 2023", "4 february 2023", false).await;
+        insert_merge(&graph, "1 february 2023", "4 february 2023", false).await;
+
+        let result = chain_result(&graph, 0).await;
+        assert!(
+            result.actual.contains("fanins=0"),
+            "one distinct loser is not a fan-in: {}",
+            result.actual
+        );
+    }
+
+    /// TD-256. The two implementations agree ON ONE FIXTURE, checked mechanically.
+    ///
+    /// This function and `test_shared_fixture_matches_rust_implementation` in
+    /// `bench/locomo/test_locomo_scorer.py` read the SAME file and assert the SAME
+    /// `expected` block. Before it existed, the only thing keeping the mirrors
+    /// aligned was a doc-comment asking a future editor to remember — and this
+    /// repo has already lost four weeks to exactly that (TD-173, the REST fusion
+    /// copy that never received the library's cap fix).
+    ///
+    /// `include_str!` is deliberate: if the fixture moves, this fails to COMPILE
+    /// rather than silently testing nothing.
+    #[tokio::test]
+    async fn shared_fixture_matches_python_implementation() {
+        const FIXTURE: &str =
+            include_str!("../../../../bench/locomo/fixtures/graph_integrity_shared.json");
+        let fixture: serde_json::Value =
+            serde_json::from_str(FIXTURE).expect("shared fixture is valid JSON");
+
+        let graph = empty_graph().await;
+        for pair in fixture["merges"].as_array().expect("merges is an array") {
+            let keeper = pair[0].as_str().expect("keeper is a string");
+            let loser = pair[1].as_str().expect("loser is a string");
+            insert_merge(&graph, keeper, loser, false).await;
+        }
+
+        let expected = &fixture["expected"];
+        let result = chain_result(&graph, 0).await;
+
+        // Numbers come FROM THE FILE, never hardcoded here — otherwise this test
+        // would keep passing after the fixture changed underneath it.
+        for (key, fragment) in [
+            ("live_merges", format!("across {} live merges", expected["live_merges"])),
+            ("chained_entities", format!("chained={}", expected["chained_entities"])),
+            (
+                "fanin_entities",
+                format!(
+                    "fanins={} (worst={})",
+                    expected["fanin_entities"], expected["worst_fanin"]
+                ),
+            ),
+        ] {
+            assert!(
+                result.actual.contains(&fragment),
+                "{key}: expected {fragment:?} in {:?}",
+                result.actual
+            );
+        }
+
+        assert_eq!(
+            result.passed,
+            expected["clean"].as_bool().expect("clean is a bool"),
+            "pass/fail must track the fixture's `clean`: {:?}",
+            result
         );
     }
 

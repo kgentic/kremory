@@ -361,8 +361,17 @@ def build_headline(scored_correct: int, scored_total: int,
 
 
 # ---------------------------------------------------------------------------
-# Graph integrity (TD-223 / TD-224)
+# Graph integrity (TD-223 / TD-224 / TD-256)
 # ---------------------------------------------------------------------------
+
+#: Distinct losers absorbed by one keeper before it counts as a fan-in.
+#:
+#: 2 is deliberate and is the lowest value that can detect anything. It is also
+#: the value at which a legitimate two-variant canonicalisation is flagged — so
+#: fan-ins are REPORTED, never used to fail a run. Raising this to 3 would drop
+#: the corpus signal from 20 findings to 6 and hide every 2-way date collapse.
+FANIN_MIN_LOSERS = 2
+
 
 def check_graph_integrity(db_path: str | None) -> dict:
     """Did this run's consolidation merge entities out of existence?
@@ -374,9 +383,22 @@ def check_graph_integrity(db_path: str | None) -> dict:
     one. No scorer at any tier could see it; it was found by reading
     ``graph_mutation_log`` by hand.
 
-    The signal is a TRANSITIVE MERGE CHAIN: an entity that is the SURVIVOR of one
-    live merge and the VICTIM of another. ``A -> B`` then ``B -> C`` moved A's
+    The FIRST signal is a TRANSITIVE MERGE CHAIN: an entity that is the SURVIVOR of
+    one live merge and the VICTIM of another. ``A -> B`` then ``B -> C`` moved A's
     identity two hops while **nobody ever adjudicated A against C**.
+
+    The SECOND signal is a FAN-IN, added 2026-09-18 (TD-256), and on real data it
+    is the dominant one. ``B -> A``, ``C -> A``, ``D -> A`` forms no chain — A was
+    never absorbed — so the chain test above calls it clean. Measured on
+    ``.context/full-corpus.db``: **4 chained entities, 20 fan-ins**, 19 of which
+    collapse distinct calendar dates ('3 july 2023' swallowed 9 other July dates).
+    A gate that saw only chains was blind to 19 of the 23 findings on the very
+    database the release floor was computed from.
+
+    Fan-ins are REPORTED, never used to fail a run: at the only threshold that can
+    detect anything (2 losers) an ordinary two-variant canonicalisation is
+    indistinguishable from damage without reading the entity names. Judging that
+    is a human's job; surfacing it is this function's.
 
     Measured on the two retained databases (one healthy, one destroyed): 6 chained
     entities vs 0. This mirrors invariant 6 in
@@ -439,16 +461,53 @@ def check_graph_integrity(db_path: str | None) -> dict:
         absorbed_by[loser] = keeper
 
     chained = sorted(survivors & victims)
+
+    # FAN-IN (TD-256). The chain signal above fires only when one entity is BOTH a
+    # survivor and a victim. The dominant real damage shape makes no chain at all:
+    # N entities absorbed into ONE keeper that is never itself absorbed, so
+    # `survivors & victims` is empty and the graph reports clean.
+    #
+    # Measured on `.context/full-corpus.db` (2026-09-18, 113 live merges):
+    # 4 chained entities — and 20 fan-ins, 19 of which collapse DISTINCT CALENDAR
+    # DATES into one another ('3 july 2023' absorbed 9 other July dates). The
+    # signal is 95% precise there: exactly one of the 20 ('minnesota wolves') is
+    # not a date collapse.
+    #
+    # Threshold is 2 distinct losers, and losers are DE-DUPLICATED first: the log
+    # records the same loser twice for two keepers ('1 february 2023',
+    # '3 august 2023'), so counting rows rather than distinct entities would
+    # inflate a 1-loser merge into a fan-in.
+    fanins = {
+        keeper: sorted(set(losers))
+        for keeper, losers in absorbed.items()
+        if len(set(losers)) >= FANIN_MIN_LOSERS
+    }
+    # Worst first — a 9-way collapse and a 2-way variant merge are not the same
+    # finding, and a flat count hides which one you are looking at.
+    worst = sorted(fanins.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+
     return {
         "status": "checked",
         "graph_db": db_path,
         "live_merges": len(rows),
         "chained_entities": len(chained),
+        # NB: `clean` means "no transitive merge chain" — NOT "the graph is
+        # healthy". It deliberately does NOT account for fan-ins: a two-variant
+        # canonicalisation ('pottery class' + 'pottery' -> 'pottery project') is
+        # ordinary housekeeping and is guarded as a false-positive by
+        # test_star_merges_are_not_a_chain. Fan-ins are REPORTED for a human to
+        # judge, never used to fail a run (plan 2026-09-18, risk R5).
         "clean": not chained,
         "chains": [
             f"'{e}' absorbed [{', '.join(absorbed.get(e, []))}] "
             f"then was absorbed by '{absorbed_by.get(e, '<unknown>')}'"
             for e in chained
+        ],
+        "fanin_entities": len(fanins),
+        "worst_fanin": len(worst[0][1]) if worst else 0,
+        "fanins": [
+            f"'{keeper}' absorbed {len(losers)}: [{', '.join(losers)}]"
+            for keeper, losers in worst
         ],
     }
 
@@ -1163,19 +1222,28 @@ def run_benchmark(config: Config) -> dict:
         config.graph_db or _os.environ.get("KREMORY_MCP_DB_PATH")
     )
     if graph_integrity["status"] == "checked":
-        if graph_integrity["clean"]:
-            print(f"GRAPH INTEGRITY: clean — 0 chained entities across "
+        n_chain = graph_integrity["chained_entities"]
+        n_fan = graph_integrity["fanin_entities"]
+        if not n_chain and not n_fan:
+            print(f"GRAPH INTEGRITY: clean — 0 chained entities, 0 fan-ins across "
                   f"{graph_integrity['live_merges']} live merges")
         else:
-            print(f"GRAPH INTEGRITY: ⚠️  {graph_integrity['chained_entities']} "
-                  f"CHAINED ENTITIES across {graph_integrity['live_merges']} live "
-                  f"merges — entities were merged through intermediates, so this "
-                  f"score was measured on a graph that may have lost referents:")
+            # Both counts print unconditionally once EITHER is non-zero. A run with
+            # 0 chains and 20 fan-ins previously printed the word "clean".
+            print(f"GRAPH INTEGRITY: ⚠️  {n_chain} chained entities, {n_fan} fan-ins "
+                  f"across {graph_integrity['live_merges']} live merges — this score "
+                  f"was measured on a graph that may have lost referents:")
             for chain in graph_integrity["chains"]:
-                print(f"  {chain}")
+                print(f"  [chain]  {chain}")
+            # Fan-ins are advisory: at this threshold an ordinary two-variant
+            # canonicalisation looks identical to damage. Read the names.
+            for fan in graph_integrity["fanins"]:
+                print(f"  [fan-in] {fan}")
     else:
-        print(f"GRAPH INTEGRITY: {graph_integrity['status'].upper()} — "
-              f"{graph_integrity['reason']}")
+        # LOUD. A skipped check is not a passed check — the 2026-09-08 floor run
+        # recorded status="skipped" and was read as a clean bill of health.
+        print(f"GRAPH INTEGRITY: ⚠️  {graph_integrity['status'].upper()} — NOT "
+              f"VERIFIED — {graph_integrity['reason']}")
     if unscored_stats:
         n_unscored = sum(unscored_stats.values())
         print(f"\n  {n_unscored} question(s) EXCLUDED from the denominator above "

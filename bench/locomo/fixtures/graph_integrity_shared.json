@@ -1,0 +1,49 @@
+{
+  "_purpose": "SHARED fixture for the two graph-integrity implementations (TD-256).",
+  "_readers": [
+    "bench/locomo/test_locomo_scorer.py :: test_shared_fixture_matches_rust_implementation",
+    "crates/kremory-eval/src/layer_b/graph_integrity.rs :: shared_fixture_matches_python_implementation"
+  ],
+  "_why": [
+    "harness.py's check_graph_integrity and graph_integrity.rs's invariant 6 read the",
+    "same contract from the same table and are maintained as mirrors. Before this file",
+    "the only thing holding them together was a doc-comment asking a future editor to",
+    "remember. Both suites now build a database from THIS list and assert THESE numbers,",
+    "so a change to one implementation alone turns its own test red.",
+    "",
+    "Edit the merges and you MUST re-derive `expected` by hand — it is written out",
+    "rather than computed so that a bug which changes both implementations identically",
+    "still fails the assertion."
+  ],
+  "_shape_provenance": "inputs payload copied from graph_mutation_log id 14 of a real corrupted benchmark database, endpoints substituted",
+
+  "merges": [
+    ["caroline", "melanie"],
+    ["loved ones", "caroline"],
+
+    ["3 july 2023", "5 july 2023"],
+    ["3 july 2023", "6 july 2023"],
+    ["3 july 2023", "20 july 2023"],
+
+    ["pottery project", "pottery class"],
+    ["pottery project", "pottery"],
+
+    ["1 february 2023", "4 february 2023"],
+    ["1 february 2023", "4 february 2023"]
+  ],
+
+  "_case_notes": {
+    "caroline": "CHAIN — absorbed melanie, then was absorbed by 'loved ones'. The 2026-08-17 corruption that scored 98.0%.",
+    "3 july 2023": "FAN-IN, damage — 3 distinct calendar dates collapsed. Forms no chain, so the pre-TD-256 check called this clean.",
+    "pottery project": "FAN-IN, benign — ordinary two-variant canonicalisation. Detected at the same threshold as the damage above, which is why fan-ins are REPORTED and never failed.",
+    "1 february 2023": "NOT a fan-in — the same loser recorded twice. Counting rows rather than distinct entities would wrongly promote it."
+  },
+
+  "expected": {
+    "live_merges": 9,
+    "chained_entities": 1,
+    "fanin_entities": 2,
+    "worst_fanin": 3,
+    "clean": false
+  }
+}

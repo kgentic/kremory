@@ -317,6 +317,73 @@ def test_absent_graph_reports_skipped_never_a_pass(path):
     assert "clean" not in r
 
 
+def test_fanin_is_detected_where_no_chain_forms(tmp_path):
+    """TD-256. THE BLIND SPOT. Nine dates absorbed into one keeper that is never
+    itself absorbed — so `survivors & victims` is EMPTY and the chain check calls
+    this clean. This is the shape that dominates the real corpus: 4 chains vs 20
+    fan-ins on `.context/full-corpus.db`, 19 of them date collapses.
+    """
+    db = _graph_db(tmp_path, [("3 july 2023", "5 july 2023"),
+                              ("3 july 2023", "6 july 2023"),
+                              ("3 july 2023", "20 july 2023")])
+    r = harness.check_graph_integrity(db)
+    assert r["chained_entities"] == 0, "no chain exists — that is the whole point"
+    assert r["fanin_entities"] == 1, r
+    assert r["worst_fanin"] == 3, r
+    assert any("'3 july 2023' absorbed 3:" in f for f in r["fanins"]), r["fanins"]
+
+
+def test_fanin_does_not_flip_clean_for_ordinary_canonicalisation(tmp_path):
+    """The R5 contract: fan-ins are REPORTED, never used to fail a run.
+
+    At the only threshold that detects anything (2 losers) a legitimate variant
+    merge is indistinguishable from damage without reading the names, so a
+    two-variant canonicalisation must still report clean while being surfaced.
+    Paired with test_star_merges_are_not_a_chain, which pins the same fixture.
+    """
+    db = _graph_db(tmp_path, [("pottery project", "pottery class"),
+                              ("pottery project", "pottery")])
+    r = harness.check_graph_integrity(db)
+    assert r["clean"] is True, "fan-ins must not fail a run"
+    assert r["fanin_entities"] == 1, "...but must still be reported"
+
+
+def test_duplicate_loser_rows_do_not_inflate_a_fanin(tmp_path):
+    """The log really does record the same loser twice ('1 february 2023' and
+    '3 august 2023' on the full corpus). Counting rows instead of DISTINCT
+    entities would promote a one-loser merge into a fan-in."""
+    db = _graph_db(tmp_path, [("1 february 2023", "4 february 2023"),
+                              ("1 february 2023", "4 february 2023")])
+    r = harness.check_graph_integrity(db)
+    assert r["fanin_entities"] == 0, "one distinct loser is not a fan-in"
+
+
+def test_shared_fixture_matches_rust_implementation(tmp_path):
+    """TD-256. The two implementations agree ON ONE FIXTURE, checked mechanically.
+
+    `harness.check_graph_integrity` and invariant 6 in
+    `crates/kremory-eval/src/layer_b/graph_integrity.rs` are mirrors of the same
+    contract. Until this fixture existed the only thing keeping them aligned was a
+    doc-comment asking a future editor to remember, and they had already drifted
+    once elsewhere in this repo (the REST fusion copy, TD-173, four weeks).
+
+    The Rust side asserts the SAME `expected` block from the SAME file
+    (`shared_fixture_matches_python_implementation`), so changing one
+    implementation alone turns its own suite red.
+    """
+    fixture_path = Path(__file__).parent / "fixtures" / "graph_integrity_shared.json"
+    with open(fixture_path) as f:
+        fixture = json.load(f)
+
+    db = _graph_db(tmp_path, [tuple(m) for m in fixture["merges"]])
+    r = harness.check_graph_integrity(db)
+    expected = fixture["expected"]
+
+    assert r["status"] == "checked"
+    for key, want in expected.items():
+        assert r[key] == want, f"{key}: got {r[key]!r}, fixture says {want!r}"
+
+
 def test_producer_shape_drift_errors_rather_than_reporting_zero(tmp_path):
     """A silently skipped merge row makes a corrupted graph look clean, which is
     exactly the failure this check exists to catch."""
