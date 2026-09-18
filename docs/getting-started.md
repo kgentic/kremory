@@ -185,6 +185,10 @@ verified:
 
 - [The API reference](./api/index.md) — the full reference (builder customization,
   namespaces, dream/consolidation, undo, error handling, feature flags).
+- [`deployment.md`](./deployment.md) — the three constraints that shape a real
+  deployment: one connection per handle (no pool), an in-process-only write lock
+  (cross-process is untested), and ingest measured in **seconds** not
+  milliseconds, so writes must come off the request path.
 - [`observability.md`](./observability.md) — metrics + tracing if you want
   to see what kremory is doing under the hood.
 - [`error-handling-policy.md`](./error-handling-policy.md) — what kremory
