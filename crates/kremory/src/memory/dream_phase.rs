@@ -3,11 +3,30 @@
 //! ## What this is — and what it is NOT
 //!
 //! This module describes the **consolidation** sub-phase — graph-global passes
-//! (community detection, distillation, supersession, archival). **Consolidation
-//! is NOT yet implemented** (`graph_run_consolidation` is `NotImplemented` — F-01;
-//! the `DreamSummary` consolidation fields are honest zeros). `DreamMode` +
-//! `PASSES` here are the *future* mode-gating for those unbuilt passes — nothing
-//! in production reads them today (only a shape test, `b1_static_pass_table.rs`).
+//! (community detection, distillation, supersession, archival).
+//!
+//! ⚠️ **CORRECTED 2026-09-18 (TD-086). The previous claim here — "Consolidation is
+//! NOT yet implemented ... the `DreamSummary` consolidation fields are honest
+//! zeros" — was FALSE, and had been for some time.** The truth is split by path,
+//! which is exactly what a blanket statement hid:
+//!
+//! - **Facade path: IMPLEMENTED and shipping.** `facade/dream.rs:753` calls
+//!   `consolidation::run_consolidation` for real, gated by
+//!   `opts.any_consolidation_enabled()`. `communities.rs`, `supersession.rs` and
+//!   `archive.rs` all exist under `core/dream/consolidation/`. A
+//!   `ConsolidationSummary::default()` appears there only as the fallback when
+//!   consolidation is disabled or there is no temporal graph — NOT as a stub.
+//! - **Engine-handle path: still `NotImplemented`.** `graph_run_consolidation`
+//!   returns `Err(MemoryError::NotImplemented)` on that surface
+//!   (`memory/engine_handle.rs:14`). This is the only sense in which the old
+//!   claim was ever true, and it was never the whole picture.
+//! - **`distillation` is the one genuinely unbuilt pass** (TD-121) — no
+//!   `distillation.rs` exists.
+//!
+//! `DreamMode` + `PASSES` here remain **dormant scaffolding regardless**: nothing
+//! in production reads them (only the shape test `b1_static_pass_table.rs`), and
+//! the three passes that DID ship route around this table entirely. Re-verified
+//! 2026-09-18.
 //!
 //! This does **NOT** gate the live **reconciliation** sub-phase (the 5 passes:
 //! type_discovery / aliases / reclassify / consistency_check / canonicalize).
@@ -65,9 +84,33 @@ impl PassDef {
 }
 
 /// Static pass table for CONSOLIDATION (sub-phase 2) — canonical ordering +
-/// mode-gating per architecture spec §2.4.B, to be wired when consolidation is
-/// built. DORMANT scaffolding: not iterated by any production code today (only
-/// the shape test `b1_static_pass_table.rs`).
+/// mode-gating per architecture spec §2.4.B.
+///
+/// ⚠️ **ASPIRATIONAL AND UNWIRED. This table is NOT the dispatch source of truth,
+/// and the passes it names are not dispatched from here** (TD-086, corrected
+/// 2026-09-18).
+///
+/// The original note here said consolidation was "to be wired when built". That
+/// became false without anyone updating it: **3 of these 4 names are now built and
+/// shipping** — `communities.rs`, `supersession.rs` and `archive.rs` all exist
+/// under `core/dream/consolidation/` and run for real via
+/// `consolidation::run_consolidation`, dispatched from `facade/dream.rs:753`.
+/// They have simply never travelled through this table. Only `distillation`
+/// remains genuinely unbuilt (see TD-121) — there is no `distillation.rs`.
+///
+/// So the drift is the reverse of what it looks like: this is not scaffolding
+/// waiting on an unbuilt feature, it is a stale table sitting beside a feature
+/// that shipped past it.
+///
+/// **Footgun if you wire it.** `PassDef::runs_in` reads as a ready-made
+/// orchestrator. Iterating `PASSES` today would dispatch a pass vocabulary that
+/// does not match the shipped one and would attempt `distillation`, which does not
+/// exist. Before making this the dispatch SoT, reconcile the names against
+/// `core/dream/mod.rs` — that is TD-086 resolution path 1, a deliberate design
+/// change, not a cleanup.
+///
+/// Verified dormant 2026-09-18: nothing in `crates/kremory/src` outside this file
+/// references `PASSES` (only the shape test `b1_static_pass_table.rs`).
 ///
 /// Order matters: community must complete before distillation (graph topology
 /// must stabilise before cross-episode synthesis). Supersession precedes archive
