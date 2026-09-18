@@ -57,6 +57,7 @@ OFFLINE=(
   cancelling_in_flight_work
   who_touched_this_record
   what_can_be_undone
+  serving_over_http
 )
 
 # Guard against the list drifting from what actually ships. A new example added

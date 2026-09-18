@@ -53,6 +53,7 @@ mod consolidation_supersession_test;
 mod consumer_snippets;
 mod content_recall_benchmark;
 mod contradiction_integration;
+mod cross_process_one_database;
 mod dream_e2e_real_llm;
 mod dream_full_consolidation_real_llm;
 mod dream_loop_e2e_all_flags;

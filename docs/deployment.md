@@ -37,7 +37,7 @@ lever is **more handles**, not a bigger pool — and handles are cheap to open o
 **What this does *not* mean.** It is not a correctness problem. Serialisation is deliberate:
 `BEGIN IMMEDIATE` on one connection is what keeps concurrent writes from interleaving.
 
-## 2. The write lock is an **in-process** mutex. Cross-process is UNTESTED.
+## 2. The write lock is **per handle**, not per process — and it is narrower than it sounds.
 
 Writes are serialised by:
 
@@ -50,21 +50,32 @@ That is a `tokio::sync::Mutex`, and the architecture note is explicit that it is
 *"acquired first — before any sub-lock — on every write path"*
 (`crates/kremory/src/core/mod.rs:22`).
 
-**Read that carefully.** An in-process mutex excludes *tasks inside one process*. It provides
-**no exclusion whatsoever between separate OS processes.** Two processes writing to one database
-file are arbitrated by SQLite/libsql file locking alone, with kremory's own serialisation
-contributing nothing.
+**Read that carefully — it is narrower than it looks.** That mutex is **per handle**, not per
+process: `TemporalGraph::open_with_dim` mints a fresh one every time
+(`crates/kremory/src/core/schema.rs:460`, and again at `:478`). So it excludes *tasks sharing one
+handle*. **Two handles in the same process each have their own**, and between separate OS processes
+it contributes nothing at all.
 
-**Honest status: this is untested, not "supported" and not "broken".** The repo has no test that
-spans processes, so nobody here can tell you whether sustained concurrent cross-process writing is
-safe under load. Treat it as unverified territory:
+Arbitration beyond one handle is therefore SQLite/libsql's: file locking, separate WAL index
+mappings, separate page caches, and `PRAGMA busy_timeout = 5000` (`core/schema.rs:456`).
 
-- ✅ **Safe and exercised**: many handles, many tasks, **one process**.
-- ⚠️ **Unverified**: multiple processes writing the same file concurrently.
-- ✅ **Fine**: multiple processes *reading* while one writes is ordinary SQLite WAL behaviour.
+**Status, corrected 2026-09-18: cross-process write-visibility is now TESTED and it works.**
+`crates/kremory/tests/it/cross_process_one_database.rs` spawns two real OS processes over one
+database file and asserts a write in one becomes visible in the other. It ships with a permanent
+negative control — a second test pointing the reader at a *different* file and asserting it finds
+nothing — so the passing case cannot be a false positive.
 
-If your deployment needs multi-process writes, design one writer (a single ingest worker) and let
-the others read. That sidesteps the question rather than betting on it.
+What that does and does not license:
+
+- ✅ **Exercised**: many handles, many tasks, one process.
+- ✅ **Exercised**: a write in process A becoming visible to process B over one file.
+- ✅ **Fine**: multiple processes reading while one writes — ordinary SQLite WAL behaviour.
+- ⚠️ **Still unverified**: *sustained concurrent* writing from multiple processes under load.
+  Visibility is proven; contention behaviour at volume is not. `busy_timeout` is 5s, so a writer
+  held off longer than that surfaces as an error rather than a wait.
+
+If your deployment needs heavy multi-process writes, still prefer one writer (a single ingest
+worker) with the others reading. That sidesteps contention rather than betting on it.
 
 ## 3. Ingest takes **seconds**, not milliseconds. Writes must be asynchronous.
 
@@ -104,8 +115,8 @@ covers `.no_wait()` on its own.
 | shape | when | watch out for |
 |---|---|---|
 | **One process, many handles** | the default; API server, worker threads, request handlers | bounded by one connection per handle — open more handles, not a pool |
-| **One writer + N readers** | you need multiple processes | the only multi-process shape that avoids §2's unverified territory |
-| **Many writers, many processes** | — | **unverified.** No test covers it. Do not assume the in-process `write_lock` helps you; it does not. |
+| **One writer + N readers** | you need multiple processes | the multi-process shape that avoids contention entirely; write-visibility across processes is tested |
+| **Many writers, many processes** | heavy concurrent ingest | visibility is **tested**; *sustained contention* is **not**. `write_lock` is per handle and helps you not at all here — `busy_timeout` is 5s, past which a blocked writer errors rather than waits. |
 
 ## What this page deliberately does not tell you
 

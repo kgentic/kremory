@@ -7,20 +7,43 @@
 //!
 //! ## The problem this solves
 //!
-//! A web process and a background worker. An API server and a nightly job. Two
-//! request handlers on the same box. As soon as kremory is real for you, more
-//! than one thing is holding it open, and the question stops being academic:
-//! **does a write through one handle become visible to the other?**
+//! An API server and a nightly job. Two request handlers on the same box. A
+//! write path and a read path that were built separately. As soon as kremory is
+//! real for you, more than one thing is holding it open, and the question stops
+//! being academic: **does a write through one handle become visible to the
+//! other?**
 //!
 //! kremory is embedded, so there is no server arbitrating this — the database
 //! file is the shared state. That is a feature (no process to run, no network
 //! hop) and it is also the thing to verify rather than assume.
 //!
+//! ## Scope: TWO HANDLES, ONE PROCESS
+//!
+//! Be precise about what this proves, because the two questions look alike and
+//! are not. Everything below happens inside **one OS process**: two `Memory`
+//! handles, one `tokio` runtime, one address space.
+//!
+//! And note what does *not* arbitrate them. kremory's write lock is an
+//! in-process `AsyncMutex` (`core/schema.rs:415`), but it is **per handle** —
+//! every `TemporalGraph::open_with_dim` mints a fresh one
+//! (`core/schema.rs:460`), along with its own `libsql::Database` and its own
+//! connection. So the mutex serialises TASKS INSIDE one handle and does
+//! nothing between the two here; what keeps these two honest is SQLite/libsql
+//! file locking plus `PRAGMA busy_timeout = 5000` (`core/schema.rs:456`).
+//!
+//! **Two separate PROCESSES are still a different question.** Same file
+//! locking, but now across separate OS processes: separate WAL index mappings,
+//! separate page caches, separate advisory locks, and no shared runtime to
+//! fall back on. That is covered by
+//! `crates/kremory/tests/it/cross_process_one_database.rs`, which spawns real
+//! child processes, and summarised in `docs/deployment.md` §2. Do not read a
+//! pass here as evidence about that.
+//!
 //! ## What this asserts
 //!
 //! A writer handle commits; a SEPARATE reader handle, opened independently on
-//! the same path, sees it. And it checks the direction people forget: the reader
-//! can write too, and the writer sees THAT.
+//! the same path **in the same process**, sees it. And it checks the direction
+//! people forget: the reader can write too, and the writer sees THAT.
 
 use std::future::Future;
 use std::path::Path;
@@ -78,7 +101,8 @@ impl EntityExtractor for NoExtraction {
 }
 
 /// Open an independent handle on the same file. Nothing is shared in process —
-/// each gets its own embedder, its own connection, its own everything.
+/// each gets its own embedder, its own `libsql::Database`, its own connection
+/// and its own `write_lock`. The file is the only thing they have in common.
 async fn open(path: &Path, ns: &Namespace) -> anyhow::Result<Memory> {
     Ok(Memory::open(path)
         .embedding_dim(DEMO_DIM)
@@ -118,7 +142,8 @@ async fn main() -> anyhow::Result<()> {
     let db = dir.path().join("shared.db");
     let ns = Namespace::new("ops");
 
-    // Two independent handles. Think "API server" and "background worker".
+    // Two independent handles — think "request path" and "nightly job", both
+    // inside this one process. Two processes is `cross_process_one_database.rs`.
     let writer = open(&db, &ns).await?;
     let reader = open(&db, &ns).await?;
     println!("opened two independent handles on {}", db.display());
@@ -137,9 +162,9 @@ async fn main() -> anyhow::Result<()> {
     println!("  reader sees     : {seen:?}");
     assert!(
         seen.iter().any(|o| o == "14:05"),
-        "a committed write must be visible to an independently-opened handle — \
-         if this fails, two processes cannot share one database and the embedded \
-         story does not hold; got {seen:?}"
+        "a committed write must be visible to an independently-opened handle in \
+         the same process — if this fails, two components cannot share one \
+         database and the embedded story does not hold; got {seen:?}"
     );
 
     // ── And the other direction ─────────────────────────────────────────────
@@ -169,9 +194,11 @@ async fn main() -> anyhow::Result<()> {
     );
     println!("  after close     : surviving handle still works");
 
-    println!("\nOne file, two handles, writes visible both ways. There is no server");
-    println!("mediating this — the database file is the shared state, which is why");
-    println!("it is worth proving rather than assuming.");
+    println!("\nOne file, two handles, ONE process, writes visible both ways. There is");
+    println!("no server mediating this — the database file is the shared state, which");
+    println!("is why it is worth proving rather than assuming.");
+    println!("Two separate PROCESSES are a different question: see");
+    println!("crates/kremory/tests/it/cross_process_one_database.rs.");
 
     writer.close().await?;
     Ok(())

@@ -1,11 +1,12 @@
 # Examples — start here
 
-Twenty-two runnable programs. Every one is real code that compiles against the
+Twenty-three runnable programs. Every one is real code that compiles against the
 published crate and asserts its own behaviour, so if kremory changes and an
 example stops being true, it stops passing.
 
-**Twenty of the twenty-two need nothing but `cargo`.** One needs a model running
-locally; one calls a paid API and is the only thing here that costs anything.
+**Twenty-one of the twenty-three need nothing but `cargo`.** One needs a model
+running locally; one calls a paid API and is the only thing here that costs
+anything.
 
 ```sh
 cargo run --example offline_remember_recall
@@ -28,7 +29,8 @@ cargo run --example offline_remember_recall
 | That one line should never have been recorded. | `deleting_and_restoring` |
 | An automated job changed something wrongly. | `undoing_a_bad_change` |
 | I switched embedding model. Now what? | `changing_embedding_model` |
-| A web process AND a worker both need this. | `two_handles_one_database` |
+| Two components in ONE process both need this. | `two_handles_one_database` |
+| I want to put this behind a REST API. | `serving_over_http` |
 | The correction I made was itself wrong. | `undoing_a_correction` |
 | My entities are courts and statutes, not people. | `domain_entity_types` |
 | Can consolidation just run by itself? | `dream_on_a_schedule` |
@@ -68,6 +70,13 @@ loud.
   `Failed("cancelled by caller")` when the cancel landed in time and `Complete`
   when it did not. Both leave the batch terminal, so `await_batch()` is safe
   after a cancel.
+- **`serving_over_http`** — a `202` from `.no_wait()` means **accepted, not
+  stored.** The whole ingest, episode INSERT included, is spawned
+  (`memory/engine_handle.rs:282-428`), so a read straight after the write can
+  legitimately return nothing — observed both ways across repeat runs. And the
+  handle arrives in a field called `episode_entity_id` while being the **run**
+  id (`engine_handle.rs:418`), so publishing it as a durable resource id hands
+  clients a job ticket.
 - **`hosted_providers`** — `Memory::with_anthropic` gives you Claude and **no
   embedding model**, because Anthropic has no embedding API. Recall silently
   becomes structural rather than semantic. Pair Claude with a real embedder
@@ -76,7 +85,7 @@ loud.
 ## Running them all
 
 ```sh
-bash scripts/check-examples.sh      # all 20 offline ones, ~25s
+bash scripts/check-examples.sh      # all 21 offline ones, ~25s
 ```
 
 This runs in `scripts/check-all.sh` too. The examples ship inside the published
