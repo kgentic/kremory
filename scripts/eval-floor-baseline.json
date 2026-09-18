@@ -1,17 +1,25 @@
 {
   "_comment": "Eval floor for scripts/check-eval-floor.sh (TD-242). A RATCHET, not a target. Re-baseline deliberately after a measured improvement and COMMIT IT \u2014 an unrefreshed floor is a green gate enforcing nothing (see GraphQLite, teardown 2026-09-08).",
   "populated": true,
-  "generated_from": "results/floor/eval-floor-20260908.slim.json",
-  "generated_at": "2026-09-08T14:51:46Z",
-  "headline": "1373/1540 = 89.2% (446 adversarial NOT SCORED for correctness; 1986 questions asked \u2014 their RETRIEVAL is scored by evidence_eval.py)",
+  "generated_from": "results/floor/eval-floor-20260918.slim.json",
+  "generated_at": "2026-09-18T22:12:30Z",
+  "headline": "1375/1540 = 89.3% (446 adversarial NOT SCORED for correctness; 1986 questions asked \u2014 their RETRIEVAL is scored by evidence_eval.py)",
+  "measured_surface": "target/release/kremory-http (server_mode=hybrid)",
+  "graph_integrity": {
+    "status": "checked",
+    "chained_entities": 4,
+    "fanin_entities": 20,
+    "worst_fanin": 9,
+    "live_merges": 113
+  },
   "scored_questions": 1540,
   "unscored_questions": 446,
-  "overall_correct_pct": 89.16,
+  "overall_correct_pct": 89.29,
   "by_category_correct_pct": {
     "multi-hop": 63.54,
     "open-domain": 95.6,
     "single-hop": 80.85,
-    "temporal": 87.23
+    "temporal": 87.85
   },
   "provenance": {
     "rrf_k": 1,
@@ -20,7 +28,7 @@
     "temporal_weight": 0.0,
     "rerank_enabled": false,
     "features": "content-search",
-    "git_sha": "db29b3bd53f2ea6dd963a1727bc79550f8592466",
+    "git_sha": "a7d3a46579ff5a923ddecaccde4a3ed37d262b05",
     "scorer": "substring",
     "server_mode": "hybrid"
   }

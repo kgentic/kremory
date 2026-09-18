@@ -1,0 +1,103 @@
+{
+  "capture_text_block": false,
+  "category_stats": {
+    "temporal": {
+      "correct": 282,
+      "total": 321
+    },
+    "multi-hop": {
+      "correct": 61,
+      "total": 96
+    },
+    "single-hop": {
+      "correct": 228,
+      "total": 282
+    },
+    "open-domain": {
+      "correct": 804,
+      "total": 841
+    }
+  },
+  "graph_integrity": {
+    "status": "checked",
+    "graph_db": ".context/floor-run/corpus-run.db",
+    "live_merges": 113,
+    "chained_entities": 4,
+    "clean": false,
+    "chains": [
+      "'13 august 2023' absorbed [19 august 2023] then was absorbed by '3 august 2023'",
+      "'3 may 2023' absorbed [11 may 2023, 6 may 2023] then was absorbed by '1 may 2023'",
+      "'6 october 2023' absorbed [8 october 2023] then was absorbed by '1 october 2023'",
+      "'6 september 2023' absorbed [24 september 2023] then was absorbed by '3 september 2023'"
+    ],
+    "fanin_entities": 20,
+    "worst_fanin": 9,
+    "fanins": [
+      "'3 july 2023' absorbed 9: [12 july 2023, 15 july 2023, 17 july 2023, 20 july 2023, 22 july 2023, 31 july 2023, 5 july 2023, 6 july 2023, 7 july 2023]",
+      "'3 august 2023' absorbed 6: [11 august 2023, 13 august 2023, 14 august 2023, 22 august 2023, 5 august 2023, 9 august 2023]",
+      "'2 august 2023' absorbed 5: [11 august 2023, 11 november 2023, 17 august 2023, 26 august 2023, 31 august 2023]",
+      "'3 september 2023' absorbed 4: [15 september 2023, 17 september 2023, 6 september 2023, 8 september 2023]",
+      "'16 august 2023' absorbed 3: [19 august 2023, 26 august 2023, 30 august 2023]",
+      "'2 april 2023' absorbed 3: [10 april 2023, 242 pm on 2 april 2023, 7 april 2023]",
+      "'23 march 2023' absorbed 3: [23 october 2023, 25 october 2023, 26 march 2023]",
+      "'4 november 2022' absorbed 3: [11 november 2022, 7 november 2022, 9 november 2022]",
+      "'1 august 2023' absorbed 2: [12 august 2023, 24 august 2023]",
+      "'1 december 2023' absorbed 2: [6 december 2023, 8 december 2023]",
+      "'1 february 2023' absorbed 2: [25 february 2023, 4 february 2023]",
+      "'1 may 2023' absorbed 2: [3 may 2023, 31 may 2023]",
+      "'1 september 2022' absorbed 2: [18 september 2022, 4 september 2022]",
+      "'12 april 2022' absorbed 2: [23 april 2022, 29 april 2022]",
+      "'13 june 2023' absorbed 2: [19 june 2023, 21 june 2023]",
+      "'3 june 2023' absorbed 2: [12 june 2023, 27 june 2023]",
+      "'3 may 2023' absorbed 2: [11 may 2023, 6 may 2023]",
+      "'6 august 2022' absorbed 2: [10 august 2022, 21 august 2022]",
+      "'6 january 2024' absorbed 2: [10 january 2024, 11 january 2024]",
+      "'minnesota wolves' absorbed 2: [the wolves, wolves]"
+    ]
+  },
+  "headline": "1375/1540 = 89.3% (446 adversarial NOT SCORED for correctness; 1986 questions asked \u2014 their RETRIEVAL is scored by evidence_eval.py)",
+  "ingest_aborted": [],
+  "ingest_attempted": 0,
+  "mode": "codemem",
+  "o11y": {
+    "metrics_endpoint_present": false,
+    "tokens_total": null,
+    "cost_usd_total": null,
+    "recall_latency_ms_p50": 36.9,
+    "recall_latency_ms_p95": 52.4,
+    "recall_latency_ms_mean": 39.2,
+    "raw_metric_totals": {}
+  },
+  "provenance": {
+    "git_sha": "a7d3a46579ff5a923ddecaccde4a3ed37d262b05",
+    "harness_git_sha": "a7d3a46579ff5a923ddecaccde4a3ed37d262b05",
+    "binary": {
+      "available": true,
+      "crate_version": "0.1.0",
+      "exe": "target/release/kremory-http",
+      "exe_mtime_unix": 1789755156,
+      "exe_size_bytes": 12910944,
+      "features": {
+        "content_search": true,
+        "prometheus": false,
+        "rerank": false
+      }
+    },
+    "content_stream_weight": 1.0,
+    "rrf_k": 1,
+    "graph_degree_weight": 0.05000000074505806,
+    "temporal_weight": 0.0,
+    "rerank_enabled": false,
+    "features": "content-search",
+    "provenance_source": "health"
+  },
+  "scored_questions": 1540,
+  "scorer": "substring",
+  "server_mode": "hybrid",
+  "total_questions": 1986,
+  "unscored_questions": 446,
+  "unscored_stats": {
+    "adversarial": 446
+  },
+  "_slim_note": "Per-question `results` (recalled_memories payloads, 26MB) stripped for committability. Everything scripts/check-eval-floor.sh derives from is retained: category_stats, scored_questions, headline, provenance, scorer, server_mode. The per-question record lives beside this as run-*.jsonl. Full artefact kept locally only."
+}
