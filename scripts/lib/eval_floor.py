@@ -22,6 +22,21 @@ NAG = float(os.environ["KREMORY_NAG"])
 PROV_KEYS = ("rrf_k", "content_stream_weight", "graph_degree_weight",
              "temporal_weight", "rerank_enabled", "features")
 
+# Provenance fields that would identify the EMBEDDING MODEL, if any were recorded.
+#
+# None of them are, as of 2026-09-18 — `provenance` carries rrf_k, the weights,
+# features, binary, git_sha and harness_git_sha, and nothing about the embedder.
+# That is the largest blind spot in this gate's comparability story: query
+# embeddings must come from the same model that built the corpus's stored vectors,
+# and swapping the embedder moves recall far more than any weight in PROV_KEYS
+# above — yet it is the one change the drift check cannot see.
+#
+# Concretely reachable, not hypothetical: on 2026-09-18 the machine's Ollama had
+# ZERO models installed, so reproducing the floor requires pulling an embedder,
+# and nothing here could tell you whether the pulled version matches the one that
+# produced `.context/full-corpus.db`.
+EMBED_PROV_KEYS = ("embed_model", "embedding_model", "embedder", "embed_model_id")
+
 
 def die(msg):
     print(f"FAIL: {msg}", file=sys.stderr)
@@ -206,6 +221,17 @@ if drift:
     for d in drift:
         print(f"    - {d}")
     print("    Re-baseline deliberately if the new config is the intended default.")
+
+# WARN, never fail: an unrecorded embedder does not make the number wrong, it makes
+# the COMPARISON unverifiable. Failing here would fire on every existing run and
+# train people to ignore the gate — which is how a guard destroys itself.
+if not any(k in run.get("provenance", {}) for k in EMBED_PROV_KEYS):
+    print("\n⚠️  EMBEDDING MODEL NOT RECORDED in this run's provenance.")
+    print("    Recall depends on query embeddings matching the corpus's stored")
+    print("    vectors. An embedder swap moves the number more than any weight the")
+    print("    drift check above watches — and is invisible to it.")
+    print("    Treat a delta against a floor built by an unknown embedder as")
+    print("    UNEXPLAINED, not as a regression or an improvement.")
 
 fails = []
 if overall < floor_overall:
