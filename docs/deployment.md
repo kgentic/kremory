@@ -96,9 +96,31 @@ problem you can fix with a bigger box; it is LLM latency and it is inherent.
 So a serving deployment must take writes off the request path:
 
 ```rust
-let handle = memory.remember(text).no_wait().execute().await?;
-// return 202 Accepted + handle id immediately; poll or await elsewhere
+let commit = memory
+    .remember(body)
+    .in_namespace(ns.clone())
+    .no_wait()
+    .await?;                       // terminal is `.await` — `execute()` is NOT public here
+let run_id = commit.run_id;        // Option — `None` means there was nothing to enrich
+// return 202 Accepted + run_id immediately; poll it on another route
 ```
+
+> ⚠️ **`.no_wait()` does NOT commit phase 1 before returning, despite what several
+> doc-comments in this crate still say.** The background path returns before the ingest
+> task resolves — `memory/engine_handle.rs:420-422` says so in its own words:
+> *"Background-spawn path: returns before the task (and any embed attempt inside it)
+> resolves"*. Measured over 5 runs, a read issued immediately after the 202 returned
+> **0 passages twice and 1 passage three times**. That is a real race, not a warm-up
+> artefact.
+>
+> **Do not tell a client its write is durable or searchable when you return the 202.**
+> Return the `run_id` and let them poll. Known-false claims still in the tree, all
+> outside this page's scope and recorded in the 2026-09-18 handoff:
+> `examples/ingest_without_blocking.rs:16`, `memory/types.rs:849-851`, `memory/types.rs:855`.
+>
+> Also: on the `.no_wait()` path `EpisodeCommit::episode_entity_id` is **the run id**
+> (`engine_handle.rs:418` returns `run_id.to_string()`). A server that publishes it as a
+> durable resource identifier is handing clients a job ticket.
 
 [`examples/serving_over_http.rs`](../crates/kremory/examples/serving_over_http.rs) shows this
 shape end to end, and [`examples/ingest_without_blocking.rs`](../crates/kremory/examples/ingest_without_blocking.rs)
