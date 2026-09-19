@@ -120,3 +120,11 @@ __pycache__/
 # 2026-09-08), so the slim artefact is deliberately NOT ignored.
 results/floor/eval-floor-*.json
 !results/floor/*.slim.json
+
+# Stale 0-byte artefacts, neither ever tracked. Ignored rather than deleted or
+# committed: deleting is someone else's call, and committing puts empty junk in
+# the history of a repo heading for public release.
+#   .reindex.lock — lock left behind Sep 14 2026; no code in the tree references it
+#   wedding       — 0-byte file created Aug 11 2026 23:59:56, almost certainly a typo
+.reindex.lock
+wedding
