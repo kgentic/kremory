@@ -9,7 +9,7 @@ name = "kremory_py_spike"
 crate-type = ["cdylib"]
 
 [dependencies]
-kremory = { path = "crates/kremory" }
+kremory = { path = "../../crates/kremory" }
 pyo3 = { version = "0.29.2", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.29.0", features = ["tokio-runtime"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
