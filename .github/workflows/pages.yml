@@ -1,0 +1,68 @@
+# Deploy the Docusaurus site to GitHub Pages.
+#
+# WHY THIS ONE IS NOT COMMENTED OUT
+# ---------------------------------
+# The other four workflows in this directory are fully commented out because the
+# kgentic org's Actions billing was suspended (2026-06-19). That suspension
+# applies to PRIVATE repositories. This repository is public, and GitHub Actions
+# minutes are unmetered for public repos — so this workflow costs nothing and is
+# unaffected by that decision. Do not "restore consistency" by disabling it.
+#
+# TARGET: project site at https://kgentic.github.io/kremory/
+# `website/docusaurus.config.ts` must keep `baseUrl: '/kremory/'` to match. If
+# the site ever moves to a custom domain, both change together plus a
+# `website/static/CNAME` — see the note in that config.
+name: pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'website/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+# Least privilege: read the repo, write only the Pages artifact + its OIDC token.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never run two deploys at once, but do NOT cancel one in flight — a cancelled
+# deploy can leave Pages serving a half-published build.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      # `npm ci` not `npm install`: it honours the lockfile exactly and fails on
+      # drift, so a green deploy means the committed lockfile actually resolves.
+      - run: npm ci
+      # The config sets onBrokenLinks/onBrokenAnchors: 'throw', so a broken
+      # internal link fails the build here rather than shipping a dead link.
+      - run: npm run build
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

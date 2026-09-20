@@ -14,11 +14,21 @@ const config: Config = {
     v4: true, // Improve compatibility with the upcoming Docusaurus v4
   },
 
-  // Placeholder production values — this site is NOT deployed as part of this
-  // change (RULE-010); deploy target/DNS is a separate, maintainer-gated
-  // phase. Update these when that phase happens.
-  url: 'https://kremory.dev',
-  baseUrl: '/',
+  // Deploy target, set 2026-09-20 when the maintainer-gated deploy phase the
+  // previous note deferred to actually happened.
+  //
+  // PROJECT SITE, not a custom domain: `kremory.dev` is unregistered (verified
+  // — whois returns only an IANA stub, and there is no A record), so the
+  // previous `url: kremory.dev` / `baseUrl: '/'` pair could not have worked.
+  // A project site is served from `<org>.github.io/<projectName>/`, so baseUrl
+  // MUST carry the repo path — leaving it '/' is the classic Docusaurus
+  // misconfiguration where every asset 404s under a path-prefixed host.
+  //
+  // To move to a custom domain later: register it, set `url` to it, set
+  // `baseUrl` back to '/', and add `website/static/CNAME` containing the bare
+  // hostname. All three, or the site breaks in a different direction.
+  url: 'https://kgentic.github.io',
+  baseUrl: '/kremory/',
 
   // GitHub pages deployment config (only consumed by `docusaurus deploy`,
   // which this spec does not run — kept accurate for when deploy does happen).
