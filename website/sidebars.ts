@@ -86,7 +86,7 @@ const sidebars: SidebarsConfig = {
       type: 'category',
       label: 'Operations',
       collapsed: false,
-      items: ['observability', 'error-handling-policy'],
+      items: ['deployment', 'observability', 'error-handling-policy'],
     },
     {
       type: 'category',
