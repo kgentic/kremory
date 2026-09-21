@@ -71,6 +71,24 @@ const config: Config = {
         },
         // No blog for this project's docs site — docs-only.
         blog: false,
+        // Google Analytics 4. Uses the preset's gtag plugin rather than pasting
+        // the raw gtag <script> into headTags: Docusaurus is a single-page app,
+        // so a hand-pasted snippet fires ONCE on first load and misses every
+        // client-side route change — you would record one pageview per session
+        // and a docs site is almost entirely client-side navigation. The plugin
+        // hooks the router and sends a pageview per route.
+        //
+        // The measurement ID is NOT a secret: gtag exposes it in the page source
+        // of every visitor. Committing it to a public repo is correct.
+        //
+        // NB gtag sets cookies, so EU visitors technically need consent. There is
+        // no banner on this site. If that becomes a concern, a cookieless
+        // alternative (Cloudflare Web Analytics, Plausible, GoatCounter) drops in
+        // via `headTags` with no consent surface.
+        gtag: {
+          trackingID: 'G-T12DEMLF3X',
+          anonymizeIP: true,
+        },
         theme: {
           customCss: './src/css/custom.css',
         },
