@@ -36,7 +36,7 @@
 //! - `RecallTemplate` — pub fn on the impl block
 //! - `DreamSummary` — pub fields on the struct
 //!
-//! Napi mirror surface extracted from `lib.rs` + `convert.rs`:
+//! Napi mirror surface extracted from `lib.rs` + `convert/{ingest,recall,dream,mutations}.rs`:
 //! - `#[napi]` methods on `JsMemory` impl
 //! - `#[napi(object)]` struct fields on option/result structs
 
@@ -416,11 +416,28 @@ fn napi_surface_matches_substrate_or_skip_list() {
     let facade_forget_src = parse_file_to_string(&root.join("crates/kremory/src/facade/forget.rs"));
     let facade_dream_src = parse_file_to_string(&root.join("crates/kremory/src/facade/dream.rs"));
     let napi_lib_src = parse_file_to_string(&root.join("crates/kremory-napi/src/lib.rs"));
-    let napi_convert_src = parse_file_to_string(&root.join("crates/kremory-napi/src/convert.rs"));
+    // `convert.rs` was split into `convert/{ingest,recall,dream,mutations}.rs` (TD-243,
+    // file-size ratchet — the flat file was WATCHED at 1987 lines). `convert/mod.rs` only
+    // declares `mod`/`pub use` (no `#[napi]` items) and `convert/tests.rs` is cfg(test)-only,
+    // so neither carries FFI surface; the four domain files are the full replacement set.
+    let napi_convert_ingest_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/convert/ingest.rs"));
+    let napi_convert_recall_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/convert/recall.rs"));
+    let napi_convert_dream_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/convert/dream.rs"));
+    let napi_convert_mutations_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/convert/mutations.rs"));
     let skip_list_path = root.join("crates/kremory-napi/parity-skip.toml");
 
     let skip_list = load_skip_list(&skip_list_path);
-    let napi_symbols = extract_napi_symbols(&[&napi_lib_src, &napi_convert_src]);
+    let napi_symbols = extract_napi_symbols(&[
+        &napi_lib_src,
+        &napi_convert_ingest_src,
+        &napi_convert_recall_src,
+        &napi_convert_dream_src,
+        &napi_convert_mutations_src,
+    ]);
     let substrate_symbols = extract_substrate_symbols(&[
         &facade_mod_src,
         &facade_builder_src,
@@ -434,11 +451,11 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // Duplicate skip-list entries are rejected inside `load_skip_list`, at insert
     // time. A check here would iterate the finished map's keys and could never fire.
 
-    // Enforce: skip-list count must not exceed 92 (sanity cap — over-finding guard).
+    // Enforce: skip-list count must not exceed 93 (sanity cap — over-finding guard).
     // ⚠️ THIS NOTE ROTTED TWICE before 2026-08-12 (see the history below for the
     // exact sequence). Kept in sync again on 2026-09-02 (88 → 89, TD-231).
-    // The enforced value is the assert, and only the assert: `skip_count <= 92`.
-    // The lead line above and this note are now both 92. If you raise the assert
+    // The enforced value is the assert, and only the assert: `skip_count <= 93`.
+    // The lead line above and this note are now both 93. If you raise the assert
     // again, grep this file for the OLD number before you finish — this note has
     // already rotted twice from someone skipping that step.
     // ADR-031 acceptance gate 2: if this grows large it means the walker is too
@@ -507,6 +524,10 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // the prior cap (90) before this addition, so this is register growth, not
     // walker over-finding; raised on the record rather than by pruning a
     // legitimate entry to make room.
+    // Raised 92 -> 93 (TD-061 secret-scan, 2026-09-21): with_secret_scan_enabled
+    // and with_secret_scan_mode are per-knob MemoryBuilder setters, deferred under
+    // ADR-030 Form B exactly as their thirteen siblings are. The gate caught them
+    // because the feature shipped the methods without a mirror OR a skip entry.
     // Raised 91 -> 92 (public-docs-and-api-surface-audit quality-review B2,
     // 2026-09-07) for exactly ONE entry — `DreamRequest::execute` — a new
     // method added because `dream()` now requires an explicit `.execute()`
@@ -517,12 +538,12 @@ fn napi_surface_matches_substrate_or_skip_list() {
     // internally, not a JS-visible gap. The register was sitting exactly at
     // the prior cap (91) before this addition, so this is register growth,
     // not walker over-finding. NOTE TO THE NEXT PERSON: this file's lead
-    // comment and the assert must BOTH say 92 now — grep for the old number
+    // comment and the assert must BOTH say 93 now — grep for the old number
     // before you finish, because this note has already rotted twice.
     let skip_count = skip_list.len();
     assert!(
-        skip_count <= 92,
-        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 92. \
+        skip_count <= 93,
+        "parity-skip.toml has {skip_count} entries which exceeds the sanity cap of 93. \
          This indicates the parity walker is over-finding substrate symbols. \
          Refine tracked_impl_types() / tracked_struct_types() scope rather than \
          inflating the skip list."
