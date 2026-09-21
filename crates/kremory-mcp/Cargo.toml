@@ -71,7 +71,7 @@ path = "src/main.rs"
 # plain HTTP.
 [[bin]]
 name = "kremory-http"
-path = "src/bin/kremory-http.rs"
+path = "src/bin/kremory-http/main.rs"
 
 [dependencies]
 kremory = { path = "../kremory" }
