@@ -11,6 +11,47 @@ All notable changes to the `kremory` crate. Format loosely follows
 > than the 0.8.1 patch previously planned. One migration, one line: replace
 > `count > 0` with `!outcome.is_empty()`.
 
+### Added — ingest now scans for secrets, and it is ON by default
+
+Episode text is scanned at the ingest boundary for credential-shaped content (AWS keys,
+GitHub tokens, Stripe keys, JWTs, PEM private-key blocks) before it is inserted, extracted
+or embedded. **This is enabled by default**, so every consumer gets it on upgrade — it is
+listed here because a new default is a behaviour change even when it only logs.
+
+What it does with a hit is a choice:
+
+- `SecretScanMode::FlagOnly` (**the default**) records the hit — structured log plus a
+  counter — and leaves your text byte-for-byte untouched. Redaction mutates what you
+  stored, which is a bigger change than most consumers would want applied implicitly.
+- `SecretScanMode::Redact` replaces each detected span with `[REDACTED_SECRET]` before the
+  episode is persisted. The redacted text is what ends up in storage.
+
+Two new builder knobs, and an off switch that exists on purpose:
+
+```rust
+Memory::open("./agent.db")
+    .with_secret_scan_mode(SecretScanMode::Redact)   // default: FlagOnly
+    .with_secret_scan_enabled(false)                 // default: true — byte-identical to 0.8.0
+```
+
+Turn it off if your corpus is test fixtures full of fake-but-shaped secrets; the noise is
+real and a control arm you cannot disable is not a control arm.
+
+### Security — untrusted episode text is now delimited in extraction prompts
+
+Episode content is wrapped in an explicit untrusted-source block before it reaches the
+extraction prompts, so text you ingested cannot pose as instructions to the model that
+reads it. Applies to the shipped default extractor's three prompt stages. A consumer
+ingesting third-party text — support tickets, scraped pages, user messages — was the case
+this protects. `wrap_untrusted_source` is public if you build your own prompts.
+
+### Added — `EpisodeCommit::embedding_failures`
+
+An embedder that failed on some chunks used to be invisible: ingest returned success and
+the affected entities silently carried no vector, so recall quietly under-performed with
+nothing to point at. The commit now carries the failures, so a caller can see that a write
+landed with degraded embeddings rather than discovering it later as bad recall.
+
 ### Fixed — BREAKING — erasing a namespace left the source text behind
 
 `mem.forget().in_namespace(ns).execute()` deleted entities, facts and edges and left every
