@@ -296,8 +296,15 @@ impl<L, E> MemoryBuilder<L, E> {
     ///
     /// - Mutually exclusive with `.with_gliner()` — builder errors at build time
     ///   if both are set.
-    /// - Compatible with or without `.with_llm()`: custom extractor runs regardless.
-    ///   If LLM is also wired, it remains available for Category B methods.
+    /// - Compatible with or without `.with_llm()`: the custom extractor itself
+    ///   runs regardless. If an LLM is also wired, it remains available for
+    ///   Category B methods.
+    /// - ⚠️ But a custom extractor does NOT make ingest LLM-free. `ingest_with`
+    ///   requires an LLM for the entity-RESOLUTION stage independently of which
+    ///   extractor produced the entities, and returns `Error::LlmRequired`
+    ///   without one (`core/ingest/pipeline/ingest_with.rs:622`). To ingest with
+    ///   no LLM at all, pin triples with `.with_facts(…)` / `.skip_extraction()`
+    ///   — which is what that error's own hint tells you.
     pub fn with_extractor<Ext>(mut self, extractor: Arc<Ext>) -> Self
     where
         Ext: crate::core::intelligence::EntityExtractor + 'static,

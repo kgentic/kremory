@@ -13,8 +13,17 @@
 //! model.
 //!
 //! Doing both inside an HTTP handler means your p99 is a language model's p99.
-//! `.no_wait()` commits phase 1 and hands you a receipt for phase 2, so the
-//! handler can return.
+//! `.no_wait()` hands you a receipt and returns, so the handler can return.
+//!
+//! ⚠️ It does NOT commit phase 1 first, despite what this line used to say.
+//! `.no_wait()` sets `run_in_background = true` (`facade/remember.rs:199`), and
+//! that path returns BEFORE the ingest task resolves — `memory/engine_handle.rs`
+//! says so in its own words: "Background-spawn path: returns before the task
+//! (and any embed attempt inside it) resolves". Measured over 5 runs, a read
+//! issued immediately after the handler returned found 0 passages twice and 1
+//! passage three times. Do not tell a caller their write is durable or
+//! searchable when you hand back the receipt; give them the run_id and let them
+//! poll.
 //!
 //! ## The contract, and the part that surprises people
 //!

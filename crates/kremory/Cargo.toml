@@ -63,7 +63,10 @@ include = [
 # docs.rs builds the public API surface with all stable features + the docsrs cfg
 # so feature-gated items (otel, ner) render. Excludes unstable surfaces by design.
 [package.metadata.docs.rs]
-features = ["otel"]
+# all-features, NOT a hand-picked list. With `features = ["otel"]` docs.rs
+# rendered a surface missing content-search (a DEFAULT feature), ner and
+# embeddings — while README badges link readers straight to it.
+all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [features]

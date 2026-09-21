@@ -846,13 +846,29 @@ pub struct SubmitOpts {
     /// Default: false. Set to false when caller has pre-extracted facts via with_facts(); set to true to have substrate's LLM extractor process raw content.
     pub enrich_per_episode: bool,
 
-    /// Requires `enrich_per_episode = true`. If true: return after Phase 1
-    /// commit, enqueue Phase 2 in background. Consumer polls via batch_status.
-    /// If false (default): await Phase 2 inline before returning.
+    /// Requires `enrich_per_episode = true`. If true: return a receipt
+    /// immediately and run the ingest in the background. Consumer polls via
+    /// batch_status. If false (default): await Phase 2 inline before returning.
+    ///
+    /// ⚠️ This used to say "return after Phase 1 commit". It does not. The
+    /// background path returns BEFORE the task resolves (see the comment at the
+    /// `EpisodeCommit` construction in `memory/engine_handle.rs`), so the
+    /// episode is NOT guaranteed written when this returns. `.no_wait()` on the
+    /// facade sets exactly this flag (`facade/remember.rs:199`), so both spellings
+    /// share the behaviour.
     pub run_in_background: bool,
 }
 
-/// Result of `submit_episode` Phase 1 commit. Episode is searchable from now.
+/// Result of `submit_episode`.
+///
+/// ⚠️ "Episode is searchable from now" was the previous wording and is FALSE on
+/// the background path (`run_in_background = true`, which `.no_wait()` sets):
+/// that path returns before the ingest task resolves, so a read issued straight
+/// afterwards may find nothing. It is accurate only on the inline path.
+///
+/// ⚠️ On the background path `episode_entity_id` is the RUN ID, not an episode
+/// id — `engine_handle.rs` returns `run_id.to_string()` for it. Do not publish
+/// it as a durable resource identifier.
 ///
 /// Per ADR §4.2.
 #[derive(Debug, Clone, Serialize, Deserialize)]
