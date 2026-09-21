@@ -428,6 +428,26 @@ fn napi_surface_matches_substrate_or_skip_list() {
         parse_file_to_string(&root.join("crates/kremory-napi/src/convert/dream.rs"));
     let napi_convert_mutations_src =
         parse_file_to_string(&root.join("crates/kremory-napi/src/convert/mutations.rs"));
+    // `lib.rs`'s own `impl JsMemory` (38 `#[napi]` methods, no test module) was split the
+    // same way into `memory/{lifecycle,ingest,dream,recall,mutations,admin}.rs` — each file
+    // carries its own `#[napi] impl JsMemory { ... }` block (multiple inherent impl blocks
+    // for one type, across files, is normal Rust; napi-rs registers annotated items
+    // independently, not per-file). `memory/mod.rs` only declares the `JsMemory` struct +
+    // `mod`s (no `#[napi]` impl), so it is NOT added here — mirrors why `convert/mod.rs`
+    // above is skipped too. `napi_lib_src` above is kept for symmetry even though `lib.rs`
+    // no longer contains any `#[napi]` item post-split; it costs nothing to leave wired.
+    let napi_memory_lifecycle_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/memory/lifecycle.rs"));
+    let napi_memory_ingest_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/memory/ingest.rs"));
+    let napi_memory_dream_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/memory/dream.rs"));
+    let napi_memory_recall_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/memory/recall.rs"));
+    let napi_memory_mutations_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/memory/mutations.rs"));
+    let napi_memory_admin_src =
+        parse_file_to_string(&root.join("crates/kremory-napi/src/memory/admin.rs"));
     let skip_list_path = root.join("crates/kremory-napi/parity-skip.toml");
 
     let skip_list = load_skip_list(&skip_list_path);
@@ -437,6 +457,12 @@ fn napi_surface_matches_substrate_or_skip_list() {
         &napi_convert_recall_src,
         &napi_convert_dream_src,
         &napi_convert_mutations_src,
+        &napi_memory_lifecycle_src,
+        &napi_memory_ingest_src,
+        &napi_memory_dream_src,
+        &napi_memory_recall_src,
+        &napi_memory_mutations_src,
+        &napi_memory_admin_src,
     ]);
     let substrate_symbols = extract_substrate_symbols(&[
         &facade_mod_src,
