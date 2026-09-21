@@ -87,7 +87,7 @@ const mem = await Memory.open(dbPath, {
 try {
   // Save two things we know about a user.
   await mem.remember({
-    content: 'Notes about Jim.',
+    content: 'Notes about Ada.',
     namespace: NAMESPACE,
     structuredFacts: [
       { subject: 'jim', predicate: 'writes', object: 'Rust' },

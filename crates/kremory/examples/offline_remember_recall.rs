@@ -91,7 +91,7 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     // Save two things we know about a user.
-    mem.remember("Notes about Jim.")
+    mem.remember("Notes about Ada.")
         .in_namespace(ns.clone())
         .with_facts(vec![
             StructuredFact {

@@ -93,10 +93,10 @@ async fn main() -> anyhow::Result<()> {
         .await?;
 
     // Ingest — runs real LLM extraction.
-    mem.remember("Jim prefers concise replies and writes Rust.").await?;
+    mem.remember("Ada prefers concise replies and writes Rust.").await?;
 
     // Recall — returns prompt-ready text.
-    let ctx = mem.recall("what language does Jim use?").await?;
+    let ctx = mem.recall("what language does Ada use?").await?;
     println!("{ctx}");
 
     mem.close().await?; // flush WAL
